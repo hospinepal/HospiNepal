@@ -1,0 +1,867 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $qtyChart As String[]
+Private $amtCHart As String[]
+Private $ProgressBar1 As ProgressBar
+Private $RepoOption As String
+Private $LockViewToUser As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  cmbtype.List = ["All Types", "Cash Deposit", "Cash Billing", "Cash Return", "Pharmacy Sales", "Pharmacy Return"]
+  cmbtype.Text = "All Types"
+  cmbcategory.List = ["%", "Diagnostic Tests", "General Services", "Procedures", "Equipment", "Radio Diagnostics", "Other Items", "Medicines", "Surgicals", "Extra Items"]
+  cmbmode.List = ["Cash", "Credit", "%"]
+  cmbcomp.List = modBasic.$AllCompList
+  cmbcomp.Text = "%"
+  cmbregist.List = modNonMedical.FillCashModeCombo()
+  cmbregist.Add("%")
+  cmbregist.Text = "%"
+  $LockViewToUser = modGlobalSetting.ShowSettingFromDB("GeneralSettings/RestrictToOwnBilling")
+  If $LockViewToUser = "Yes" Then
+    rbcashier.Enabled = False
+  Endif
+  If modHelpVariable.$LogInCategory = "Account" Then
+    mnubank.Visible = True
+  Endif
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  txtselect.Text = ""
+  cmbmode.Text = "%"
+  cmbcategory.Text = "%"
+
+  $RepoOption = "Invoice"
+
+  SHowEntryBox()
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub mnurepoformat_Click()
+
+  If mnurepoformat.Checked = True Then
+    $RepoOption = "Invoice"
+    mnurepoformat.Checked = False
+    SHowEntryBox()
+  Else If mnurepoformat.Checked = False Then
+    $RepoOption = "Date"
+    mnurepoformat.Checked = True
+    SHowEntryBox()
+  Endif
+
+End
+
+Private Sub SHowEntryBox()
+
+  If $RepoOption = "Date" Then
+    txtdtfrom.Visible = True
+    txtdtto.Visible = True
+    txtinvfrom.Visible = False
+    txtinvto.Visible = False
+    txtdtfrom.Value = modDate.StartSqlDate(Now())
+    txtdtto.Value = modDate.EndSqlDate(Now())
+  Else
+    txtdtfrom.Visible = False
+    txtdtto.Visible = False
+    txtinvfrom.Visible = True
+    txtinvto.Visible = True
+  Endif
+
+End
+
+Public Sub rbencounter_Click()
+
+  txtselect.Text = ""
+
+End
+
+Public Sub rbcashier_Click()
+
+  txtselect.Text = ""
+
+End
+
+Public Sub rbbill_Click()
+
+  txtselect.Text = ""
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub cmbcategory_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcategory)
+  modFillContainer.RestrictComboToContent(cmbcategory)
+
+End
+
+Public Sub cmbmode_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbmode)
+  modFillContainer.RestrictComboToContent(cmbmode)
+
+End
+
+Public Sub cmbtype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbtype)
+  modFillContainer.RestrictComboToContent(cmbtype)
+
+End
+
+Private Sub ExecuteQuery()
+
+  Dim Bll As String
+  Dim txuser As String
+  Dim txencid As String
+  Dim txtbillno As String
+  Dim xst As String
+  Dim xregist As String
+  Dim lockuser As String
+
+  Dim res As Result
+  Dim totamt As Float
+  Dim taxamt As Float
+  Dim discamt As Float
+  Dim recvamt As Float
+
+  If $LockViewToUser = "Yes" Then
+    lockuser = modGeneralMain.$lbluser
+  Else
+    lockuser = "%"
+  Endif
+
+  If cmbtype.Text = "All Types" Then
+    Bll = "%"
+  Else
+    Bll = modNonMedical.InvSign(cmbtype.Text) & "%"
+  Endif
+
+  If txtselect.Text = "" Then
+    txuser = "%"
+    txencid = "%"
+    txtbillno = "%"
+  Else
+    If rbencounter.Value = True Then
+      txuser = "%"
+      txencid = Trim(txtselect.Text)
+      txtbillno = "%"
+    Else If rbcashier.Value = True Then
+      txuser = Trim(txtselect.Text)
+      txencid = "%"
+      txtbillno = "%"
+    Else If rbbill.Value = True Then
+      txuser = "%"
+      txencid = "%"
+      txtbillno = Trim(txtselect.Text) & "%"
+    Endif
+  Endif
+
+  If cmbcategory.Text = "%" Then
+    xst = ""
+  Else
+    xst = " and fldbillno in(select fldbillno from tblpatbilling where flditemtype like &{10})"
+  Endif
+
+  If cmbregist.Text = "%" Then
+    xregist = ""
+  Else
+    xregist = " and fldencounterval in(select fldencounterval from tblencounter WHERE fldbillingmode like &{11})"
+  Endif
+
+  $rData = modDatabase.$syConn.Exec("select fldtime,fldtime,fldbillno,fldencounterval,fldencounterval,fldprevdeposit,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt,fldreceivedamt,fldcurdeposit,flduserid,fldbilltype,fldtaxamt,flddiscountamt,fldbankname,fldchequeno,fldtaxgroup,flddiscountgroup,fldcomp" & modMisc.HospField() & " from tblpatbilldetail where fldcomp like &1 and fldencounterval like &2 and flduserid like &3 and fldbillno like &4 and fldbillno like &5 and fldtime>=&6 and fldtime<=&7 and fldbilltype like &8 and flduserid like &9" & xst & xregist, cmbcomp.Text, txencid, txuser, txtbillno, Bll, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbmode.Text, lockuser, cmbcategory.Text, cmbregist.Text)                                                  ''
+  If chkqty.Value = True Or If chkamt.Value = True Then
+    ExportData()
+  Else
+    res = modDatabase.$syConn.Exec("select SUM(flditemamt) as itemamt,SUM(fldtaxamt) as taxamt,SUM(flddiscountamt) as dscamt,SUM(fldreceivedamt) as recvamt from tblpatbilldetail where fldcomp like &1 and fldencounterval like &2 and flduserid like &3 and fldbillno like &4 and fldbillno like &5 and fldtime>=&6 and fldtime<=&7 and fldbilltype like &8 and flduserid like &9" & xst & xregist, cmbcomp.Text, txencid, txuser, txtbillno, Bll, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbmode.Text, lockuser, cmbcategory.Text, cmbregist.Text)
+    If res!itemamt Then
+      totamt = totamt + res!itemamt
+    Endif
+    If res!taxamt Then
+      taxamt = taxamt + res!taxamt
+    Endif
+    If res!dscamt Then
+      discamt = discamt + res!dscamt
+    Endif
+    If res!recvamt Then
+      recvamt = recvamt + res!recvamt
+    Endif
+
+    txttotamt.Value = Round(totamt, -2)
+    txttaxamt.Value = Round(taxamt, -2)
+    txtdiscamt.Value = Round(discamt, -2)
+    txttotalrecv.Value = Round(recvamt, -2)
+  Endif
+
+End
+
+Private Sub FillGrid()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 90 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 1
+    .Columns[15].Width = 1
+    .Columns[16].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[17].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[18].Width = 1
+    .Columns[19].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[20].Width = 1
+
+    .Columns[0].Text = "Date"
+    .Columns[1].Text = "Time"
+    .Columns[2].Text = "Invoice"
+    .Columns[3].Text = "EncID"
+    .Columns[4].Text = "Name"
+    .Columns[5].Text = "OldDepo"
+    .Columns[6].Text = "TotAmt"
+    .Columns[7].Text = "TaxAmt"
+    .Columns[8].Text = "DiscAmt"
+    .Columns[9].Text = "NetTot"
+    .Columns[10].Text = "RecAmt"
+    .Columns[11].Text = "NewDepo"
+    .Columns[12].Text = "User"
+    .Columns[13].Text = "InvType"
+    .Columns[16].Text = "BankName"
+    .Columns[17].Text = "ChequeNo"
+    .Columns[19].Text = "DiscGroup"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 0 Then
+    Try GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.MediumDate)
+  Else If Column = 1 Then
+    Try GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.LongTime)
+  Else If Column = 4 Then
+    Try GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]], modDatabase.$syConn)
+  Else If Column = 5 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 6 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 7 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 8 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 9 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 10 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 11 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Private Sub ExportData()
+
+  Dim totamt As Float
+  Dim nettot As Float
+  Dim taxamt As Float
+  Dim discamt As Float
+  Dim recvamt As Float
+  Dim newdepo As Float
+
+  totamt = 0
+  nettot = 0
+  taxamt = 0
+  discamt = 0
+  recvamt = 0
+  newdepo = 0
+
+  $qtyChart = New String[]
+  $amtCHart = New String[]
+  $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  For Each $rData
+    totamt = totamt + $rData!flditemamt
+    taxamt = taxamt + $rData!fldtaxamt
+    discamt = discamt + $rData!flddiscountamt
+    nettot = nettot + $rData!fldchargedamt
+    recvamt = recvamt + $rData!fldreceivedamt
+    newdepo = newdepo + $rData!fldcurdeposit
+    If chkqty.Value = True Then
+      $qtyChart.Add(DateDiff(dtfir.Value, $rData!fldtime, modChart.GetDateIntegerFromSetting()))
+    Endif
+    If chkamt.Value = True Then
+      $amtCHart.Add(DateDiff(dtfir.Value, $rData!fldtime, modChart.GetDateIntegerFromSetting()) & ";" & CStr($rData!fldreceivedamt / modChart.GetAMTValueChart()))
+    Endif
+    $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+    Wait
+  Next
+
+  txttotamt.Value = Round(totamt, -2)
+  txttaxamt.Value = Round(taxamt, -2)
+  txtdiscamt.Value = Round(discamt, -2)
+  txttotalrecv.Value = Round(recvamt, -2)
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub chkok_Click()
+
+  Inc Application.Busy
+
+  TabStrip1.Index = 0
+  ExecuteQuery()
+  FillGrid()
+
+  If chkqty.Value = True Then
+    FillItemChartQTY()
+  Endif
+  If chkamt.Value = True Then
+    FillItemChartAMT()
+  Endif
+
+  Dec Application.Busy
+
+End
+
+''----------------------------------------- Grid menu ---------------------------------------
+Public Sub GridView1_DblClick()
+
+  Dim xx As Integer
+  Dim yy As Integer
+
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+  If GridView1.Column = 2 Then
+    If txtinvfrom.Text = "" Then
+      txtinvfrom.Text = GridView1[GridView1.Row, 2].Text
+    Else
+      txtinvto.Text = GridView1[GridView1.Row, 2].Text
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnuinvcopy_Click()
+
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+  Dim $hReport As CRegistLabel
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If GridView1[GridView1.Row, 14].Text = 0 Then
+      ShowTax = False
+    Else
+      ShowTax = True
+    Endif
+    If GridView1[GridView1.Row, 15].Text = 0 Then
+      ShowDisc = False
+    Else
+      ShowDisc = True
+    Endif
+    modBILLFormat.BillingInvoice(GridView1[GridView1.Row, 2].Text, modBillings.GetCopyBillTypeFromBillNo(GridView1[GridView1.Row, 2].Text), ShowTax, ShowDisc)
+    If modBasic.$BillWithInvoicePrint = "Sticker" Then
+      $hReport = New CRegistLabel(GridView1[GridView1.Row, 3].Text)
+      modPrint.PrintPopUp(GridView1[GridView1.Row, 3].Text, $hReport.RegistLabelPath(), "LabelSize")
+    Else If modBasic.$BillWithInvoicePrint = "Prescription" Then
+      modPatient.PrintRegistExtraReport(GridView1[GridView1.Row, 3].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub mnuparti_Click()
+
+  Dim sql As String
+  Dim hForm As FRequest
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    sql = "select fldencounterval,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt as tot,fldtime,fldid from tblpatbilling where fldbillno=&1"                                                  ''
+    res = modDatabase.$syConn.Exec(sql, GridView1[GridView1.Row, 2].Text)
+    If res.Available Then
+      hForm = New FRequest(res, GridView1[GridView1.Row, 2].Text, "Billing:SelectedInvoice", False)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub mnusummary_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xPath = modCHTMLInvoice.BillDepartmentWise(modDatabase.$syConn, GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 3].Text)
+    modPrint.OpenHTMLPreview(GridView1[GridView1.Row, 3].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnubank_Click()
+
+  Dim res As Result
+  Dim xx As String
+  Dim banklist As String[]
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    banklist = modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select fldbankname as col from tblbanks"))
+    xx = InputCombo("Change Category Name", GridView1[GridView1.Row, 2].Text, banklist, GridView1[GridView1.Row, 16].Text, False)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatbilldetail", "fldbillno=&1", GridView1[GridView1.Row, 2].Text)
+      res["fldbankname"] = xx
+      res["xyz"] = False
+      res.Update
+      ExecuteQuery()
+    Endif
+  Endif
+
+End
+
+''---------------------------------------- QTY Chart ------------------------------------
+Private Sub FillItemChartQTY()
+
+  Dim sFile As String
+
+  sFile = Temp()
+  File.Save(sFile, $qtyChart.Join(gb.NewLine))
+  PictureBox1.Tag = "InvoiceCount"
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox1, modChart.FrequencyChart(sFile, "Invoice Count"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox1, modChart.FrequencyChart(sFile, "Invoice Count"))
+  Endif
+  mnustatsqty.Tag = sFile
+
+End
+
+Public Sub PictureBox1_Menu()
+
+  mnuqty.Popup
+
+End
+
+Public Sub mnuexpoqty_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox1.Picture.Save(Dialog.Path &/ PictureBox1.Tag & ".png")
+
+End
+
+''---------------------------------------- AMT Chart --------------------------------------------
+Private Sub FillItemChartAMT()
+
+  Dim sPath As String
+  Dim sNew As String
+
+  sPath = Temp()
+  File.Save(sPath, $amtCHart.Join(gb.NewLine))
+  sNew = modString.GetGroupSUmmaryCSV(sPath, 0, 1, ";", Space(1))
+
+  PictureBox2.Tag = "ReceivedAmount"
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Received Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Received Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Endif
+  mnustatsamt.Tag = sNew
+
+End
+
+Public Sub PictureBox2_Menu()
+
+  mnuamt.Popup
+
+End
+
+Public Sub mnuqtyamt_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox2.Picture.Save(Dialog.Path &/ PictureBox2.Tag & ".png")
+
+End
+
+Public Sub mnustatsamt_Click()
+
+  Desktop.Open(mnustatsamt.Tag)
+
+End
+
+''----------------------------------------------------------- Reports -----------------------------------
+Public Sub btnfullrep_Click()
+
+  Dim dtstr As String
+  Dim sAmt As String[]
+  Dim xlst As String[]
+  Dim xx As String
+
+  chkok_Click()
+  dtstr = modReportVar.GetDateTimeReport(modDate.StartSqlDate(dtfir.value), gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(modDate.EndSqlDate(dtlast.value), gb.MediumDate)
+  modCHTMLReport.$EncColumn = 3
+  sAmt = New String[]
+  sAmt.Add("")
+  sAmt.Add("")
+  sAmt.Add("All")
+  sAmt.Add("")
+  sAmt.Add("")
+
+  sAmt.Add("")
+  sAmt.Add(modReportVar.GetLocaleNumberFormat(txttotamt.Value, gb.Currency))
+  sAmt.Add(modReportVar.GetLocaleNumberFormat(txttaxamt.Value, gb.Currency))
+  sAmt.Add(modReportVar.GetLocaleNumberFormat(txtdiscamt.Value, gb.Currency))
+  sAmt.Add("")
+  sAmt.Add(modReportVar.GetLocaleNumberFormat(txttotalrecv.Value, gb.Currency))
+  sAmt.Add("")
+
+  sAmt.Add("")
+  sAmt.Add("")
+  sAmt.Add("")
+  sAmt.Add("")
+  sAmt.Add("")
+
+  modCHTMLReport.ExportReportGridToHTML(GridView1, "BILLING REPORT: " & txtselect.Text, dtstr, sAmt)
+
+End
+
+Public Sub txtselect_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtselect.Text = txtselect.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputTextKeyOnly()
+  Endif
+
+End
+
+Public Sub txtinvfrom_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+Public Sub txtinvto_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+''============================ SUMMARY REPORT ===========================================
+Public Sub btnrecv_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.InvoiceReportBriefByInvoiceType($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.InvoiceReportBriefByInvoiceType($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnsummdepo_Click()
+
+  Dim xPath As String
+
+  ''for neuro bansbari
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.SummaryReceiveBillingAllUser($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.SummaryReceiveBillingAllUser($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+  ''carryover
+  ' If $RepoOption = "Date" Then
+  '   If txtdtfrom.Value And If txtdtto.Value Then
+  '       xPath = modCHTMLInvoice.InvoiceReportBriefWithCarryover($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+  '     modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+  '   Endif
+  '
+  ' Else
+  '   If txtinvfrom.Text And If txtinvto.Text Then
+  '       xPath = modCHTMLInvoice.InvoiceReportBriefWithCarryover($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+  '     modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+  '   Endif
+  '
+  ' Endif
+
+End
+
+Public Sub btndatewise_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.InvoiceReportSummaryByDateUser($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.InvoiceReportSummaryByDateUser($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btninvsumm_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.InvoiceReportSummaryByUserLocation($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.InvoiceReportSummaryByUserLocation($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btngrpdetail_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.InvoiceReportGroupsByUserLocation($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.InvoiceReportGroupsByUserLocation($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btngrpsummry_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.InvoiceReportGroupsSummary($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.InvoiceReportGroupsSummary($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btndiffitem_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.InvoiceReportDetailByMismatch($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.InvoiceReportDetailByMismatch($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnitemsumm_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.InvoiceReportDetailByUser($RepoOption, modDatabase.$syConn, txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.InvoiceReportDetailByUser($RepoOption, modDatabase.$syConn, Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btndsc_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.TaxDiscReportDetailByUserLocation($RepoOption, modDatabase.$syConn, "Discount", txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.TaxDiscReportDetailByUserLocation($RepoOption, modDatabase.$syConn, "Discount", Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btntax_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.TaxDiscReportDetailByUserLocation($RepoOption, modDatabase.$syConn, "Tax", txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.TaxDiscReportDetailByUserLocation($RepoOption, modDatabase.$syConn, "Tax", Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnsumdisc_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.TaxDiscReportLessByUserLocation($RepoOption, modDatabase.$syConn, "Discount", txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.TaxDiscReportLessByUserLocation($RepoOption, modDatabase.$syConn, "Discount", Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End
+
+Public Sub btntaxsum_Click()
+
+  Dim xPath As String
+
+  If $RepoOption = "Date" Then
+    If txtdtfrom.Value And If txtdtto.Value Then
+      xPath = modCHTMLInvoice.TaxDiscReportLessByUserLocation($RepoOption, modDatabase.$syConn, "Tax", txtdtfrom.Value, txtdtto.Value)
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Else
+    If txtinvfrom.Text And If txtinvto.Text Then
+      xPath = modCHTMLInvoice.TaxDiscReportLessByUserLocation($RepoOption, modDatabase.$syConn, "Tax", Trim(txtinvfrom.Text), Trim(txtinvto.Text))
+      modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+
+  Endif
+
+End

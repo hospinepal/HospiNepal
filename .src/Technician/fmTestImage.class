@@ -1,0 +1,369 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $encid As String
+Private $strType As String
+
+Public Sub _new(strType As String, encid As String, id As Long, testname As String, testvalue As String, sPath As String)
+
+  $strType = strType
+  $encid = encid
+  txtid.Value = id
+  lbltest.Text = testname
+  lblobs.Text = testvalue
+  If sPath Then
+    PictureBox1.Tag = sPath
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  Me.Text = $strType & " Files"
+  ShowGridImage()
+  DisplaySelectImg()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Public Sub Slider1_Change()
+
+  PictureBox1.Zoom = Slider1.Value / 100
+
+End
+
+Public Sub txttitle_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End
+
+Private Sub ShowGridImage()
+
+  Dim sql As String
+
+  If $strType = "IMAGE" Then
+    sql = "select fldid,fldtitle,fldlink from tblpatientimage where fldencounterval=&1 and fldtestid=&2"
+  Else If $strType = "DICOM" Then
+    sql = "select fldid,fldtitle,fldlink from tblpatientdicom where fldencounterval=&1 and fldtestid=&2"
+  Endif
+  $rData = modDatabase.$myConn.Exec(sql, $encid, txtid.Value)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(dgimage, $rData, $aMyFields)
+  dgimage.Columns[0].Width = 1
+  dgimage.Columns[1].Width = 275 * modBasic.$AppWidthRatio
+  dgimage.Columns[2].Width = 1
+
+End
+
+Public Sub dgimage_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(dgimage, Row)
+  dgimage.Data.Text = $rData[$aMyFields[Column]]
+
+End
+
+Public Sub dgimage_Click()
+
+  DisplayBlobData(dgimage[dgimage.Row, 0].Text)
+  DisplaySelectImg()
+
+End
+
+Private Sub DisplaySelectImg()
+
+  Dim xpath As String
+
+  If PictureBox1.Tag Then
+    If $strType = "IMAGE" Then
+      PictureBox1.Image = Image.Load(PictureBox1.Tag)
+    Else If $strType = "DICOM" Then
+      xpath = modDevice.ConverDicomToPNG(PictureBox1.Tag)
+      Try PictureBox1.Image = Image.Load(xpath)
+    Endif
+  Endif
+
+End
+
+Private Sub DisplayBlobData(serial As Long)
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+
+  If $strType = "IMAGE" Then
+    sql = "select fldpic,fldtitle,fldkeyword,flddetail,fldlink from tblpatientimage where fldid=&1"
+  Else If $strType = "DICOM" Then
+    sql = "select fldpic,fldtitle,fldkeyword,flddetail,fldlink from tblpatientdicom where fldid=&1"
+  Endif
+  res = modDatabase.$myConn.Exec(sql, serial)
+  If res.Available = True Then
+    If res["fldlink"] Then
+      Inc Application.Busy
+      tempFile = modDevice.GetFileFromLocalFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        If $strType = "IMAGE" Then
+          tempFile = Temp() & ".png"
+        Else If $strType = "DICOM" Then
+          tempFile = Temp() & ".dcm"
+        Endif
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+    PictureBox1.Tag = tempFile
+
+    txttitle.Text = res["fldtitle"]
+    txtkeyword.Text = res["fldkeyword"]
+    txtdetail.Text = res["flddetail"]
+  Endif
+
+End
+
+Public Sub dgimage_KeyPress()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    dgimage_Click()
+  Endif
+
+End
+
+''''
+Public Sub btnOpen_Click()
+
+  If $strType = "IMAGE" Then
+    Dialog.Filter = ["*.jpg;*.jpeg;*.png;*.bmp", "Picture files"]
+  Else If $strType = "DICOM" Then
+    Dialog.Filter = ["*.dcm", "DICOM files"]
+  Endif
+
+  If Dialog.OpenFile() Then Return
+  PictureBox1.Tag = Dialog.Path
+  DisplaySelectImg()
+
+End
+
+Public Sub btnwebcam_Click()
+
+  If $strType = "IMAGE" Then
+    PictureBox1.Tag = modImage.GetWebCamValue(modDevice.WebCamDevice())
+    If PictureBox1.Tag Then
+      PictureBox1.Image = Image.Load(PictureBox1.Tag)
+    Endif
+  Else If $strType = "DICOM" Then
+  Endif
+
+End
+
+Public Sub btnplay_Click()
+
+  If PictureBox1.Tag Then
+    If $strType = "IMAGE" Then
+      Desktop.Open(PictureBox1.Tag)
+    Else If $strType = "DICOM" Then
+      modDevice.ViewDicomFile(PictureBox1.Tag)
+    Endif
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim res As Result
+  Dim sPath As String
+
+  If txttitle.Text And If PictureBox1.Tag Then
+    Inc Application.Busy
+    If $strType = "IMAGE" Then
+      sPath = modImage.GetPNGImage(PictureBox1.Tag)
+      res = modDatabase.$myConn.Create("tblpatientimage")
+    Else If $strType = "DICOM" Then
+      sPath = PictureBox1.Tag
+      res = modDatabase.$myConn.Create("tblpatientdicom")
+    Endif
+    res["fldencounterval"] = $encid
+    res["fldtestid"] = txtid.Value
+    If modMisc.BlobTarget("Patient") = "FTP" Then
+      res["fldpic"] = ""
+      res["fldlink"] = modDevice.SendBlobToFTP(sPath, CStr(txtid.Value), "Patient")
+    Else
+      res["fldpic"] = File.Load(sPath)
+      res["fldlink"] = ""
+    Endif
+    res["fldtitle"] = Trim(txttitle.Text)
+    res["fldkeyword"] = Trim(txtkeyword.Text)
+    res["flddetail"] = txtdetail.Text
+    res["flduserid"] = modGeneralMain.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modGeneralMain.compID
+    res["fldsave"] = True
+    res["flduptime"] = ""
+    res.Update()
+    Dec Application.Busy
+
+    ShowGridImage()
+    Balloon.Info(("Information saved"), btnOK)
+    Balloon.Delay = modBasic.$BalloonDelay
+    txttitle.Text = ""
+    txtkeyword.Text = ""
+    txtdetail.Text = ""
+  Endif
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+  Dim sPath As String
+
+  If dgimage.Rows.Selection.Count > 0 Then
+    If txttitle.Text Then
+
+      If $strType = "IMAGE" Then
+        res = modDatabase.$myConn.Edit("tblpatientimage", "fldid=&1", dgimage[dgimage.Row, 0].Text)              ''
+      Else If $strType = "DICOM" Then
+        res = modDatabase.$myConn.Edit("tblpatientdicom", "fldid=&1", dgimage[dgimage.Row, 0].Text)
+      Endif
+
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+
+        If PictureBox1.Tag Then
+          If $strType = "IMAGE" Then
+            sPath = modImage.GetPNGImage(PictureBox1.Tag)
+          Else If $strType = "DICOM" Then
+            sPath = PictureBox1.Tag
+          Endif
+
+          If modMisc.BlobTarget("Patient") = "FTP" Then
+            res["fldpic"] = ""
+            res["fldlink"] = modDevice.SendBlobToFTP(sPath, CStr(txtid.Value), "Patient")
+          Else
+            res["fldpic"] = File.Load(sPath)
+            res["fldlink"] = ""
+          Endif
+        Endif
+
+        res["fldtitle"] = Trim(txttitle.Text)
+        res["fldkeyword"] = Trim(txtkeyword.Text)
+        res["flddetail"] = txtdetail.Text
+        res["flduptime"] = Now()
+        res["flduserid"] = modGeneralMain.$lbluser
+        res.Update()
+        ShowGridImage()
+        Balloon.Delete(("Information deleted"), btnChange)
+        Balloon.Delay = modBasic.$BalloonDelay
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnCancel_Click()
+
+  If $strType = "IMAGE" Then
+    ImageReport()
+  Else If $strType = "DICOM" Then
+    DicomReport()
+  Endif
+
+End
+
+Public Sub ImageReport()
+
+  Dim $BillingReport As CReportHTML
+  Dim res1 As Result
+  Dim asx As New String[0]
+  Dim tempFile As String
+  Dim hFile As Blob
+
+  $BillingReport = New CReportHTML([("Date"), ("Title"), ("Description"), ("Image")], modHelpVariable.$htmlDirectory, "PatientReport", $encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("IMAGE", "PARAM1")
+
+  res1 = modDatabase.$myConn.Exec("select fldtime,fldpic,fldtitle,flddetail,fldlink from tblpatientimage where fldencounterval=&1 and fldtestid=&2", $encid, txtid.Value)                      ''
+  For Each res1
+    If res1["fldlink"] Then
+      Inc Application.Busy
+      tempFile = modDevice.GetFileFromLocalFTP(res1["fldlink"])
+      Dec Application.Busy
+    Else
+      hFile = res1["fldpic"]
+      If hFile.Length Then
+        tempFile = Temp() & ".png"
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+
+    With asx
+      .Add(modReportVar.GetDateTimeReport(res1["fldtime"], gb.GeneralDate))
+      .Add(res1["fldtitle"])
+      .Add(res1["flddetail"])
+      .Add(modString.GetImageForHTML(tempFile))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  modPrint.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Public Sub DicomReport()
+
+  Dim $BillingReport As CReportHTML
+  Dim res1 As Result
+  Dim asx As New String[0]
+  Dim tempFile As String
+  Dim hFile As Blob
+
+  $BillingReport = New CReportHTML([("Date"), ("Title"), ("Description"), ("Image")], modHelpVariable.$htmlDirectory, "PatientReport", $encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("DICOM", "PARAM1")
+
+  res1 = modDatabase.$myConn.Exec("select fldtime,fldpic,fldtitle,flddetail,fldlink from tblpatientdicom where fldencounterval=&1 and fldtestid=&2", $encid, txtid.Value)                      ''
+  For Each res1
+    If res1["fldlink"] Then
+      Inc Application.Busy
+      tempFile = modDevice.GetFileFromLocalFTP(res1["fldlink"])
+      Dec Application.Busy
+    Else
+      hFile = res1["fldpic"]
+      If hFile.Length Then
+        tempFile = Temp() & ".dcm"
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+
+    With asx
+      .Add(modReportVar.GetDateTimeReport(res1["fldtime"], gb.GeneralDate))
+      .Add(res1["fldtitle"])
+      .Add(res1["flddetail"])
+      .Add(modString.GetImageForHTML(modDevice.ConverDicomToPNG(tempFile)))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  modPrint.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End

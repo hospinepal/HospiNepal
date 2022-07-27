@@ -1,0 +1,509 @@
+' Gambas module file
+
+''-------------------------- Examination entry ---------------------------------
+Public Function GetVariableOptionType(sType As String, sExam As String) As String
+
+  Dim xx As String
+
+  If sType = "Test" Then
+    xx = modFixLab.GetLabTestOptionType(sExam)
+  Else If sType = "Radio" Then
+    modFixRadio.GetRadioTestOption(sExam)
+  Else If sType = "Exam" Then
+    xx = modFixClinic.GetExamtOptionType(sExam)
+  Endif
+  Return xx
+
+End
+
+Public Function GetClinScalePopUp(sType As String, sExam As String) As String[]
+
+  Dim opt As String[]
+  Dim sVal As String[]
+  Dim xval As String[]
+
+  opt = modFixClinic.GetCLinicalScaleOptions(sType, sExam)
+  If opt Then
+    sVal = SubChoose(opt, "Clinical Scale", sExam)
+    If sVal Then
+      xval = sVal
+    Endif
+  Endif
+  Return xval
+
+End
+
+Public Function GetVisualDataExamVal(sExam As String) As String
+
+  Dim sPath As String
+  Dim xval As String
+
+  sPath = modImage.DisplayVisualData(sExam, "", "Visual Input")
+  If sPath Then
+    xval = CVisualValue(sExam, sPath, "")
+  Endif
+  Return xval
+
+End
+
+''================================ Sys COnst: For Delivery exam, Procedure Exam, Ward exam ---------------------------
+Public Function GetQualiExamOptionDirectValue(sExam As String, sValue As String, Optional ExamType As String) As Variant[]
+
+  Dim res1 As Result
+  Dim yy As String
+  Dim xdate As Date
+  Dim xxx As String[]
+  Dim sCol As String[]
+
+  Dim yqualival As Variant[]
+  Dim xxvar As Variant[]
+
+  If ExamType Then
+    If ExamType = "Radio" Then
+      res1 = modDatabase.$medConn.Exec("select fldoption from tblradio where fldexamid=&1", sExam)
+    Else If ExamType = "Test" Then
+      res1 = modDatabase.$medConn.Exec("select fldoption from tbltest where fldtestid=&1", sExam)
+    Else If ExamType = "Demog" Then
+      res1 = modDatabase.$medConn.Exec("select fldoption from tbldemographic where flddemoid=&1", sExam)
+    Else
+      res1 = modDatabase.$medConn.Exec("select fldoption from tblexam where fldexamid=&1", sExam)
+    Endif
+  Else
+    res1 = modDatabase.$medConn.Exec("select fldoption from tblexam where fldexamid=&1", sExam)
+  Endif
+
+  If res1.Available Then
+
+    If res1!fldoption = "Clinical Scale" Then
+      If ExamType Then
+        sCol = GetClinScalePopUp(ExamType, sExam)
+      Else
+        sCol = GetClinScalePopUp("Exam", sExam)
+      Endif
+      If sCol Then
+        xxvar = [sCol[1], False, sCol[0]]
+      Endif
+
+    Else If res1!fldoption = "Single Selection" Or If res1!fldoption = "Dichotomous" Or If res1!fldoption = "Multiple Selection" Then
+      If ExamType Then
+        sCol = modFixClinic.SelectExamOptionList(ExamType, sExam)
+      Else
+        sCol = modFixClinic.SelectExamOptionList("Exam", sExam)
+      Endif
+      xxx = SubChoose(sCol, res1!fldoption, sExam)
+      If xxx Then
+        xxvar = [xxx.Join(gb.NewLine), False]
+      Endif
+
+    Else If res1!fldoption = "Visual Input" Then
+      yy = GetVisualDataExamVal(sExam)
+      If yy
+        xxvar = [yy, False]
+      Endif
+
+    Else If res1!fldoption = "Left and Right" Then
+      yqualival = CLeftRight(sExam, sValue)
+      If yqualival Then
+        xxvar = [modString.GetLefRightJSON(yqualival[0], yqualival[1]), yqualival[2]]
+      Endif
+
+    Else If res1!fldoption = "Text Table" Then
+      xxx = modString.ConverTableRichTextToGrid(sValue)
+      If sValue Then
+        sCol = Split(xxx[0], ";")
+        yy = TableEntry(sCol, sExam, xxx[1])
+      Else
+        sCol = modFixClinic.SelectExamOptionList("Exam", sExam)
+        yy = TableEntry(sCol, sExam, "")
+      Endif
+      If yy Then
+        xxvar = [modString.GetTableFormatFromText(yy), False]
+      Endif
+
+    Else If res1!fldoption = "Date Time" Then
+      xdate = GetDateValue(sExam, "Date Value", CDate(sValue))
+      If xdate Then
+        xxvar = [Format(xdate, gb.GeneralDate), False]
+      Endif
+
+    Else
+      If ExamType Then
+        yqualival = GetQualiValues(sExam, sValue, ExamType)
+      Else
+        yqualival = GetQualiValues(sExam, sValue, "Exam")
+      Endif
+      If yqualival Then
+        xxvar = yqualival
+      Endif
+    Endif
+
+  Else
+    If ExamType Then
+      yqualival = GetQualiValues(sExam, sValue, ExamType)
+    Else
+      yqualival = GetQualiValues(sExam, sValue, "Exam")
+    Endif
+    If yqualival Then
+      xxvar = yqualival
+    Endif
+
+  Endif
+  Return xxvar
+
+End
+
+Public Sub UpdateExamSelectionLabel(sid As Long, encid As String, sExamLabel As String, sType As String, sysConst As String, sValue As String, Optional OptionType As String)
+
+  Dim xquantival As Variant[]
+  Dim yqualival As Variant[]
+  Dim sExam As String
+  Dim sName As String
+  Dim xlimit As Float[]
+  Dim xlefrt As Variant[]
+  Dim xdate As Date
+
+  Dim yy As String
+  Dim xxx As String[]
+  Dim sCol As String[]
+  Dim examtype As String
+
+  If modSysCons.SysExaminationList().Exist(sysConst) = True Then
+    sExam = modFixClinic.GetExamIDFromSysConst(sysConst)
+    examtype = "Exam"
+  Else If modSysCons.SysLabTestList().Exist(sysConst) = True Then
+    sExam = modFixLab.GetLabTestIDFromSysConst(sysConst)
+    examtype = "Test"
+  Else If modBasic.$sysRadioList.Exist(sysConst) = True Then
+    sExam = modFixRadio.GetRadioTestIDFromSysConst(sysConst)
+    examtype = "Radio"
+  Else If modBasic.$DemogList.Exist(sysConst) = True Then
+    sExam = sysConst
+    examtype = "Demog"
+  Else
+    examtype = "Exam"
+  Endif
+
+  If sExam Then
+    sName = sExam
+  Else
+    sName = sExamLabel
+  Endif
+
+  If sType = "Qualitative" Then
+
+    If OptionType Then
+      If OptionType = "Left and Right" Then
+        xlefrt = CLeftRight(sName, sValue)
+        If xlefrt Then
+          yqualival = [modString.GetLefRightJSON(xlefrt[0], xlefrt[1]), xlefrt[2]]
+        Endif
+
+      Else If OptionType = "Date Time" Then
+        xdate = GetDateValue(("Select Date Time"), sName, CDate(sValue))
+        If xdate Then
+          yqualival = [Format(xdate, gb.GeneralDate), False]
+        Endif
+
+      Else If OptionType = "Text Table" Then
+        xxx = modString.ConverTableRichTextToGrid(sValue)
+        If sValue Then
+          sCol = Split(xxx[0], ";")
+          yy = TableEntry(sCol, sExam, xxx[1])
+        Endif
+        If yy Then
+          yqualival = [modString.GetTableFormatFromText(yy), False]
+        Endif
+
+      Else
+        yqualival = GetQualiExamOptionDirectValue(sName, sValue, examtype)
+      Endif
+
+    Else
+      yqualival = GetQualiExamOptionDirectValue(sName, sValue, examtype)
+    Endif
+    If yqualival Then
+      If yqualival.Count = 3 Then
+        modClinic.UpdateQualiQuantiData(sid, yqualival[0], CFloat(yqualival[2]), yqualival[1])
+      Else
+        modClinic.UpdateQualiData(sid, yqualival[0], yqualival[1])
+      Endif
+    Endif
+
+  Else If sType = "Quantitative" Then
+    xlimit = modClinic.GetBothQuantiExamVal(sExam, encid)
+    xquantival = GetQuantiValues(examtype, encid, sName, xlimit[0], xlimit[1], modClinic.GetExamValueByID(sid))                                       '
+    If xquantival Then
+      modClinic.UpdateQuantiData(sid, xquantival[0], xquantival[1])
+    Endif
+
+  Endif
+
+End
+
+''========================== For Examination Form(fmExamreporting) =========================================
+Public Function GetQualiExamOptionValue(sExam As String, sOption As String) As Variant[]
+
+  Dim rs As Result
+  Dim opt As String[]
+  Dim sVal As String[]
+  Dim xval As String
+  Dim xdate As Date
+
+  Dim yqualival As Variant[]
+  Dim xxx As Variant[]
+
+  rs = modDatabase.$medConn.Exec("select fldsubexam from tblexamquali where fldexamid=&1", sExam)
+  If rs.Available = False Then
+
+    If sOption = "Single Selection" Or If sOption = "Dichotomous" Or If sOption = "Multiple Selection" Then
+      opt = modFixClinic.SelectExamOptionList("Exam", sExam)
+      If opt Then
+        sVal = SubChoose(opt, sOption, sExam)
+        If sVal Then
+          xxx = [sVal.Join(gb.NewLine), False]
+        Endif
+      Endif
+
+    Else If sOption = "Clinical Scale" Then
+      sVal = GetClinScalePopUp("Exam", sExam)
+      If sVal
+        xxx = [sVal[1], False, sVal[0]]
+      Endif
+
+    Else If sOption = "Visual Input" Then
+      xval = GetVisualDataExamVal(sExam)
+      If xval Then
+        xxx = [xval, False]
+      Endif
+
+    Else If sOption = "Left and Right" Then
+      yqualival = CLeftRight(sExam, "")
+      If yqualival Then
+        xxx = [modString.GetLefRightJSON(yqualival[0], yqualival[1]), yqualival[2]]
+      Endif
+
+    Else If sOption = "Text Table" Then
+      opt = modFixClinic.SelectExamOptionList("Exam", sExam)
+      If opt Then
+        xval = TableEntry(opt, sExam, "")
+        If xval Then
+          xxx = [modString.GetTableFormatFromText(xval), False]
+        Endif
+      Endif
+
+    Else If sOption = "Date Time" Then
+      xdate = GetDateValue(sExam, "Date Value", Now())
+      If xdate Then
+        xxx = [Format(xdate, gb.GeneralDate), False]
+      Endif
+
+    Else
+      yqualival = GetQualiValues(sExam, "", "Exam")
+      If yqualival Then
+        xxx = yqualival
+      Endif
+
+    Endif ''different options for qualitative test
+
+  Else
+    yqualival = GetQualiValues(sExam, "", "Exam")
+    If yqualival Then
+      xxx = yqualival
+    Endif
+
+  Endif ''confirm that quali exam has no subexam
+
+  Return xxx
+
+End
+
+Public Sub AddExamSelection(encid As String, sExam As String, sType As String, sOption As String)
+
+  Dim xquantival As Variant[]
+  Dim yqualival As Variant[]
+  Dim sysConst As String
+  Dim xlimit As Float[]
+
+  sysConst = modFixClinic.SysConstFromGetExamID(sExam)
+  If sType = "Quantitative" Then
+    xlimit = modClinic.GetBothQuantiExamVal(sExam, encid)
+    xquantival = GetQuantiValues("Exam", encid, sExam, xlimit[0], xlimit[1], 0)
+    If xquantival Then
+      modClinic.AddQuantiData(encid, "", sExam, xquantival[0], xquantival[1], "Examination", sysConst)
+    Endif
+  Else
+    yqualival = GetQualiExamOptionValue(sExam, sOption)
+    If yqualival Then
+      If yqualival.Count = 3 Then
+        modClinic.AddClinicExam(encid, "", sExam, yqualival[0], CFloat(yqualival[2]), yqualival[1], "Examination", sysConst, "Regular")
+      Else
+        modClinic.AddClinicExam(encid, "", sExam, yqualival[0], 0, yqualival[1], "Examination", sysConst, "Regular")
+      Endif
+    Endif
+  Endif ''quali or quanti
+
+End
+
+Public Sub UpdateExamSelection(sid As Long, encid As String, sType As String, sExam As String, sValue As String)
+
+  Dim hForm2 As FmEnterMultiple
+  Dim res As Result
+  Dim opid As Long[]
+  Dim option As String[]
+  Dim opx As String[]
+  Dim opt As String[]
+  Dim yyy As String[]
+
+  Dim xquantival As Variant[]
+  Dim yqualival As Variant[]
+  Dim xlimit As Float[]
+  Dim xdate As Date
+  Dim xType As String
+
+  If sType = "Qualitative" Then
+    xType = modFixClinic.GetExamtOptionType(sExam)
+    If modClinic.GetSubExamBool(sid) = False Then
+      If xType = "Fixed Components" Then
+        yyy = modFixClinic.GetSubExamArray(sExam)  'modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select fldsubexam as col from tblexamquali where fldexamid=&1", sExam))
+        If yyy.Count Then
+          modClinic.InsertExamSubExam(encid, sid, yyy)
+        Endif
+      Endif
+    Endif
+
+    res = modDatabase.$myConn.Exec("select fldid,fldsubtexam,fldreport,fldtanswertype from tblpatientsubexam where fldheadid=&1", sid)
+    If res.Available = False Then
+      If xType = "Clinical Scale" Then
+        yqualival = modExamOption.GetClinScalePopUp("Exam", sExam)
+        If yqualival Then
+          modClinic.UpdateQualiQuantiData(sid, yqualival[0], CFloat(yqualival[2]), yqualival[1])
+        Endif
+      Else If xType = "Left and Right" Then
+        yqualival = CLeftRight(sExam, sValue)
+        If yqualival Then
+          modClinic.UpdateClinicQualiData(sid, modString.GetLefRightJSON(yqualival[0], yqualival[1]), yqualival[2], "")
+        Endif
+      Else If xType = "Date Time" Then
+        xdate = GetDateValue(sExam, ("Select Date Time"), CDate(sValue))
+        If xdate Then
+          modClinic.UpdateClinicQualiData(sid, CStr(xdate), False, "")
+        Endif
+      Else
+        yqualival = GetQualiExamOptionDirectValue(sExam, sValue)
+        If yqualival Then
+          modClinic.UpdateQualiData(sid, yqualival[0], yqualival[1], yqualival[2])
+        Endif
+      Endif
+
+    Else If res.Available = True Then
+      opid = New Long[]
+      option = New String[]
+      opx = New String[]
+      opt = New String[]
+      For Each res
+        opid.Add(res!fldid)
+        option.Add(res!fldtanswertype)
+        opx.Add(res!fldsubtexam)
+        opt.Add(res!fldreport)
+      Next
+      opx.Add("Final Impression")
+      opt.Add(sValue)
+      opid.Add(0)
+      option.Add("No Selection")
+      hForm2 = New FmEnterMultiple(sid, "Exam", sExam, opx, opt, opid, option, "")
+      hForm2.ShowModal
+    Endif
+
+  Else If sType = "Quantitative" Then
+    xlimit = modClinic.GetBothQuantiExamVal(sExam, encid)
+    xquantival = GetQuantiValues("Exam", encid, sExam, xlimit[0], xlimit[1], modClinic.GetExamValueByID(sid))                                       '
+    If xquantival Then
+      modClinic.UpdateQuantiData(sid, xquantival[0], xquantival[1])
+    Endif
+
+  Endif
+
+End
+
+''=========================== For Quali box ====================================================
+Public Sub OpenQualidataOption(TextHTML1 As TextHTML, sName As String, sTag As String)
+
+  Dim res As Result
+  Dim rsn As Result
+  Dim opt As String[]
+  Dim sPath As String
+  Dim xval As String
+  Dim xdate As Date
+  Dim sVal As String[]
+
+  opt = New String[]
+  If sTag = "Test" Then
+    rsn = modDatabase.$medConn.Exec("select fldoption as fldanswertype from tbltest where fldtestid=&1", sName)
+    res = modDatabase.$medConn.Exec("select fldanswertype,fldanswer,fldscale,fldscalegroup from tbltestoption where fldtestid=&1 ORDER BY fldindex", sName)
+
+  Else If sTag = "Radio" Then
+    rsn = modDatabase.$medConn.Exec("select fldoption as fldanswertype from tblradio where fldexamid=&1", sName)
+    res = modDatabase.$medConn.Exec("select fldanswertype,fldanswer,fldscale,fldscalegroup from tblradiooption where fldexamid=&1 ORDER BY fldindex", sName)
+
+  Else If sTag = "Exam" Then
+    rsn = modDatabase.$medConn.Exec("select fldoption as fldanswertype from tblexam where fldexamid=&1", sName)
+    res = modDatabase.$medConn.Exec("select fldanswertype,fldanswer,fldscale,fldscalegroup from tblexamoption where fldexamid=&1 ORDER BY fldindex", sName)
+
+  Else If sTag = "Demog" Then
+    rsn = modDatabase.$medConn.Exec("select fldoption as fldanswertype from tbldemographic where flddemoid=&1", sName)
+    res = modDatabase.$medConn.Exec("select fldanswertype,fldanswer from tbldemogoption where flddemoid=&1 ORDER BY fldindex", sName)
+  Endif
+
+  If rsn.Available = True Then
+    If rsn!fldanswertype = "Single Selection" Or If rsn!fldanswertype = "Dichotomous" Then
+      For Each res
+        opt.Add(res!fldanswer)
+      Next
+      sVal = SubChoose(opt, rsn!fldanswertype, sName)
+      If sVal Then
+        TextHTML1.Text = TextHTML1.Text & sVal.Join(gb.NewLine)
+      Endif
+
+    Else If rsn!fldanswertype = "Multiple Selection" Or If rsn!fldanswertype = "Custom Components" Then
+      For Each res
+        opt.Add(res!fldanswer)
+      Next
+      sVal = SubChoose(opt, "Multiple Selection", sName)
+      If sVal Then
+        TextHTML1.Text = TextHTML1.Text & sVal.Join(gb.NewLine)
+      Endif
+
+    Else If rsn!fldanswertype = "Clinical Scale" Then
+      For Each res
+        opt.Add(res!fldanswer & "@" & res!fldscale & "@" & res!fldscalegroup)
+      Next
+      sVal = SubChoose(opt, "Clinical Scale", sName)
+      If sVal Then
+        TextHTML1.Text = TextHTML1.Text & sVal[0]
+      Endif
+
+    Else If rsn!fldanswertype = "Text Addition" Then
+      TextHTML1.Text = TextHTML1.Text & res!fldanswer
+
+    Else If rsn!fldanswertype = "Text Reference" Then
+      Message.Info("[Reference Text]" & gb.NewLine & res!fldanswer, ("OK"))
+
+    Else If rsn!fldanswertype = "Date Time" Then
+      xdate = GetDateValue(sName, "Date Value", Now())
+      If xdate Then
+        TextHTML1.Text = TextHTML1.Text & Format(xdate, gb.GeneralDate)
+      Endif
+
+    Else If rsn!fldanswertype = "Visual Input" Then
+      sPath = modImage.DisplayVisualData(sName, "", rsn!fldanswertype)
+      If sPath Then
+        xval = CVisualValue(sName, sPath, TextHTML1.Text)
+        If xval Then
+          TextHTML1.Text = xval
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End

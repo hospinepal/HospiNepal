@@ -1,0 +1,193 @@
+' Gambas class file
+
+Private $encid As String
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Public Sub _new(encid As String, BillingMode As String)
+
+  $encid = encid
+  txtbilling.Text = BillingMode
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+  txtpatientcontact.Text = modPatient.GetLocationSetting($encid)
+  cmbconsult.List = modMisc.GetDepartmentAllList("Consultation")
+  dtconsult.Value = Now()
+  FillLabtable()
+  CompleteGrid()
+  cmbconsult.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Public Sub btnsubOK_Click()
+
+  Dim billItem As String
+  Dim xauto As String
+
+  If cmbconsult.Text Then
+    Inc Application.Busy
+    modPatient.AddConsultData($encid, cmbconsult.Text, dtconsult.Value, TextArea1.Text, btnconsult.Tag, txtbilling.Text)
+
+    xauto = modBasic.$AutoBillService
+    If xauto Then
+      billItem = modNonMedical.GetDepartmentChargeMode(cmbconsult.Text)
+      If billItem Then
+        modDatabase.$myConn.Begin
+        If xauto = "Yes" Or If xauto = "Full" Then
+          modBillings.ServiceBillBlankTaxDisc($encid, txtbilling.Text, "Service", billItem, 1, "Done", 0, True, False, btnconsult.Tag)
+        Else If xauto = "Partial" Then
+          modBillings.ServiceBillBlankTaxDisc($encid, txtbilling.Text, "Service", billItem, 1, "Punched", 0, False, False, btnconsult.Tag)
+        Endif
+        modDatabase.$myConn.Commit
+      Endif
+    Endif
+
+    Dec Application.Busy
+    FillLabtable()
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub FillLabtable()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldconsulttime,fldencounterval,fldconsultname,fldid from tblconsult where fldencounterval=&1 and fldstatus=&2"                                             ''
+  res = modDatabase.$myConn.Exec(sql, $encid, "Planned")
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldconsulttime"], gb.GeneralDate)
+      Else If Column = 4 Then
+        GridView1[res.Index, Column].Picture = Picture["icon:/small/cancel"]
+        GridView1[res.Index, Column].Text = ""
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 1
+    .Columns[1].Width = 180 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[3].Text = "Consultation"
+  End With
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Column = 4 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblconsult", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      FillLabtable()
+    Endif
+  Endif
+
+End
+
+Public Sub cmbconsult_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbconsult)
+  modFillContainer.RestrictComboToContent(cmbconsult)
+
+End
+
+Public Sub btnconsult_Click()
+
+  btnconsult.Tag = MedicalSelectedUser(("Select Consultant"), modBasic.$OPConsulUserList)
+  btnconsult.Text = modGeneral.GetUserFullName(btnconsult.Tag)
+
+End
+
+Public Sub btnsms_Click()
+
+  If btnconsult.Tag Then
+    modDevice.SendSMSToRegistDoc($encid, modGeneral.GetUserContact(btnconsult.Tag))
+  Endif
+
+End
+
+Private Sub CompleteGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldconsulttime,fldencounterval,fldconsultname,flduserid from tblconsult where fldencounterval=&1 and fldstatus<>&2"
+  $rData2 = modDatabase.$myConn.Exec(sql, $encid, "Planned")
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData2, $aMyFields2)
+
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 250 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[3].Text = "Consultation"
+    .Columns[4].Text = "Consultant"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 1 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData2[$aMyFields2[Column]], gb.GeneralDate)
+  Else If Column = 4 Then
+    GridView2.Data.Text = modGeneral.GetUserFullName($rData2[$aMyFields2[Column]])
+  Else
+    GridView2.Data.Text = $rData2[$aMyFields2[Column]]
+  Endif
+
+End
+
+Public Sub btnconsult_Change()
+
+  If btnconsult.Text = "" Then
+    btnconsult.Tag = ""
+  Endif
+
+End

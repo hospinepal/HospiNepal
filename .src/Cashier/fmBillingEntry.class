@@ -1,0 +1,636 @@
+' Gambas class file
+
+Public $encid As String
+Public $billtype As String
+Public $LockToComp As Boolean
+Private $ItemList As Boolean
+Private $clear As Boolean
+
+Private $DisplayMiniCalc As String
+Private $PostInvoicePrint As String
+Private $InvoicePrintTime As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.DesignTextLabel(Me)
+
+  SetSettingBillingMode()
+  modBillings.SetCashBillingTaxDiscountTextTwo(txttaxper, txttaxamt, txtdiscper, txtdiscamt)
+  $DisplayMiniCalc = modBasic.$BillAfterPrintDisplay
+  $PostInvoicePrint = modBasic.$BillWithInvoicePrint
+  $InvoicePrintTime = modBasic.$BillPrintTime
+  txtdiscamt.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["Q"] And If Key.Control Then
+    If chkcheq.Value = True Then
+      chkcheq.Value = False
+    Else If chkcheq.Value = False Then
+      chkcheq.Value = True
+    Endif
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub rbcash_Click()
+
+  Inc Application.Busy
+  modSettings.SaveSettingsToFile("Billing/PaymentMode", "Cash")
+  BlankBill()
+  Dec Application.Busy
+  btnsave.Enabled = False
+  If Me.Parent.Parent.Parent.Name = "fmCashBilling" Then
+    fmCashBilling.ShowCashCreditMode()
+  Endif
+  txtdiscamt.SetFocus
+
+End
+
+Public Sub rbcredit_Click()
+
+  Inc Application.Busy
+  modSettings.SaveSettingsToFile("Billing/PaymentMode", "Credit")
+  BlankBill()
+  Dec Application.Busy
+  btnsave.Enabled = False
+  If Me.Parent.Parent.Parent.Name = "fmCashBilling" Then
+    fmCashBilling.ShowCashCreditMode()
+  Endif
+  txtdiscamt.SetFocus
+
+End
+
+Public Function GetCashCreditMode() As String
+
+  Dim xx As String
+
+  If rbcash.Value = True Then
+    xx = "CASH"
+  Else If rbcredit.Value = True Then
+    xx = "CREDIT"
+  Endif
+  Return xx
+
+End
+
+''---------------------------------- header part -------------------------------------------------
+Private Sub BlankBill()
+
+  txtprevdeposit.Value = 0
+  txtamtdue.Value = 0
+  txttaxamt.Value = 0
+  txtdiscamt.Value = 0
+  txttotalamt.Value = 0
+  txtrecvamt.Value = 0
+  txtcurrdeposit.Value = 0
+  txttaxper.Value = 0
+  txtdiscper.Value = 0
+  txtrecvamt.ReadOnly = False
+  $ItemList = False
+
+End
+
+Private Sub SetSettingBillingMode()
+
+  Dim xmode As String
+
+  xmode = modSettings.ShowSettingFromFIle("Billing/PaymentMode")
+  If xmode = "Credit" Then
+    rbcredit.Value = True
+  Else
+    rbcash.Value = True
+  Endif
+
+End
+
+Public Sub SetDefaultModeCashCredit()
+
+  Dim ststus As String
+  Dim xmode As String
+  Dim smode As String
+
+  smode = modBasic.$BillFixBilling
+  If smode = "Credit" Or If smode = "Cash" Then
+    rbcredit.Enabled = False
+    rbcash.Enabled = False
+    If smode = "Credit" Then
+      rbcredit.Value = True
+    Else If smode = "Cash" Then
+      rbcash.Value = True
+    Endif
+
+  Else
+    rbcredit.Enabled = True
+    rbcash.Enabled = True
+
+    xmode = modBasic.$BillDefaultBilling
+    If xmode = "Yes" Then
+
+      If modNonMedical.GetPatientDeposit($encid) > 0 Then
+        rbcredit.Value = True
+      Else
+        ststus = modPatient.CurrentAdmissionStatus($encid)
+        If ststus = "Admitted" Or If ststus = "Discharged" Or If ststus = "LAMA" Or If ststus = "Death" Or If ststus = "Refer" Then
+          rbcredit.Value = True
+        Else
+          rbcash.Value = True
+        Endif
+      Endif
+
+    Else
+      SetSettingBillingMode()
+
+    Endif
+
+  Endif
+
+End
+
+Public Sub txtdiscamt_GotFocus()
+
+  ShowBillingDatainBox()
+
+End
+
+Public Sub DirectCashBilling()
+
+  Dim xx As Boolean
+
+  If rbcash.Value = True Then
+    Inc Application.Busy
+    ShowChargecData()
+    Dec Application.Busy
+    xx = SaveBillingENtry()
+    If xx = True Then
+      btnblank_Click()
+    Else If xx = False Then
+      Message.Warning(("Error in Billing process"), ("OK"))
+    Endif
+
+  Endif
+
+End
+
+Public Sub ShowBillingDatainBox()
+
+  Inc Application.Busy
+  BlankBill()
+  If rbcash.Value = True
+    txtrecvamt.ReadOnly = True
+  Else If rbcredit.Value = True
+    txtrecvamt.ReadOnly = False
+  Endif
+  ShowChargecData()
+  Dec Application.Busy
+
+End
+
+Private Sub ShowChargecData()
+
+  Dim res As Result
+  Dim due As Float
+  Dim disc As Float
+  Dim tax As Float
+  Dim xdue As Float
+  Dim xdisc As Float
+  Dim xtax As Float
+
+  'previous deposit
+  If rbcredit.Value = True Then
+    txtprevdeposit.Value = modNonMedical.GetPatientDeposit($encid)
+  Else If rbcash.Value = True
+    txtprevdeposit.Value = 0
+  Endif
+
+  'total charge
+  If $billtype = "CashBilling" Then
+    If modBasic.$BillRestrictOwn = "Yes" Then
+      res = modDatabase.$myConn.Exec("select flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldcomp=&4", $encid, False, True, modGeneralMain.compID)
+    Else
+      If $LockToComp = True And If rbcash.Value = True Then
+        res = modDatabase.$myConn.Exec("select flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldordcomp=&4", $encid, False, True, modGeneralMain.compID)
+      Else
+        res = modDatabase.$myConn.Exec("select flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3", $encid, False, True)
+      Endif
+    Endif
+  Else If $billtype = "CashReturn" Then
+    If modBasic.$BillRestrictOwn = "Yes" Then
+      res = modDatabase.$myConn.Exec("select flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldcomp=&4 and flditemqty<&5", $encid, False, True, modGeneralMain.compID, 0)
+    Else
+      res = modDatabase.$myConn.Exec("select flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and flditemqty<&4", $encid, False, True, 0)
+    Endif
+  Else If $billtype = "PharmBilling" Then
+    res = modDatabase.$myConn.Exec("select flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldcomp=&4 and (flditemtype=&5 or flditemtype=&6 or flditemtype=&7)", $encid, False, True, modGeneralMain.compID, "Medicines", "Surgicals", "Extra Items")                                         ''
+  Else If $billtype = "PharmReturn" Then
+    res = modDatabase.$myConn.Exec("select flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldcomp=&4 and (flditemtype=&5 or flditemtype=&6 or flditemtype=&7) and flditemqty<&8", $encid, False, True, modGeneralMain.compID, "Medicines", "Surgicals", "Extra Items", 0)
+  Endif
+  due = 0
+  disc = 0
+  tax = 0
+
+  If res.Available Then
+    $ItemList = True
+    For Each res
+      xdue = 0
+      xdisc = 0
+      xtax = 0
+
+      xdue = res!flditemrate * res!flditemqty
+      xdisc = xdue * res!flddiscper / 100
+      xtax = (xdue - xdisc) * res!fldtaxper / 100
+
+      due = due + xdue
+      disc = disc + xdisc
+      tax = tax + xtax
+    Next
+  Endif
+
+  txtamtdue.Value = Round(due, -2)
+  txtdiscamt.Value = Round(disc, -2)
+  txttaxamt.Value = Round(tax, -2)
+  If txtamtdue.Value Then
+    txtdiscper.Value = Round(txtdiscamt.Value * 100 / txtamtdue.Value, -2)
+    If txtamtdue.Value = txtdiscamt.Value Then
+      txttaxper.Value = 0
+    Else
+      txttaxper.Value = Round(txttaxamt.Value * 100 / (txtamtdue.Value - txtdiscamt.Value), -2)
+    Endif
+  Endif
+
+  AdjustChargeValue()
+
+End
+
+Private Sub AdjustChargeValue()
+
+  'net total
+  txttotalamt.Value = Round(txtamtdue.Value + txttaxamt.Value - txtdiscamt.Value - txtprevdeposit.Value, -2)
+
+  'current deposit
+  If rbcash.Value = True
+    txtrecvamt.Value = txttotalamt.Value
+  Endif
+  txtcurrdeposit.Value = Round(txtrecvamt.Value - txttotalamt.Value, -2)
+
+End
+
+'----------------------------- end of header part ------------------------------------
+Public Sub txtdiscamt_LostFocus()
+
+  If txtamtdue.Value Then
+    txtdiscper.Value = Round(txtdiscamt.Value * 100 / txtamtdue.Value, -2)
+    AdjustChargeValue()
+  Endif
+  If $ItemList = True Then
+    btnsave.Enabled = True
+  Endif
+
+End
+
+Public Sub txttaxamt_LostFocus()
+
+  If txtamtdue.Value Then
+    If txtamtdue.Value = txtdiscamt.Value Then
+      txttaxper.Value = 0
+    Else
+      txttaxper.Value = Round(txttaxamt.Value * 100 / (txtamtdue.Value - txtdiscamt.Value), -2)
+    Endif
+    AdjustChargeValue()
+  Endif
+
+End
+
+Public Sub txtrecvamt_LostFocus()
+
+  AdjustChargeValue()
+  btnsave.Enabled = True
+
+End
+
+''---------------------- end of mid portion -----------------------------------------------
+Public Sub btnsave_Click()
+
+  Dim xx As Boolean
+
+  If txtrecvamt.Value = 0 Then
+    If Message.Question(("ZERO AMOUNT. Do you want to correct?"), ("Yes"), ("No")) = 2 Then
+      xx = SaveBillingENtry()
+    Else
+      txtrecvamt.SetFocus
+    Endif
+  Else
+    xx = SaveBillingENtry()
+  Endif
+  btnsave.Tag = ""
+
+End
+
+Private Function SaveBillingENtry() As Boolean
+
+  Dim billed As Boolean
+  Dim cmod As String
+  Dim txttitle As String
+  Dim $billno As String
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+  Dim $hReport As CRegistLabel
+  Dim xline As String
+  Dim idLock As Boolean
+
+  Dim res As Result
+  Dim scheq As String
+  Dim sbank As String
+  Dim xname As String[]
+
+  If $ItemList = True And If $encid Then
+    If rbcash.Value = True Then
+      cmod = "Cash"
+    Else If rbcredit.Value = True Then
+      cmod = "Credit"
+    Endif
+    If txttaxamt.Value Then
+      ShowTax = True
+    Else
+      ShowTax = False
+    Endif
+    If txtdiscamt.Value Then
+      ShowDisc = True
+    Else
+      ShowDisc = False
+    Endif
+
+    If txtcurrdeposit.Value = txtrecvamt.Value - txttotalamt.Value Then
+      If chkcheq.Value = True Then
+        xname = InputDoubleText(("Cheque and Bank Details"), ["Cheque No", "Bank Name"], ["", ""], modBasic.$BillBankList)
+        If xname Then
+          scheq = xname[0]
+          sbank = xname[1]
+        Endif
+      Endif
+
+      Inc Application.Busy
+      txtrecvamt.Value = modBillings.GetRoundupAccToSetting(txtrecvamt.Value)
+      idLock = modNonMedical.LockTableForID("Invoice")
+      If idLock = True Then
+        modDatabase.$myConn.Begin
+
+        If $billtype = "CashBilling" Then
+          If modBasic.$BillRestrictOwn = "Yes" Then
+            res = modDatabase.$myConn.Exec("select fldid From tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldcomp=&4", $encid, False, True, modGeneralMain.compID)
+          Else
+            If $LockToComp = True And If rbcash.Value = True Then
+              res = modDatabase.$myConn.Exec("select fldid From tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldordcomp=&4", $encid, False, True, modGeneralMain.compID)
+            Else
+              res = modDatabase.$myConn.Exec("select fldid From tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3", $encid, False, True)
+            Endif
+          Endif
+        Else If $billtype = "CashReturn" Then
+          If modBasic.$BillRestrictOwn = "Yes" Then
+            res = modDatabase.$myConn.Exec("select fldid From tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and flditemqty<&4 and fldcomp=&5", $encid, False, True, 0, modGeneralMain.compID)
+          Else
+            res = modDatabase.$myConn.Exec("select fldid From tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and flditemqty<&4", $encid, False, True, 0)
+          Endif
+        Else If $billtype = "PharmBilling" Then
+          res = modDatabase.$myConn.Exec("select fldid From tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldcomp=&4 and (flditemtype=&5 or flditemtype=&6 or flditemtype=&7)", $encid, False, True, modGeneralMain.compID, "Medicines", "Surgicals", "Extra Items")
+        Else If $billtype = "PharmReturn" Then
+          res = modDatabase.$myConn.Exec("select fldid From tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldcomp=&4 and (flditemtype=&5 or flditemtype=&6 or flditemtype=&7) and flditemqty<&8", $encid, False, True, modGeneralMain.compID, "Medicines", "Surgicals", "Extra Items", 0)
+        Endif
+
+        If res.Available Then
+          If $billtype = "CashBilling" Then
+            txttitle = "CASH INVOICE"
+            $billno = modNonMedical.InvoiceString("Cash Billing")
+          Else If $billtype = "CashReturn" Then
+            txttitle = "CASH RETURN INVOICE"
+            $billno = modNonMedical.InvoiceString("Cash Return")
+          Else If $billtype = "PharmBilling" Then
+            txttitle = "PHARMACY SALES INVOICE"
+            $billno = modNonMedical.InvoiceString("Pharmacy Sales")
+          Else If $billtype = "PharmReturn" Then
+            txttitle = "PHARMACY RETURN INVOICE"
+            $billno = modNonMedical.InvoiceString("Pharmacy Return")
+          Endif
+
+          If $billno Then
+            modBillings.InsertBillDetail($encid, $billno, cmod, txtprevdeposit.Value, txtamtdue.Value, txttaxamt.Value, txtdiscamt.Value, txttotalamt.Value, txtrecvamt.Value, txtcurrdeposit.Value, scheq, sbank, btntaxcategory.Tag, btndisccategory.Tag)
+            If modGeneralMain.$IRDLevel = "Yes" Then
+              modBillings.InsertBillLog($encid, $billno, txtamtdue.Value, txttaxamt.Value, txtdiscamt.Value)
+              modGeneralMain.RecordIRDActivity(modDatabase.$myConn, txttitle, Me.Name, "INSERT", $billno)
+            Endif
+            For Each res
+              modBillings.UpdatewithBillNo(res!fldid, $billno, "Cleared")
+            Next
+
+            If rbcredit.Value = True Then
+              modNonMedical.UpdatePatientDeposit($encid, txtcurrdeposit.Value)
+            Endif
+          Endif
+
+        Endif
+
+        modDatabase.$myConn.Commit
+        billed = True
+        modNonMedical.ReleaseLockTable("Invoice")
+      Endif
+      btnsave.Enabled = False
+      Dec Application.Busy
+
+      If $billno Then
+        ''print invoice
+        If $InvoicePrintTime = "Later" Then
+        Else
+          modBILLFormat.BillingInvoice($billno, txttitle, ShowTax, ShowDisc)
+        Endif
+        If $PostInvoicePrint = "Sticker" Then
+          $hReport = New CRegistLabel($encid)
+          modPrint.PrintPopUp($encid, $hReport.RegistLabelPath(), "LabelSize")
+        Else If $PostInvoicePrint = "Prescription" Then
+          modPatient.PrintRegistExtraReport($encid)
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+  If $DisplayMiniCalc = "Calculator" Then
+    btncalc_Click()
+  Else If $DisplayMiniCalc = "InvoiceInfo" Then
+    If $encid Then
+      xline = "<b>EncID:</b> " & $encid & "<br>"
+      xline = xline & "<b>Name:</b> " & modPatient.GetPatientNameByEnc($encid) & "<br>"
+      xline = xline & "<b>Invoice:</b> " & $billno & "<br>"
+      xline = xline & "<b>RecvAMT:</b> " & modReportVar.GetLocaleNumberFormat(txtrecvamt.Value, gb.Currency)
+      Message.Info(xline, ("OK"))
+    Endif
+  Endif
+
+  Return billed
+
+Catch
+  modDatabase.$myConn.Rollback
+  $billno = ""
+  If idLock = True Then
+    modNonMedical.ReleaseLockTable("Invoice")
+  Endif
+  Dec Application.Busy
+  billed = False
+  Return billed
+
+End
+
+Public Sub btnblank_Click()
+
+  $clear = True
+  If panel2.Parent.Parent.Parent.Parent.Name = "fmCashBilling" Then
+    fmCashBilling.Close
+    modHelpVariable.AddNewFormToWorkspace(fmCashBilling)
+  Else If panel2.Parent.Parent.Parent.Parent.Name = "fmBillReturn" Then
+    fmBillReturn.Close
+    modHelpVariable.AddNewFormToWorkspace(fmBillReturn)
+  Else If panel2.Parent.Parent.Parent.Parent.Name = "fmPatPharmacy" Then
+    fmPatPharmacy.Close
+    modHelpVariable.AddNewFormToWorkspace(fmPatPharmacy)
+  Else If panel2.Parent.Parent.Parent.Parent.Name = "fmReturn" Then
+    fmReturn.Close
+    modHelpVariable.AddNewFormToWorkspace(fmReturn)
+  Endif
+
+End
+
+Public Sub btnsave_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnsave_Click()
+  Endif
+
+End
+
+Public Sub btnblank_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnblank_Click()
+  Endif
+
+End
+
+Public Sub btnsave_GotFocus()
+
+  btnsave.Font.Bold = True
+
+End
+
+Public Sub btnsave_LostFocus()
+
+  btnsave.Font.Bold = False
+
+End
+
+Public Sub btnblank_GotFocus()
+
+  btnblank.Font.Bold = True
+
+End
+
+Public Sub btnblank_LostFocus()
+
+  btnblank.Font.Bold = False
+  If $clear = False Then
+    btnblank.SetFocus
+  Endif
+
+End
+
+''------------------------------- lock items ---------------------
+Public Sub txtprevdeposit_GotFocus()
+
+  btnsave.Enabled = False
+
+End
+
+Public Sub txtamtdue_GotFocus()
+
+  btnsave.Enabled = False
+
+End
+
+Public Sub txttotalamt_GotFocus()
+
+  btnsave.Enabled = False
+
+End
+
+Public Sub txtcurrdeposit_GotFocus()
+
+  btnsave.Enabled = False
+
+End
+
+Public Sub btncalc_Click()
+
+  Dim hForm As FmMiniCalc
+
+  hForm = New FmMiniCalc(txtrecvamt.Value)
+  hForm.ShowModal
+
+End
+
+Public Sub OpenCalculator()
+
+  btncalc_Click()
+
+End
+
+Public Sub btntaxcategory_Click()
+
+  Dim sval As String
+
+  If txttaxamt.Value Then
+    sval = InputBox(("Put Tax Category"), "Tax", "")
+    If sval Then
+      btntaxcategory.Tag = sval
+    Endif
+  Endif
+
+End
+
+Public Sub btndisccategory_Click()
+
+  Dim xx As String[]
+  Dim sval As String
+
+  If txtdiscamt.Value Then
+    xx = modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select fldgroup as col from tbldiscgroup"))
+    If xx Then
+      sval = InputListView("Select Discount Category", "Discount Category", xx)
+      If sval Then
+        btndisccategory.Tag = sval
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub txttaxamt_KeyRelease()
+
+  If Key.Code = Key.Right Then
+    btntaxcategory_Click()
+  Endif
+
+End
+
+Public Sub txtdiscamt_KeyRelease()
+
+  If Key.Code = Key.Right Then
+    btndisccategory_Click()
+  Endif
+
+End

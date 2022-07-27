@@ -1,0 +1,690 @@
+' Gambas module file
+
+'NOTE: ---------------------------------------- CONVERSION FOR PRINT/REPORT--------------------------
+Public Function GetPDFUnion(sPDF As String[]) As String
+
+  Dim sPath As String
+  Dim arcmd As String[]
+
+  sPath = Temp() & ".pdf"
+  arcmd = New String[]
+  arcmd.Add("pdfunite")
+  arcmd.Insert(sPDF)
+  arcmd.Add(sPath)
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+  Return sPath
+
+End
+
+Public Function ConvertTexttoHTML(stInput As String, stOutput As String)
+
+  Dim arcmd As String[]
+
+  arcmd = ["txt2html", "--tables", "--outfile", stOutput, "--infile", stInput]
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+
+End
+
+''convert HTML to Text for line printers
+Public Sub ConvertHTMLtoText(stInput As String, stOutput As String, sSize As String)
+
+  Dim arcmd As String
+  Dim xval As String
+
+  If System.Exist("links") = True Then
+    If sSize = "InvoiceSize" Then
+      xval = modSettings.ShowSettingFromFIle("Invoice/HTML-to-Text_Width")
+      If xval Then
+        If CFloat(xval) > 0 Then
+          arcmd = "links -width " & xval & " -dump " & stInput & " > " & stOutput
+        Else
+          arcmd = "links -dump " & stInput & " > " & stOutput
+        Endif
+      Else
+        arcmd = "links -dump " & stInput & " > " & stOutput
+      Endif
+    Else
+      arcmd = "links -dump " & stInput & " > " & stOutput
+    Endif
+    modBasic.DebugString("Execute " & arcmd)
+    Shell arcmd Wait
+  Endif
+
+End
+
+''convert HTML to Postscript
+' Public Function ConvertHTMLToPS(sPath As String) As String
+'
+'   Dim xx As String
+'   Dim arcmd As String
+'
+'   xx = Temp() & ".ps"
+'   arcmd = "html2ps " & sPath & " > " & xx
+'   modBasic.DebugString("Execute " & arcmd)
+'   Shell arcmd Wait
+'   Return xx
+'
+' End
+
+''convert PDF to PS
+Public Function ConvertPDFToPS(sPDF As String) As String
+
+  Dim sPath As String
+  Dim arcmd As String[]
+
+  sPath = Temp() & ".ps"
+  arcmd = ["pdftocairo", sPDF, "-ps", "-origpagesizes", sPath]
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+  Return sPath
+
+End
+
+''convert PDF to image
+Public Function ConvertPDFToImage(sPDF As String) As String
+
+  Dim sPath As String
+  Dim arcmd As String[]
+  Dim xPath As String
+
+  sPath = Temp()
+  arcmd = ["pdftocairo", sPDF, "-jpeg", sPath]
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+  xPath = sPath & "-1.jpg"
+  Return xPath
+
+End
+
+''convert HTML to Image (Not used yet- either use it or convert from pdf)
+' Public Function ConvertHTMLToImageString(sHTM As String, sSize As String) As String
+'
+'   Dim sPath As String
+'
+'   sPath = Temp() & ".png"
+'   Exec ["wkhtmltoimage", sHTM, sPath] Wait
+'   Return sPath
+'
+' End
+
+''convert HTML to PDF
+Public Function ConvertHTMLToPDFString(sHTM As String, sSize As String, Optional sUser As String) As String
+
+  Dim sPath As String
+  Dim xx As String
+  Dim sTemp As String
+  Dim xgnupg As String
+
+  If sUser Then
+    xx = sUser
+  Else
+    xx = modGeneralMain.$lbluser
+  Endif
+
+  sPath = Temp$(File.BaseName(sHTM) & "_" & xx & "_" & modBasic.$HospCode) & ".pdf"
+  SetSelectedDefaultPrinter(sSize)
+
+  xgnupg = modSettings.ShowSettingFromFIle("GeneralSettings/GnuPG_Enable")
+  If xgnupg And If xgnupg = "Yes" Then
+    sTemp = Temp() & ".pdf"
+    modHTMLtoPDF.ConvertHTMLtoPDF(sHTM, sTemp, sSize)
+    modGeneralMain.SignGnuPgKey(sTemp, sPath)
+  Else
+    modHTMLtoPDF.ConvertHTMLtoPDF(sHTM, sPath, sSize)
+  Endif
+  Return sPath
+
+End
+
+''export to other formats
+Public Sub ExportToExternalOption(sText As String, sSize As String)
+
+  Dim xx As String
+  Dim hProc As Process
+  Dim arcmd As String[]
+  Dim stOutput As String
+
+  xx = modSettings.ShowUserWiseSettingFromFIle("AppSetting_Spreadsheet")
+  If xx = "Text File" Then
+    stOutput = Temp() & ".txt"
+    ConvertHTMLtoText(sText, stOutput, sSize)
+    Desktop.Open(stOutput)
+  Else
+    If xx = "Gnumeric" Then
+      If System.Exist("gnumeric") Then
+        arcmd = ["gnumeric", sText]
+      Endif
+    Else If xx = "Abiword" Then
+      If System.Exist("abiword") Then
+        arcmd = ["abiword", "-t", "html", sText]
+      Endif
+    Else If xx = "LibreOffice Writer" Then
+      If System.Exist("libreoffice") Then
+        arcmd = ["libreoffice", "--writer", sText]
+      Endif
+    Else
+      If System.Exist("libreoffice") Then
+        arcmd = ["libreoffice", "--calc", sText]
+      Endif
+    Endif
+
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    hProc = Exec arcmd
+  Endif
+
+End
+
+'NOTE: --------------------------------------- PRINT PROCESS GENERAL ------------------------------------------
+Public Function GetDefaultPrinter(strType As String) As String
+
+  Dim xx As String
+  Dim xtarg As String
+
+  xtarg = modSettings.ShowSettingFromFIle("DefaultPrinter/" & strType)
+  If xtarg Then
+    xx = xtarg
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Sub SetSelectedDefaultPrinter(strType As String)
+
+  Dim prt As String
+  Dim arcmd As String[]
+  Dim xprt As String
+
+  xprt = GetDefaultPrinter(strType)
+  If xprt Then
+    prt = xprt
+    arcmd = ["lpoptions", "-d", prt]
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Endif
+
+End
+
+'LabelSize  'InvoiceSize  'ReportSize
+Public Sub RawLinePrinting(strPath As String, strType As String)
+
+  Dim prt As String
+  Dim arcmd As String[]
+  Dim brcmd As String
+
+  Dim xmode As String
+  Dim asx As String[]
+  Dim sLine As String
+
+  prt = GetDefaultPrinter(strType)
+
+  xmode = modSettings.ShowSettingFromFIle("LinePrinting/TextFeed")
+
+  If prt Then
+    arcmd = ["lp", "-d", prt, "-o", "raw", strPath]
+  Else
+    arcmd = ["lp", "-o", "raw", strPath]
+  Endif
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+
+End
+
+Public Sub DefaultPrinting(strPath As String, strType As String)
+
+  Dim prt As String
+  Dim sPrt As String
+  Dim arcmd As String[]
+  Dim brcmd As String
+
+  Dim xtype As String
+  Dim xtext As String
+
+  If strType = "LabelSize" Then
+    sPrt = "Label"
+  Else If strType = "InvoiceSize" Then
+    sPrt = "Invoice"
+  Else If strType = "ReportSize" Then
+    sPrt = "Report"
+  Endif
+
+  prt = GetDefaultPrinter(strType)
+  xtype = modSettings.ShowSettingFromFIle(sPrt & "/CommandType")
+  xtext = modSettings.ShowSettingFromFIle(sPrt & "/CommandText")
+
+  If prt Then
+    If xtype Then
+      If xtype = "Custom" Then
+        brcmd = "lp -d " & prt & Space(1) & xtext & Space(1) & strPath
+        modBasic.DebugString("Execute " & brcmd)
+        Shell brcmd Wait
+      Else
+        arcmd = ["lp", "-d", prt, strPath]
+        modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+        Exec arcmd Wait
+      Endif
+    Else
+      arcmd = ["lp", "-d", prt, strPath]
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+    Endif
+
+  Else
+    If xtype Then
+      If xtype = "Custom" Then
+        brcmd = "lp " & xtext & Space(1) & strPath
+        modBasic.DebugString("Execute " & brcmd)
+        Shell brcmd Wait
+      Else
+        arcmd = ["lp", strPath]
+        modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+        Exec arcmd Wait
+      Endif
+    Else
+      arcmd = ["lp", strPath]
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+    Endif
+
+  Endif
+
+End
+
+''------------------------------------ Pre print formatting -------------------------------------
+Public Function PrePrintFormatting($path As String, $size As String) As String
+
+  Dim xx As String
+
+  Dim xscript As String
+  Dim xexec As String
+
+  xscript = modSettings.ShowSettingFromFIle("PrePrintFormatScript/" & $size)
+  xexec = modSettings.ShowSettingFromFIle("PrePrintFormatExec/" & $size)
+  xx = modExternal.GerScriptValueNoCache(xscript, xexec, $path)
+  Return Trim(xx)
+
+End
+
+''======================= Application Generated Report Print/View =================================
+Public Sub OpenHTMLPreview(encid As String, sPath As String, sSize As String)
+
+  modPrint.PrintPopUp(encid, sPath, sSize)
+  modPatient.PrintExtraReport(encid, "WithReport")
+
+End
+
+''show reports directly or produce popup
+Public Sub PrintPopUp(encid As String, sPath As String, $size As String)
+
+  Dim $path As String
+  Dim hForm1 As FmPrint
+  Dim hForm2 As FmBillPrint
+
+  Dim xReport As String
+  Dim xInvoice As String
+  Dim xLabel As String
+
+  If sPath Then
+    modSettings.SaveValuesToLog("FilePath/" & $size, sPath)
+    $path = PrePrintFormatting(sPath, $size)
+
+    If $size = "ReportSize" Then
+      xReport = modSettings.ShowSettingFromFIle("Report/AutoPrint")
+      If xReport = "Print" Then
+        PrintDocumentSetting($path, $size)
+      Else If xReport = "HTMLView" Then
+        HTMLViewDOcument($path)
+      Else If xReport = "PDFView" Then
+        PDFViewDocument($path, $size)
+      Else If xReport = "Export" Then
+        OfficeExportDocument($path, $size)
+      Else If xReport = "EMail" Then
+        SendPDFMail($path, $size, encid)
+      Else If xReport = "PDFSave" Then
+        SavePDFDocument($path, $size, encid)
+      Else If xReport = "FTPLoad" Then
+        FTPUploadDocument($path, $size)
+      Else
+        hForm1 = New FmPrint(encid, $path, $size)
+        hForm1.ShowModal
+      Endif
+
+    Else If $size = "InvoiceSize" Then
+      xInvoice = modSettings.ShowSettingFromFIle("Invoice/AutoPrint")
+      If xInvoice = "Print" Then
+        PrintDocumentSetting($path, $size)  ''exprint is for copy bill
+      Else If xInvoice = "HTMLView" Then
+        HTMLViewInvoiceDOcument($path)
+      Else If xInvoice = "Export" Then
+        OfficeExportDocument($path, $size)
+      Else
+        hForm2 = New FmBillPrint(encid, $path, $size)
+        hForm2.ShowModal
+      Endif
+
+    Else If $size = "LabelSize" Then
+      xLabel = modSettings.ShowSettingFromFIle("Label/AutoPrint")
+      If xLabel = "Print" Then
+        PrintDocumentSetting($path, $size)
+      Else If xInvoice = "HTMLView" Then
+        HTMLViewInvoiceDOcument($path)
+      Else If xInvoice = "Export" Then
+        OfficeExportDocument($path, $size)
+      Else
+        hForm2 = New FmBillPrint(encid, $path, $size)
+        hForm2.ShowModal
+      Endif
+    Endif
+
+  Endif
+
+End
+
+''send to printer
+Public Sub PrintDocumentSetting($path As String, $size As String)
+
+  Dim sPath As String
+  Dim sLfile As String
+  Dim sFolder As String
+  Dim sPrt As String
+
+  Dim xmode As String
+  Dim xtext As String
+  Dim xfolder As String
+
+  If $size = "LabelSize" Then
+    sPrt = "Label"
+  Else If $size = "InvoiceSize" Then
+    sPrt = "Invoice"
+  Else If $size = "ReportSize" Then
+    sPrt = "Report"
+  Endif
+
+  modExternal.ExecBeforePrint()
+  SetSelectedDefaultPrinter($size)
+
+  xmode = modSettings.ShowSettingFromFIle(sPrt & "/PrintMode")
+  xtext = modSettings.ShowSettingFromFIle("Invoice/TextFile_Source")
+
+  If xmode = "Line" Then
+    If $size = "InvoiceSize" Then
+      If xtext = "Text" Then
+        RawLinePrinting($path, $size)
+      Else
+        sLfile = Temp() & ".txt"
+        ConvertHTMLtoText($path, sLfile, $size)
+        RawLinePrinting(sLfile, $size)
+      Endif
+    Else
+      If File.Ext($path) = "html" Then
+        sLfile = Temp() & ".txt"
+        ConvertHTMLtoText($path, sLfile, $size)
+      Else
+        sLfile = $path
+      Endif
+      RawLinePrinting(sLfile, $size)
+    Endif
+
+  Else If xmode = "Text" Then
+    If $size = "InvoiceSize" Then
+      If xtext = "Text" Then
+        DefaultPrinting($path, $size)
+      Else
+        sLfile = Temp() & ".txt"
+        ConvertHTMLtoText($path, sLfile, $size)
+        DefaultPrinting(sLfile, $size)
+      Endif
+    Else
+      If File.Ext($path) = "html" Then
+        sLfile = Temp() & ".txt"
+        ConvertHTMLtoText($path, sLfile, $size)
+      Else
+        sLfile = $path
+      Endif
+      DefaultPrinting(sLfile, $size)
+    Endif
+
+  Else If xmode = "PDF" Then
+    sPath = ConvertHTMLToPDFString($path, $size)
+    DefaultPrinting(sPath, $size)
+
+  Else If xmode = "Image" Then
+    sPath = ConvertHTMLToPDFString($path, $size)
+    sLfile = ConvertPDFToImage(sPath)
+    DefaultPrinting(sLfile, $size)
+
+  Else If xmode = "PS" Then
+    If $size = "InvoiceSize" Then
+      If xtext = "Text" Then
+      Else
+        sPath = ConvertHTMLToPDFString($path, $size)
+        sLfile = ConvertPDFToPS(sPath)
+        DefaultPrinting(sLfile, $size)
+      Endif
+    Else
+      If File.Ext($path) = "html" Then
+        sPath = ConvertHTMLToPDFString($path, $size)
+        sLfile = ConvertPDFToPS(sPath)
+        DefaultPrinting(sLfile, $size)
+      Endif
+    Endif
+
+  Else If xmode = "Folder" Then
+    xfolder = modSettings.ShowSettingFromFIle(sPrt & "/PrintFolder")
+    If xfolder Then
+      If Exist(xfolder) Then
+        sFolder = xfolder
+      Else
+        sFolder = User.Home
+      Endif
+      sPath = ConvertHTMLToPDFString($path, $size)
+      Copy sPath To sFolder &/ File.Name(sPath)
+    Endif
+
+  Endif
+
+  modExternal.ExecAfterPrint()
+  If modBasic.$ReportLogPrint = "Yes" Then
+    modImage.SaveReportLog("Print", sPath)
+  Endif
+
+End
+
+''view HTML for reports
+Public Sub HTMLViewDOcument($path As String)
+
+  Dim sTarget As String
+  Dim hForm As FmWebView
+
+  If modBasic.$ReportLogHTML = "Yes" Then
+    modImage.SaveReportLog("HTML", $path)
+  Endif
+
+  If File.Ext($path) = "txt" Then
+    sTarget = Temp() & ".html"
+    ConvertTexttoHTML($path, sTarget)
+  Else
+    sTarget = $path
+  Endif
+
+  sTarget = "file://" & sTarget
+  If modBasic.$browserFormat = "BuiltIn" Then                                             ''
+    hForm = New FmWebView(sTarget)
+    modHelpVariable.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Else
+    Desktop.Open(sTarget)
+  Endif
+
+End
+
+''view HTML embedded for invoice/restricted reports
+Public Sub HTMLViewInvoiceDOcument($path As String)
+
+  Dim hForm As FmWebView
+  Dim sTarget As String
+
+  If modBasic.$ReportLogHTML = "Yes" Then
+    modImage.SaveReportLog("HTML", $path)
+  Endif
+
+  If File.Ext($path) = "txt" Then
+    sTarget = Temp() & ".html"
+    ConvertTexttoHTML($path, sTarget)
+  Else
+    sTarget = $path
+  Endif
+
+  sTarget = "file://" & sTarget
+  hForm = New FmWebView(sTarget)
+  modHelpVariable.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+
+End
+
+''view PDF
+Public Sub PDFViewDocument($path As String, $size As String)
+
+  Dim sPath As String
+
+  sPath = ConvertHTMLToPDFString($path, $size)
+  If modBasic.$ReportLogPDF = "Yes" Then
+    modImage.SaveReportLog("PDF", sPath)
+  Endif
+  Desktop.Open(sPath)
+
+End
+
+''export to office format
+Public Sub OfficeExportDocument($path As String, sSize As String)
+
+  If modBasic.$ReportLogExport = "Yes" Then
+    modImage.SaveReportLog("Export", $path)
+  Endif
+  ExportToExternalOption($path, sSize)
+
+End
+
+''upload to FTP
+Public Sub FTPUploadDocument($path As String, $size As String)
+
+  Dim sPath As String
+  Dim hForm As FmFTPUpload
+
+  Dim sHost As String
+  Dim sFolder As String
+  Dim sUser As String
+  Dim sPass As String
+  Dim xx As String
+
+  sPath = ConvertHTMLToPDFString($path, $size)
+  If Desktop.NetworkAvailable = True Then
+    If modBasic.$ReportLogFTP = "Yes" Then
+      modImage.SaveReportLog("FTP", sPath)
+    Endif
+
+    sHost = modBasic.$RepoManHost
+    sFolder = modBasic.$RepoManFolder
+    sUser = modBasic.$RepoManUser
+    sPass = modBasic.$RepoManPass
+
+    If sHost And If sFolder And If sUser Then
+      Inc Application.Busy
+      xx = modDevice.SendFileToFTP(sHost, sFolder, sUser, sPass, modString.GetNowString(), sPath)
+      Dec Application.Busy
+      If xx Then
+        Message.Warning(xx, ("OK"))
+      Endif
+    Else
+      hForm = New FmFTPUpload(sPath)
+      hForm.ShowModal()
+    Endif
+  Endif
+
+End
+
+''send through e mail
+Public Sub SendPDFMail($path As String, $size As String, encid As String)
+
+  Dim sPath As String
+  Dim hForm As FmRemoteMail
+  Dim xx As String[]
+
+  sPath = ConvertHTMLToPDFString($path, $size)
+  If Desktop.NetworkAvailable = True Then
+    If modBasic.$ReportLogSend = "Yes" Then
+      modImage.SaveReportLog("Send", sPath)
+    Endif
+
+    xx = New String[]
+    If encid Then
+      xx.Add(modPatient.GetPatientEmail(encid))
+    Endif
+    hForm = New FmRemoteMail(xx, sPath, "Report")
+    hForm.ShowModal()
+  Endif
+
+End
+
+''save to user file system
+Public Sub SavePDFDocument($path As String, $size As String, encid As String)
+
+  Dim sPath As String
+  Dim hForm As FmSaveFile
+
+  sPath = ConvertHTMLToPDFString($path, $size)
+  If modBasic.$ReportLogSave = "Yes" Then
+    modImage.SaveReportLog("Save", sPath)
+  Endif
+
+  hForm = New FmSaveFile(sPath, encid)
+  hForm.ShowModal()
+
+End
+
+''---------------------------------- Report Procedures ------------------------
+''Export Report: open popup and then export (use for report made by app)
+Public Sub DisplayReportExport(sPath As String) As String
+
+  Dim sTarget As String
+  Dim hForm As FmWebView
+
+  If modBasic.$ExpoRepoUser = True Then
+    modPrint.PrintPopUp("", sPath, "ReportSize")
+  Else
+    sTarget = "file://" & sPath
+    hForm = New FmWebView(sTarget)
+    modHelpVariable.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+''do not open pop up form (use for html created from other apps like PSPP)
+Public Sub OpenBrowser(sPath As String)
+
+  Dim hForm As FmWebView
+  Dim sTarget As String
+
+  If InStr(sPath, "http://") Then
+    sTarget = sPath
+  Else If InStr(sPath, "file://") Then
+    sTarget = sPath
+  Else
+    sTarget = "file://" & sPath
+  Endif
+
+  If modBasic.$ExpoRepoUser = True Then
+    If modBasic.$browserFormat = "BuiltIn" Then                                             ''
+      hForm = New FmWebView(sTarget)
+      modHelpVariable.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+    Else
+      Desktop.Open(sTarget)
+    Endif
+
+  Else
+    hForm = New FmWebView(sTarget)
+    modHelpVariable.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End

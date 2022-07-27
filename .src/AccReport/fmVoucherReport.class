@@ -1,0 +1,307 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $qtyChart As String[]
+Private $amtChart As String[]
+Private $ProgressBar1 As ProgressBar
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  cmbpayer.List = modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select fldpayername as col from tblextrapayers"))
+  cmbpayer.Add("%")
+  cmbpayer.Text = "%"
+  cmbuser.List = modGeneral.GetUserIDAll()
+  cmbuser.Add("%")
+  cmbuser.Text = "%"
+
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  rbsel.Value = True
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub btnload_Click()
+
+  lstitem.List = modFillContainer.GetListFromResult(modDatabase.$syConn.Exec("select distinct(flditemname) as col from tblextrareceipt  where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+  rbsel.Value = True
+
+End
+
+Public Sub cmbpayer_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpayer)
+  modFillContainer.RestrictComboToContent(cmbpayer)
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Private Sub ExecuteQuery(sItem As String)
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,fldpayername,fldreference,flditemname,fldpayamount,fldpaytype,flduserid" & modMisc.HospField() & " from tblextrareceipt where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and fldpayername like &4 and flditemname like &5 and flduserid like &6"                                                  ''
+  $rData = modDatabase.$syConn.Exec(sql, True, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbpayer.Text, sItem, cmbuser.Text)
+
+End
+
+Public Sub cmdrepo_Click()
+
+  TabStrip1.Index = 0
+
+  Inc Application.Busy
+
+  If rbsel.Value = True Then
+    ExecuteQuery(lstitem.Text)
+  Else If rball.Value = True Then
+    ExecuteQuery("%")
+  Endif
+  ShowSaleData()
+  Wait
+
+  If chkgrid.Value = True Then
+    FillChartData()
+    If chkqty.Value = True Then
+      FillItemChartQTY()
+    Endif
+    If chkamt.Value = True Then
+      FillItemChartAMT()
+    Endif
+  Endif
+
+  Dec Application.Busy
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldtime"], gb.MediumDate)
+  Else If Column = 5 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Private Sub ShowSaleData()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Date"
+    .Columns[2].Text = "Payer"
+    .Columns[3].Text = "Reference"
+    .Columns[4].Text = "ItemName"
+    .Columns[5].Text = "Payment"
+    .Columns[6].Text = "PayMode"
+    .Columns[7].Text = "RecvBy"
+  End With
+
+End
+
+Private Sub FillChartData()
+
+  Dim totamt As Float
+  Dim totqty As Float
+
+  totqty = 0
+  totamt = 0
+  $qtyChart = New String[]
+  $amtChart = New String[]
+  $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  For Each $rData
+    totqty = totqty + 1
+    totamt = totamt + $rData!fldpayamount
+    If chkqty.Value = True Then
+      $qtyChart.Add(DateDiff(dtfir.Value, $rData!fldtime, modChart.GetDateIntegerFromSetting()))
+    Endif
+    If chkamt.Value = True Then
+      $amtChart.Add(DateDiff(dtfir.Value, $rData!fldtime, modChart.GetDateIntegerFromSetting()) & ";" & CStr($rData!fldpayamount / modChart.GetAMTValueChart()))
+    Endif
+    $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+    Wait
+  Next
+  txtqty.Value = Round(totqty, -2)
+  txtamt.Value = Round(totamt, -2)
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub GridView1_DblClick()
+
+  Dim xx As Integer
+  Dim yy As Integer
+
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+
+  If GridView1.Column = 3 Then
+    If txtinvfrom.Text = "" Then
+      txtinvfrom.Text = GridView1[GridView1.Row, 3].Text
+    Else
+      txtinvto.Text = GridView1[GridView1.Row, 3].Text
+    Endif
+  Endif
+
+End
+
+''----------------------------------------- QTY chart ------------------------------------
+Private Sub FillItemChartQTY()
+
+  Dim sPath As String
+
+  sPath = Temp()
+  File.Save(sPath, $qtyChart.Join(gb.NewLine))
+
+  PictureBox1.Tag = "VoucherCount"
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox1, modChart.FrequencyChart(sPath, "Voucher Count"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox1, modChart.FrequencyChart(sPath, "Voucher Count"))
+  Endif
+  mnustatsqty.Tag = sPath
+
+End
+
+Public Sub PictureBox1_Menu()
+
+  mnuqty.Popup
+
+End
+
+Public Sub mnuexpoqty_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox1.Picture.Save(Dialog.Path &/ PictureBox1.Tag & ".png")
+
+End
+
+Public Sub mnustatsqty_Click()
+
+End
+
+''------------------------------------------ AMT Chart ---------------------------------------
+Private Sub FillItemChartAMT()
+
+  Dim sPath As String
+  Dim sNew As String
+
+  sPath = Temp()
+  File.Save(sPath, $amtChart.Join(gb.NewLine))
+  sNew = modString.GetGroupSUmmaryCSV(sPath, 0, 1, ";", Space(1))
+
+  PictureBox2.Tag = "ReceivedAmount"
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Endif
+  mnustatsamt.Tag = sNew
+
+End
+
+Public Sub PictureBox2_Menu()
+
+  mnuamt.Popup
+
+End
+
+Public Sub mnuexpoamt_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox2.Picture.Save(Dialog.Path &/ PictureBox2.Tag & ".png")
+
+End
+
+Public Sub mnustatsamt_Click()
+
+  Desktop.Open(mnustatsamt.Tag)
+
+End
+
+''--------------------------------- Reports -----------------------------------------
+Public Sub btnfullrep_Click()
+
+  Dim xx As String
+  Dim prm As String
+  Dim sAmt As String[]
+  Dim i As Integer
+
+  xx = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate) & " Paid By: " & cmbpayer.Text & "  Recv By: " & cmbuser.Text
+  If rbsel.Value = True Then
+    prm = lstitem.Text
+  Else If rball.Value = True Then
+    prm = "All Items"
+  Endif
+  sAmt = New String[]
+  For i = 1 To 7
+    If i = 5 Then
+      sAmt.Add(modReportVar.GetLocaleNumberFormat(txtamt.Value, gb.Currency))
+    Else
+      sAmt.Add("***")
+    Endif
+  Next
+  modCHTMLReport.ExportGridToHTML(GridView1, prm, xx, sAmt)
+
+End
+
+Public Sub btnusersummary_Click()
+
+End

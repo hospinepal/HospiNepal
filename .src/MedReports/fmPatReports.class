@@ -1,0 +1,344 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  cmbcategory.List = ["Diagnostic Tests", "Radio Diagnostics", "General Reports"]
+  cmblocation.List = modBasic.$IPDDepartmentsAll
+  cmblocation.Add("%")
+  cmblocation.Text = "%"
+  cmbcategory.Text = modSettings.ShowSettingFromFIle("ArchivedReports/DefaultCategory")
+  modSettings.ShowCheckBox(chkmark, "ArchivedReport/MarkPrinted")
+  rbnew.Value = True
+  If modHelpVariable.$LogInCategory = "Consultant" Then
+    mnudel.Visible = True
+  Endif
+  cmbcategory.SetFocus
+
+End
+
+Public Sub Form_Activate()
+
+  txtencid.SetFocus
+
+End
+
+Public Sub Form_Close()
+
+  modSettings.SaveSettingsToFile("ArchivedReports/DefaultCategory", cmbcategory.Text)
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub chkmark_Click()
+
+  modSettings.EnterCheckSetting(chkmark, "ArchivedReport/MarkPrinted")
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["F"] And If Key.Control Then
+    txtencid.Text = GetEncid()
+  Else If Key.Code = Key["B"] And If Key.Control Then
+    Me.Close
+    Wait
+    modHelpVariable.AddNewFormToWorkspace(fmPatReports)
+  Endif
+
+End
+
+Public Sub mnudatesearch_Click()
+
+  Dim xdate As Date[]
+
+  xdate = DoubleDates(("Select Date Range"), "Archived Reports", [Date(), Date()])
+  If xdate Then
+    $rData = modDatabase.$syConn.Exec("select fldid,fldcateg,fldtime,fldencounterval,fldencounterval,fldtitle,fldid,flddetail,fldsave,fldlink from tblpatreport where fldtime>=&1 and fldtime<=&2 ORDER BY fldid DESC", modDate.StartSqlDate(xdate[0]), modDate.EndSqlDate(xdate[1]))
+    $aMyFields = New String[]
+    modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+    GetGridSizes()
+  Endif
+
+End
+
+Private Sub FillGridData()
+
+  Dim encid As String
+  Dim prt As Boolean
+
+  If txtencid.Text Then
+    encid = Trim(txtencid.Text)
+  Else
+    encid = "%"
+  Endif
+
+  If rbnew.Value = True Then
+    prt = True
+  Else If rbprinted.Value = True Then
+    prt = False
+  Endif
+
+  If Not cmblocation.Text Then
+    cmblocation.Text = "%"
+  Endif
+
+  If cmblocation.Text = "%" Then
+    $rData = modDatabase.$syConn.Exec("select fldid,fldcateg,fldtime,fldencounterval,fldencounterval,fldtitle,fldid,flddetail,fldsave,fldlink from tblpatreport where fldcateg=&1 and fldencounterval like &2 and fldsave=&3 ORDER BY fldid DESC", cmbcategory.Text, encid, prt)                                                                 ''
+  Else
+    $rData = modDatabase.$syConn.Exec("select fldid,fldcateg,fldtime,fldencounterval,fldencounterval,fldtitle,fldid,flddetail,fldsave,fldlink from tblpatreport where fldcateg=&1 and fldencounterval like &2 and fldsave=&3 and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &4)) ORDER BY fldid DESC", cmbcategory.Text, encid, prt, cmblocation.Text)                                                      ''
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  GetGridSizes()
+
+End
+
+Private Sub GetGridSizes()
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 1
+    .Columns[9].Width = 1
+
+    .Columns[1].Text = "Category"
+    .Columns[2].Text = "DateTime"
+    .Columns[3].Text = "Encounter"
+    .Columns[4].Text = "Name"
+    .Columns[5].Text = "Title"
+    .Columns[7].Text = "Description"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 2 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 4 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]], modDatabase.$syConn)
+  Else If Column = 6 Then
+    GridView1.Data.Picture = Picture["icon:/small/play"]
+    GridView1.Data.Text = ""
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  If txtencid.Text Then
+    txtname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
+  Endif
+  If cmbcategory.Text Then
+    FillGridData()
+  Endif
+  GridView1.Select(0, 1)
+  GridView1.SetFocus
+
+End
+
+Private Function GetBlobData(serial As Long) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim xpdf As String
+
+  sql = "select fldpic,fldlink,fldcomp from tblpatreport where fldid=&1"
+  res = modDatabase.$syConn.Exec(sql, serial)
+  If res.Available = True Then
+    If res!fldlink Then
+      Inc Application.Busy
+      tempFile = modDevice.GetFileFromLocalFTP(res!fldlink)
+      Dec Application.Busy
+    Else
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        tempFile = Temp() & ".pdf"
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+
+    If modGlobalSetting.ShowSettingFromDBAny("GeneralSettings/PDFEncrypt", res!fldcomp) = "Yes" Then
+      xpdf = Temp() & ".pdf"
+      modDevice.GetDecryptPDF(tempFile, xpdf, modGeneralMain.$CryptPDF)
+    Else
+      xpdf = tempFile
+    Endif
+  Endif
+
+  Return xpdf
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim xx As String
+  Dim res As Result
+  Dim Row As Integer
+
+  Row = GridView1.Row
+  If GridView1.Column = 7 Then
+    xx = GetTextArea(GridView1[GridView1.Row, 5].Text, GridView1[GridView1.Row, 7].Text)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatreport", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["flddetail"] = xx
+      res.Update
+      FillGridData()
+    Endif
+
+  Else If GridView1.Column = 6 Then
+    mnushow_Click()
+
+  Endif
+  GridView1.Row = Row
+
+End
+
+Private Sub MarkPrinted(serial As Long)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblpatreport", "fldid=&1", serial)
+  res["fldsave"] = False
+  res.Update
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnushow_Click()
+
+  Dim xx As Long
+  Dim yy As Integer
+  Dim Row As Integer
+
+  Row = GridView1.Row
+  If GridView1.Rows.Selection.Count > 0 Then
+    For Each yy In GridView1.Rows.Selection
+      xx = GridView1[yy, 0].Text
+      If chkmark.Value = True Then
+        MarkPrinted(xx)
+      Endif
+      Desktop.Open(GetBlobData(xx))
+    Next
+
+    If chkmark.Value = True Then
+      FillGridData()
+      txtencid.Text = ""
+    Else
+      GridView1.Row = Row
+    Endif
+  Endif
+
+End
+
+Public Sub mnuprint_Click()
+
+  Dim xx As Long
+  Dim yy As Integer
+  Dim Row As Integer
+
+  Row = GridView1.Row
+  If GridView1.Rows.Selection.Count > 0 Then
+    For Each yy In GridView1.Rows.Selection
+      xx = GridView1[yy, 0].Text
+      If chkmark.Value = True Then
+        MarkPrinted(xx)
+      Endif
+      modPrint.DefaultPrinting(GetBlobData(xx), "ReportSize")
+    Next
+
+    If chkmark.Value = True Then
+      FillGridData()
+      txtencid.Text = ""
+    Else
+      GridView1.Row = Row
+    Endif
+  Endif
+  txtencid.SetFocus
+
+End
+
+Public Sub mnudel_Click()
+
+  Dim yy As Integer
+  Dim sLink As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If rbnew.Value = True Then
+      If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+        For Each yy In GridView1.Rows.Selection
+          modDatabase.$myConn.Delete("tblpatreport", "fldid=&1 and fldsave=&2", GridView1[yy, 0].Text, True)
+          sLink = GridView1[yy, 9].Text
+          If sLink Then
+            modDevice.DeleteBlobFIleFTP(sLink)
+          Endif
+        Next
+        FillGridData()
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub mnuemail_Click()
+
+  Dim xpath As String
+  Dim hForm As FmRemoteMail
+  Dim xx As String[]
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xpath = GetBlobData(GridView1[GridView1.Row, 0].Text)
+    xx = New String[]
+    xx.Add(modPatient.GetPatientEmail(GridView1[GridView1.Row, 3].Text))
+    hForm = New FmRemoteMail(xx, xpath, "Report")
+    hForm.ShowModal()
+  Endif
+
+End
+
+Public Sub mnuftp_Click()
+
+  ''send ftp
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtencid.Text = txtencid.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End

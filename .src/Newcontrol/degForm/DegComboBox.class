@@ -1,0 +1,1039 @@
+' Gambas class file
+
+''' ComboBox like known from MS Access.
+''' Can be feeded with a two-dimensional array of Variants or a Gambas Result or
+''' a special object called DegOrm
+
+Export
+Inherits ButtonBox
+'Inherits TextBox
+
+' Component definitions
+Public Const _Group As String = "Deg"
+Public Const _Family As String = "Form"
+Public Const _DrawWith As String = "ComboBox"
+Public Const _Properties As String = "*, Index, Text, ColumnBound, ColumnSearch, OnlyListItems, -ReadOnly"
+Public Const _DefaultSize As String = "28,4"
+Public Const _DefaultEvent As String = "Click"
+
+'' Default true. If true then ComboBox allows only listed items.
+Property OnlyListItems As Boolean
+
+'' Set by DegTableView when embedded
+Property _Embedded As Boolean
+Private $IsEmbedded As Boolean
+
+'' Contains value of bound column after commit. After write
+'' Cbobox is displaying corresponding data.
+Property Index As Variant
+
+'' Contains data of column wherein is searched.
+'' After delete or set to Null also Index is deleted.
+Property Text As String
+
+' Cursor, tells number of row where the actual data found
+' At begin -1 (see Index), so that DegComboBox starts with empty values
+Private $intGridCursor As Integer = -1
+
+'' ColumnBound (column that holds the "real" data).
+'' Column position (starting from 0).
+Property ColumnBound As Integer
+
+'' ColumnSearch (column that holds the data which is showed
+'' and wherein is searched). Default 0.
+Property ColumnSearch As Integer
+
+'' Returns or sets weather Combobox.Text has changed
+Property Changed As Boolean
+
+'' How much rows are shown. Defines the height of the element when the combobox is opened.
+Property Rowcount As Integer
+Private $rowcount As Integer = 8
+
+'' GridData of Combobox
+Property Read GridData As Variant
+
+Private $bOnlyListItems As Boolean = True
+
+'' Event BeforeUpdate (Test, Index) can be canceled with "Stop Event"
+Event BeforeUpdate(Text As String, Index As Variant)
+
+'' Event AfterUpdate (Text, Index)
+Event AfterUpdate(Text As String, Index As Variant)
+
+'' Synonym for Event AfterUpdate(Text As String, Index As Variant)
+Event Save(Text As String, Index As Variant)
+
+'' If OnlyListItems = True, this event presents the data which was entered
+'' but does not match. A Stop Event in the event handler of NotInList
+'' does not set Text to Null.
+Event NotInList(Text As String)
+
+'Describes the Columns in SearchGrid
+Private $ColumnWidths As New Integer[]
+
+'Position of Column to search in
+Private $intColumnSearch As Integer
+
+'BoundColumn (column that holds the "real" data)
+Private $iColumnBound As Integer
+
+'Index Data
+Private $varIndex As Variant
+
+'If Data is Dirty (aka not returned)
+Private $bDirty As Boolean
+
+'If Grid shoult react on change
+Private $bGridChangeOk As Boolean
+
+'Contains Grid's data
+Private $GridData As GridData
+
+Private $Gridwin As Window
+Private $GridView As GridView
+
+Private $hObserver As Observer
+Private $hObs As Observer
+
+'Private $BackupLastEditorText As String
+'' Struct to backup Cbox Data to restore on key Esc
+Public Struct SBackup
+  LastEditorText As String
+  LastIndex As Variant
+End Struct
+
+Private $Backup As SBackup
+
+Public Sub _new()
+
+  Dim mother As Object
+
+  $Backup = New SBackup
+
+  Me.Picture = Picture["icon:/16/down"]
+  $hObserver = New Observer(Me) As "_InputBox"
+  Me.Button = True
+
+  mother = Me
+
+  ' NotabFocus to the button of the inherited buttonbox
+  mother.children[0].children[1].NoTabFocus = True
+  'Debug "test ok"
+
+End
+
+Private Function OnlyListItems_Read() As Boolean
+
+  Return $bOnlyListItems
+
+End
+
+Private Function OnlyListItems_Write(value As Boolean)
+
+  $bOnlyListItems = value
+
+End
+
+Public Sub Show()
+
+  Me.Visible = True
+
+End
+
+'' Opens the combobox, aka shows the boxes' window
+Public Sub Open()
+
+  ShowGrid()
+
+End
+
+Public Function _InputBox_Change()
+
+  If GridwinExist() Then
+    Stop Event
+  Endif
+  Me.Changed = True
+  'Debug "Change triggered, Index: " & Me.Index
+
+End
+
+Public Function _InputBox_GotFocus()
+
+  'Debug "I Got Focus"
+  If Not GridwinExist() Then
+    'Debug "BackupEditorText =";; $BackupLastEditorText
+    '$BackupLastEditorText = Me.Editor.Text
+    $Backup.LastEditorText = Me.Editor.Text
+    $Backup.LastIndex = Me.Index
+  Endif
+
+End
+
+Public Function _InputBox_DblClick()
+
+  F4()
+
+End
+
+'' Opens the ComboBox or (should) close it, when open.
+Public Function _InputBox_Click()
+
+  F4()
+
+End
+
+Public Sub _Window_Close()
+
+  If GridwinExist() Then Killgrid()
+
+End
+
+Public Sub _Window_Move()
+
+  If GridWinExist() Then PositionGridwin
+
+End
+
+Public Sub _Window_Resize()
+
+  If GridWinExist() Then PositionGridwin
+
+End
+
+Public Sub Gridwin_Deactivate()
+
+  Try $Gridwin.Close
+  Me.Window.Activate
+  Me.SetFocus
+
+End
+
+'' Synonym for SetColumnWidths(Widths)
+
+Public Sub DefineColumnWidths(Widths As Integer[])
+
+  SetColumnWidths(Widths)
+
+End
+
+'' Widths = array of widths (in pixel units) of the columns in right order.
+'' To hide first column with a primarykey, set it to 0.
+
+Public Sub SetColumnWidths(Widths As Integer[])
+
+  Dim i As Integer
+
+  $ColumnWidths.Clear
+
+  i = 0
+  For Each Widths
+    $ColumnWidths.Add(Widths[i])
+    i += 1
+  Next
+
+End
+
+'' Set data of DegComboBox. Can be either a twodimensional array of Variant or
+'' a Gambas Result (gb.db) or DegOrm (curently not free code, sorry)
+
+Public Sub SetListData(Data As Variant)
+
+  ' If $GridData Then
+  '     $GridData.Clear
+  ' Endif
+
+  $GridData = New GridData
+  $GridData.SetData(Data)
+  $varIndex = Null
+
+  ' Update Gridwin, if opened
+  If GridwinExist() = True Then
+    FillGrid()
+  Endif
+
+End
+
+Private Sub FillGrid()
+
+  Dim r As Integer 'row
+  Dim c As Integer 'column
+  Dim rcount As Integer
+  Dim ccount As Integer
+  'Dim Data As Variant
+
+  'to prevent out-of-bounds-error
+  If $GridData.Count > 0 Then
+
+    rcount = $GridData.Count
+    ccount = $GridData.ColumnCount
+    $GridView.Rows.Count = rcount
+    $GridView.Columns.Count = ccount
+
+    'TODO: Weiten noch einstellen
+    For r = 0 To rcount - 1
+      For c = 0 To ccount - 1
+        Try $GridView[r, c].text = $GridData[r][c]
+      Next
+    Next
+  Endif
+
+End
+
+Public Sub _InputBox_KeyPress()
+
+  ReactOnKey(Key.Code)
+
+End
+
+Public Sub GridV_KeyPress()
+
+  ReactOnKey(Key.Code)
+
+End
+
+Public Sub GridV_Click()
+
+  SelectToInput()
+  Killgrid
+  RaiseSave
+  Me.SetFocus
+
+End
+
+'' Returns the content of column Col of DegComboBox. If Row is Null
+'' and the currend row is definded by Index this is choosen, else row 0.
+''
+'' As DegComboBox can contain a lot of columns, this function allows to
+'' pick the value of each.
+
+Public Function ColumnContent(Col As Integer, Optional Row As Variant) As Variant
+
+  'Liefert den Inhalt einer Spalte
+  If Row = Null Then
+    If $intGridCursor > 0 Then
+      Row = $intGridCursor
+    Else
+      Row = 0
+    Endif
+  Endif
+
+  Return $GridData[Row][Col]
+
+End
+
+Private Sub ReactOnKey(Keycode As Integer)
+
+  Dim l As Integer
+  Dim text, Searchstr As String
+  Dim selstart As Integer
+  Dim sellen As Integer
+
+  ' ------------------------------------------------- Richtungstasten
+  If GridwinExist() Then
+    Select Case Keycode
+      Case Key.Up
+
+        $GridView.MoveTo($GridView.Row - 1, 0)
+        SelectToInput()
+        Stop Event
+
+      Case Key.Down
+
+        $GridView.MoveTo($GridView.Row + 1, 0)
+        SelectToInput()
+        Stop Event
+
+      Case Key.PageUp
+
+        $GridView.MoveTo($GridView.Row - 5, 0)
+        SelectToInput()
+        Stop Event
+
+      Case Key.PageDown
+
+        $GridView.MoveTo($GridView.Row + 5, 0)
+        SelectToInput()
+        Stop Event
+
+    End Select
+  Endif
+
+  ' ------------------------------------------------- Steuertasten
+  Select Case Keycode
+    Case Key.Return
+      Goto KeyEnter
+    Case Key.Enter
+      ' ------------------------------------------------- Enter / Return
+    KeyEnter:
+      If (GridwinExist()) Then
+        SelectToInput()
+        Killgrid
+      Endif
+      If Me.Editor.Text Then
+        l = String.Len(Me.Editor.Text)
+        Me.Editor.Select(l, l)
+      Else
+        Me.Editor.Select(0, 0)
+      Endif
+      RaiseSave
+
+    Case Key.Tab
+      ' ------------------------------------------------- Tab
+      If Me.Changed Then
+        RaiseSave
+      Endif
+      Killgrid
+
+    Case Key.Delete
+      ' ------------------------------------------------- Delete
+      text = Me.Editor.Text
+      If Me.Editor.Selection.Length > 0 Then
+        Me.Editor.Text = String.Left(Me.Editor.Text, Me.Editor.Selection.start) &
+          String.Right(Me.Editor.Text, String.Len(Me.Editor.Text) - (Me.Editor.Selection.start + Me.Editor.Selection.Length))
+      Endif
+
+      'test if all was deleted ...
+      If Me.Editor.Text = Null Then
+        SetIndex(Null)
+      Endif
+      If Me.Editor.Text <> text Then
+        'then also save:
+        RaiseSave
+      Endif
+
+    Case Key.Esc
+      ' ------------------------------------------------- Esc
+      RestoreData
+      Killgrid
+
+    Case Key.BackSpace
+      ' ------------------------------------------------- Backspace
+      'Reduce text by one or selection
+      If Me.Editor.Selection.Length = 0 Then
+        Me.Editor.Text = String.Left(Me.Editor.Text, String.Len(Me.Editor.Text) - 1)
+      Else
+        Me.Editor.Text = String.Left(Me.Editor.Text, Me.Editor.Selection.Start)
+      Endif
+
+      Stop Event
+
+      If String.Len(Me.Editor.Text) = 0 Then
+        Reset()
+        Killgrid
+      Endif
+      'search
+      DoSearch(Me.Editor.Text, True)
+
+    Case Key.F4
+      ' ------------------------------------------------- F4
+      F4()
+      ' ------------------------------------------------- Normaler Text eingegeben
+    Case Else
+      If Regexp.Match(Key.Text, "[\\s\\d\\wäöüÄÖÜß&-+;:.,!]")
+        If Key.Normal Or If Key.Shift Then
+          'Text im Eingabefeld wird um den
+          'eingegebenen Buchstaben ergänzt
+          'und Searchstr angepasst
+
+          sellen = Me.Editor.Selection.Length
+          selstart = Me.Editor.Selection.Start
+          text = Me.editor.Text
+
+          If sellen > 0 Then
+            Searchstr = String.Left(text, selstart) & Key.Text
+          Else If selstart > -1 Then
+            Searchstr = String.Left(text, selstart) & Key.Text & String.Right(text, String.Len(text) - selstart)
+            'Me.editor.Text = text
+          Else
+            Searchstr = Key.Text
+          Endif
+
+          If $GridData Then
+            If $GridData.count > 0 Then
+              'Search
+              'Finds String in Griddata
+              DoSearch(Searchstr)
+            Else
+              ' No Griddata, can write anything if allowed
+              If Me.OnlyListItems = False Then
+                Me.editor.Text = Searchstr
+              Endif
+            Endif
+            Stop Event
+          Endif
+          'wrong, disables typing when cbobox has no $GridData
+          'Stop Event
+        Endif
+      Endif
+  End Select
+
+End
+
+'' The grand opener. Opens the gridwin,
+'' called F4 cause of the key that opens the box
+
+Sub F4()
+
+  Showgrid
+  DoSearch(Me.Text,, True)
+  Me.SetFocus
+
+End
+
+Private Sub SelectToInput()
+
+  Dim GridText As String
+  ' Dim lengridtext As Integer
+  ' Dim lensearch As Integer
+  Dim Searchstr As String
+
+  Searchstr = GetSearchTextFromEditor()
+
+  If GridWinExist() Then
+    If 0 <= $GridView.Row And $GridView.Row < $GridView.Rows.Count Then
+      GridText = $GridView[$GridView.row, $intColumnSearch].text
+      SetIndex($GridView[$GridView.row, $iColumnBound].Text)
+
+      If Searchstr Then
+        ' Create selection as complement
+        ' Here was a Bug in Gambas3.6, fixed in #6613
+        ' https://code.google.com/p/gambas/issues/detail?id=576
+        ' lensearch = Len(Searchstr)
+        ' lengridtext = Len(GridText)
+
+        OverlayEditorText(Searchstr, GridText)
+
+        'Me.Editor.Text = GridText
+        ' If Lower(Left(GridText, lensearch)) = String.Lower(Searchstr) Then
+        '     Me.Editor.Select(lensearch, lengridtext)
+        ' Endif
+        'Endif
+      Else
+        'Debug "GridText = ";; GridText
+        Me.Editor.Text = GridText
+      Endif
+    Endif
+  Endif
+
+End
+
+' Liefert den Text, der im Editor nicht
+' selektiert ist
+Private Function GetSearchTextFromEditor() As String
+
+  Dim text As String
+  Dim selstart As Integer
+  Dim sellen As Integer
+
+  text = Me.Editor.Text
+
+  sellen = Me.Editor.Selection.Length
+  selstart = Me.Editor.Selection.Start
+  text = Me.editor.Text
+
+  If sellen > 0 Then
+    text = String.Left(text, selstart)
+  Else If selstart > -1 Then
+    text = String.Left(text, selstart) & String.Right(text, String.Len(text) - selstart)
+  Endif
+  'Debug text
+  Return text
+
+End
+
+Private Sub RaiseSave()
+  '' The one and only exit of class
+  '' fills Index and Text
+
+  Dim cancel As Boolean
+
+  ' ------------------------------------------------- Test if ok
+  If $bDirty Then
+    'Debug "RaiseSave Triggered"
+
+    ' Früherer Fehler war: FindExactWord(Me.Editor.Text) fand bei identischen
+    ' Namen ("schmidt") immer nur den ersten (und änderte den Index  - bäh),
+    ' jetzt sucht es nur noch nach Vorhandensein
+    ' TODO: sollte boolean liefern
+    If Me.OnlyListItems And If FindExactWord(Me.Editor.Text) = Null Then
+      cancel = Raise NotInList(Me.Editor.Text)
+      If cancel = False Then
+        ' Only list items allowed ... (sorry, no i8n)
+        ' In english: Only items in list allowed
+        Message.Warning("Only items in list allowed", ("OK"))
+        If Me._Embedded = False Then
+          RestoreData()
+        Endif
+        ' Me.Changed = False
+        Stop Event
+        Goto Ende
+      Else
+        Me.Changed = True
+        Goto Ende
+      Endif
+    Endif
+
+    If Me.Editor.Text = "" Then
+      Me.Index = Null
+    Endif
+  Endif
+
+  ' ------------------------------------------------- Raise events
+  cancel = Raise BeforeUpdate(Me.Editor.Text, $varIndex)
+  If cancel = False Then
+    Raise AfterUpdate(Me.Editor.Text, $varIndex)
+    'for compatibility only
+    Raise Save(Me.Editor.Text, $varIndex)
+    Me.Index = $varIndex
+    Raise Change()
+  Else
+    'Me.Editor.Text = $BackupLastEditorText
+    $Backup.LastEditorText = Me.Editor.Text
+    $Backup.LastIndex = Me.Index
+  Endif
+
+Raus:
+  Me.Changed = False
+Ende:
+
+End
+
+Private Sub Reset()
+
+  'test : Never do this!!!
+  'Me.Editor.Text = Null
+  Me.Changed = False
+
+End
+
+Private Sub Showgrid(Optional iSelectIndex As Integer)
+
+  ''Shows the Grid in a Window flying above all ...
+
+  Dim gridcol, w As Integer
+  Dim hParent As Control = Me.Window
+
+  'some robustness
+  If $GridData Then
+    If $GridData.Count = 0 Then
+      Goto Ende
+    Endif
+  Else
+    Goto Ende
+  Endif
+
+  'BackupEditorText()
+
+  'Search for Top Window
+  While hParent.Parent
+    'Debug "Passing container";; hParent.Name
+    hParent = hParent.Parent.Window
+  Wend
+
+  'Debug hParent.Name
+
+  'Debug "Unembedded top-level window found:";; hParent.Name
+  $hObs = New Observer(hParent) As "_Window"
+
+  If Not GridWinExist() Then
+    $Gridwin = New Window As "Gridwin"
+  Endif
+
+  With $Gridwin
+    .Arrangement = Arrange.Fill
+    $GridView = New GridView($Gridwin) As "GridV"
+    $GridView.Expand = True
+    $GridView.Mode = Select.Single
+    '' Muss hier stehen, wenn weiter oben, doch Borders
+    FillGrid
+    '.Border = False
+    '.Visible = False
+    'to prevent out-of-bounds-error
+    If $GridData.Count > 0 Then
+      $GridView.Rows.Height = 25 * modBasic.$AppHeightRatio
+      If $GridData.ColumnCount > 1 Then
+        For gridcol = 0 To $GridData.ColumnCount - 1
+          If gridcol < $ColumnWidths.Count Then
+            w = $ColumnWidths[gridcol]
+            $GridView.Columns[gridcol].Width = w
+          Else
+            'not defined withs are maxed out to 1000
+            'max 1024!
+            $GridView.Columns[gridcol].Width = 1000
+          Endif
+          'Debug "Weite: "; gridcol; ": "; $GridView.Columns[gridcol].Width
+        Next
+      Else
+        'Todo: Width of only Column should add to 100%
+        $GridView.Columns[0].Width = Me.Parent.Width - Me.X
+      Endif
+
+      If $GridView.Rows.Count > Me.Rowcount - 1 Then
+        .Height = $GridView.Rows.Height * (Me.Rowcount - 1)
+      Else
+        .Height = $GridView.Rows.Height * $GridView.Rows.Count + 2
+      Endif
+      $GridView.Height = .Height
+      .Width = Me.Parent.Width - Me.X
+      $GridView.ScrollBar = Scroll.Both
+      If iSelectIndex > -1 Then
+        $GridView.Rows[iSelectIndex].Selected = True
+      Endif
+      PositionGridwin
+      .Stacking = Window.Above
+      .SkipTaskbar = True
+      .Border = False
+      .Show
+    Endif
+  End With
+
+Ende:
+
+Catch
+  Error.Raise(Error.Text)
+
+End
+
+Sub BackupData(Optional Force As Boolean)
+
+  If $Backup.LastEditorText = "" Then
+    $Backup.LastEditorText = Me.Editor.Text
+    $Backup.LastIndex = Me.Index
+  Else If Force = True Then
+    $Backup.LastEditorText = Me.Editor.Text
+    $Backup.LastIndex = Me.Index
+  Endif
+
+End
+
+Sub RestoreData()
+
+  'Debug "$BackupLastEditorText";; $BackupLastEditorText
+  If Me.Changed = True Then
+    Me.Editor.Text = $Backup.LastEditorText
+    Me.Index = $Backup.LastIndex
+    Me.Changed = False
+  Endif
+
+End
+
+Private Sub PositionGridwin()
+
+  If Me.ScreenY + Me.Height + $Gridwin.Height > Desktop.Height Then
+    'Debug "Not enough place unserneath"
+    $Gridwin.Top = Me.ScreenY - $Gridwin.Height '* 2
+  Else
+    $Gridwin.Top = Me.ScreenY + Me.Height '* 2
+  Endif
+
+  $Gridwin.Left = Me.ScreenX - 2
+
+End
+
+Private Sub Killgrid()
+
+  Dim w As Window
+
+  w = Me.Window
+  'Message(w.Name)
+
+  If GridWinExist() Then
+    $Gridwin.Close
+    $bGridChangeOk = False
+  Endif
+
+  'Me.Window.Activate
+  w.Activate
+  w.SetFocus
+  Me.SetFocus
+
+Catch
+  Error.Propagate
+
+End
+
+Private Function DoSearch(Searchstr As String, Optional NoOverlayEditorText As Boolean, Optional NoClose As Boolean) As String
+
+  ''Searches Index by left(searchstring)
+
+  Dim Data As Variant[]
+  Dim Gridstr As String
+  Dim LenSearchstr As Integer
+  Dim lowSearchStr As String
+  Dim row As Integer
+  Dim Found As Boolean
+
+  LenSearchstr = String.Len(Searchstr)
+  SetIndex(Null)
+
+  Data = $GridData
+
+  'Iterate through grid data to find searchstring
+  If Data Then
+    If LenSearchstr > 0 Then
+      lowSearchStr = String.Lower(Searchstr)
+      For row = 0 To Data.Count - 1
+        Gridstr = Data[row][$intColumnSearch]
+        If String.Left(String.Lower(Gridstr), LenSearchstr) = lowSearchStr Then
+          Found = True
+          'Found!
+          'Debug "found"
+          Showgrid(row)
+          ' Update Editor.Text (Selection)
+          If NoOverlayEditorText = False Then
+            OverlayEditorText(Searchstr, Gridstr)
+          Endif
+          ' Save Grid Cursor for later usage
+          $intGridCursor = row
+          '$varIndex = $GridView[$GridView.row, $iColumnBound].Text
+          SetIndex(Data[row][$iColumnBound])
+          'Debug "Index gefunden: "; $varIndex
+          Return Gridstr
+        Else
+          Me.Editor.Text = Searchstr
+        Endif
+      Next
+    Endif
+  Else
+    Me.Editor.Text = Searchstr
+  Endif
+
+  If Found = False Then
+    'Debug "Not Found, Kill Grid"
+    If NoClose = False Then
+      Killgrid()
+    Endif
+  Endif
+  'Me.SetFocus
+
+End
+
+Function GridWinExist() As Boolean
+
+  If Object.IsValid($Gridwin) Then
+    Return True
+  Else
+    Return False
+  Endif
+
+End
+
+'' Walk through Grid data to find Index, then
+'' fills Text with value of column bound
+
+Private Sub DoIndexSearch()
+
+  Dim valCol As Variant
+  Dim valIndex As Variant
+  Dim row As Integer
+
+  For row = 0 To $GridData.Count - 1
+    valIndex = $GridData[row][$iColumnBound]
+    If $varIndex = valIndex Then
+      valCol = $GridData[row][$intColumnSearch]
+      Me.Editor.Text = Str(valCol)
+      BackupData()
+      $intGridCursor = row
+      Break
+    Endif
+  Next
+
+End
+
+'' Returns any value of DegComboBox for a given Index. DataColum
+'' defines the column where the data resides. If it is Null, then
+'' GetValueByIndex returns the data of the column defined in ColumnSearch.
+
+Public Function GetValueByIndex(Index As Variant, Optional DataColumn As Integer = -1) As Variant
+
+  Dim valCol As Variant
+  Dim valIndex As Variant
+  Dim row As Integer
+
+  If DataColumn = -1 Then
+    DataColumn = $intColumnSearch
+  Endif
+
+  For row = 0 To $GridData.Count - 1
+    valIndex = $GridData[row][$iColumnBound]
+    If Index = valIndex Then
+      valCol = $GridData[row][DataColumn]
+      Return valCol
+    Endif
+  Next
+
+End
+
+Private Function FindExactWord(Searchstr As String) As Variant
+
+  'walk through Grid data to find exact Word
+  Dim row As Integer
+  Dim Gridval As Variant
+
+  If $GridData Then
+    For row = 0 To $GridData.Count - 1
+      Gridval = $GridData[row][$intColumnSearch]
+      If Searchstr = Gridval Then
+        Return $GridData[row][$iColumnBound]
+        Break
+      Endif
+    Next
+  Endif
+
+End
+
+Private Function Index_Read() As Variant
+
+  Return $varIndex
+
+End
+
+Private Sub Index_Write(Value As Variant)
+
+  If $varIndex <> value Then
+    SetIndex(value)
+    DoIndexSearch()
+  Endif
+
+End
+
+Private Function Text_Read() As String
+
+  Return Me.Editor.Text
+
+End
+
+Private Sub Text_Write(Value As String)
+
+  Me.Editor.Text = Value
+
+End
+
+Private Function ColumnBound_Read() As Integer
+
+  Return $iColumnBound
+
+End
+
+Private Sub ColumnBound_Write(Value As Integer)
+
+  $iColumnBound = Value
+
+End
+
+Private Function ColumnSearch_Read() As Integer
+
+  Return $intColumnSearch
+
+End
+
+Private Sub ColumnSearch_Write(Value As Integer)
+
+  $intColumnSearch = Value
+
+End
+
+Private Function Changed_Read() As Boolean
+
+  Return $bDirty
+
+End
+
+Private Sub Changed_Write(Value As Boolean)
+
+  $bDirty = Value
+  If value = True Then
+    'Debug "Combobox changed"
+  Else
+    BackupData()
+    'Debug "Combobox unchanged"
+  Endif
+
+End
+
+Private Function Rowcount_Read() As Integer
+
+  Return $rowcount
+
+End
+
+Private Sub Rowcount_Write(Value As Integer)
+
+  $rowcount = Value
+
+End
+
+Private Function GridData_Read() As Variant
+
+  Return $GridData
+
+End
+
+'sets index but converts data to correct type
+Private Sub SetIndex(Value As Variant)
+
+  Dim type As Integer
+
+  If $GridData Then
+
+    type = $GridData.Types[Me.ColumnBound]
+
+    If TypeOf(Value) <> type Then
+      Select Case type
+        Case gb.Boolean
+          $varIndex = CBool(Value)
+        Case gb.Byte
+          If Value = Null Then Value = 0
+          $varIndex = CByte(Value)
+        Case gb.Date
+          $varIndex = CDate(Value)
+        Case gb.Float
+          If Value = Null Then Value = 0
+          $varIndex = CFloat(Value)
+        Case gb.Integer
+          If Value = Null Then Value = 0
+          $varIndex = CInt(Value)
+        Case gb.Long
+          If Value = Null Then Value = 0
+          $varIndex = CLong(Value)
+        Case gb.Short
+          If Value = Null Then Value = 0
+          $varIndex = CShort(Value)
+        Case gb.Single
+          If Value = Null Then Value = 0
+          $varIndex = CSingle(Value)
+        Case gb.String
+          $varIndex = CStr(Value)
+
+      End Select
+    Else
+      $varIndex = Value
+    Endif
+  Endif
+
+Catch
+  $varIndex = Null
+
+End
+
+Sub OverlayEditorText(Searchstr As String, Gridstr As String)
+
+  'Debug Searchstr;; " ";; Gridstr
+  Me.Editor.Text = Gridstr
+  Me.Editor.Select(Len(Searchstr), Len(Gridstr) - Len(Searchstr))
+  'Me.Editor.Cursor = Null
+
+End
+
+Private Function _Embedded_Read() As Boolean
+
+  Return $IsEmbedded
+
+End
+
+Private Sub _Embedded_Write(Value As Boolean)
+
+  $IsEmbedded = Value
+
+End

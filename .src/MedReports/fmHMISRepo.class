@@ -1,0 +1,1884 @@
+' Gambas class file
+
+Private $ProgressBar1 As ProgressBar
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  ListBox1.List = ["Hospital Services", "Emergency Services", "Radiology Services", "Inpatient Outcome", "Outpatient Morbidity", "AgeWise Morbidity", "Vaccinations", "Obstetrics", "Procedures", "Death Info", "Laboratory"]                                                                                ''
+  cmbagegroup.List = ["HMIS", "Default"]
+  cmbsexgroup.List = ["HMIS", "Default"]
+  cmbagegroup.Text = "HMIS"
+  cmbsexgroup.Text = "HMIS"
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  dtfir_LostFocus()
+  dtlast_LostFocus()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub dtfir_LostFocus()
+
+  txtnepfir.Text = modDate.ConvertToLocaldate(dtfir.Value)
+
+End
+
+Public Sub dtlast_LostFocus()
+
+  txtneplast.Text = modDate.ConvertToLocaldate(dtlast.Value)
+
+End
+
+Public Sub txtnepfir_LostFocus()
+
+  dtfir.Value = modDate.ConvertToEnglishdate(txtnepfir.Text)
+
+End
+
+Public Sub txtneplast_LostFocus()
+
+  dtlast.Value = modDate.ConvertToEnglishdate(txtneplast.Text)
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, ListBox1.Text, modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate))
+
+End
+
+Public Sub ListBox1_Click()
+
+  cmbcategory.Clear()
+  If ListBox1.Text = "Outpatient Morbidity" Then
+    cmbcategory.List = modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select distinct(fldgroupname) as col from tbldiagnogroup"))
+    cmbcategory.Text = "%"
+  Else If ListBox1.Text = "AgeWise Morbidity" Then
+    cmbcategory.List = ["Inpatient Morbidity", "General Morbidity"]
+  Else If ListBox1.Text = "Obstetrics" Then
+    cmbcategory.List = ["Maternal Age", "Gravida Info", "Delivery Type", "Live Deliveries", "Birth Weight"]
+  Else If ListBox1.Text = "Laboratory" Then
+    cmbcategory.List = modMedicine.GetPathoCategoryList("Test")
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  GridView1.Clear()
+  $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  Wait
+
+  If ListBox1.Text = "Hospital Services" Then
+    GetHospitalService()
+  Else If ListBox1.Text = "Emergency Services" Then
+    GetEmergencyServices()
+  Else If ListBox1.Text = "Radiology Services" Then
+    GetRadiologyService()
+  Else If ListBox1.Text = "Inpatient Outcome" Then
+    ShowInpatientsOutcome()
+  Else If ListBox1.Text = "AgeWise Morbidity" Then
+    If cmbcategory.Text = "Inpatient Morbidity" Then
+      GetAgeWiseMorbidity("InPatient")
+    Else If cmbcategory.Text = "General Morbidity" Then
+      GetAgeWiseMorbidity("General")
+    Endif
+  Else If ListBox1.Text = "Outpatient Morbidity" Then
+    GetNewOPDMorbidity()
+  Else If ListBox1.Text = "Obstetrics" Then
+    If cmbcategory.Text = "Maternal Age" Then
+      FillMaternalAgeData()
+    Else If cmbcategory.Text = "Gravida Info" Then
+      GetGravidaReport()
+    Else If cmbcategory.Text = "Delivery Type" Then
+      DeliveryTypeReport()
+    Else If cmbcategory.Text = "Live Deliveries" Then
+      GetLiveDeliveryBabyQTY()
+    Else If cmbcategory.Text = "Birth Weight" Then
+      BirthWeightreportCompli()
+    Endif
+  Else If ListBox1.Text = "Procedures" Then
+  Else If ListBox1.Text = "Death Info" Then
+    GetDeathReportHMIS()
+  Else If ListBox1.Text = "Laboratory" Then
+    GetLaboratoryHMISReport()
+  Endif
+
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+''============================Hospital Service======================
+Private Sub GetHospitalService()
+
+  Dim ageList As String[]
+  Dim xval As String
+  Dim asx As String[]
+
+  Dim sexList As String[]
+  Dim sex As String
+  Dim agestring As String
+  Dim res As Result
+  Dim k As Integer
+  Dim xcnt As Integer
+
+  Dim Row As Integer
+  Dim xmale As Integer
+  Dim xfemale As Integer
+  Dim xother As Integer
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = ["0-9 years;0;3649", "10-19 years;3650;7299", "20-59 years;7300;21899", ">=60 years;21900;73000"]
+  Else
+    ageList = modMedReports.AgeGroupGeneralList()
+  Endif
+  If cmbsexgroup.Text = "HMIS" Then
+    sexList = ["Male", "Female"]
+  Else
+    sexList = ["Male", "Female", "Other"]
+  Endif
+  agestring = modMedReports.GetAgeStringByTable("tblencounter", modDatabase.$syConn)
+  GridView1.Clear()
+  GridView1.Columns.Count = 1 + sexList.Count * 2
+  GridView1.Rows.Count = ageList.Count + 1
+
+  Inc Application.Busy
+  Row = 0
+  xmale = 0
+  xfemale = 0
+  xother = 0
+  For Each xval In ageList
+    asx = Split(xval, ";")
+    GridView1[Row, 0].Text = asx[0]
+    k = 1
+    For Each sex In sexList
+      xcnt = 0
+      res = modDatabase.$syConn.Exec("select COUNT(tblencounter.fldencounterval) as tot from tblencounter inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblencounter.fldregdate>=&1 and tblencounter.fldregdate<=&2 and tblpatientinfo.fldptsex=&3 and " & agestring & ">=&4 and " & agestring & "<&5 and tblencounter.fldvisit=&6", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), sex, CInt(asx[1]), CInt(asx[2]), "NEW")                                                       ''
+      If res["tot"] Then
+        xcnt = xcnt + res["tot"]
+      Endif
+      GridView1[Row, k].Text = xcnt
+      k = k + 1
+    Next
+
+    For Each sex In sexList
+      xcnt = 0
+      res = modDatabase.$syConn.Exec("select COUNT(tblencounter.fldencounterval) as tot from tblencounter inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblencounter.fldregdate>=&1 and tblencounter.fldregdate<=&2 and tblpatientinfo.fldptsex=&3 and " & agestring & ">=&4 and " & agestring & "<&5", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), sex, CInt(asx[1]), CInt(asx[2]))                                                       ''
+      If res["tot"] Then
+        xcnt = xcnt + res["tot"]
+      Endif
+      GridView1[Row, k].Text = xcnt
+      If sex = "Male" Then
+        xmale = xmale + xcnt
+      Else If sex = "Female" Then
+        xfemale = xfemale + xcnt
+      Else If sex = "Other" Then
+        xother = xother + xcnt
+      Endif
+
+      k = k + 1
+    Next
+
+    Row = Row + 1
+    $ProgressBar1.Value = Row / ageList.Count
+    Wait
+  Next
+
+  If cmbsexgroup.Text = "HMIS" Then
+    GridView1[Row, 0].Text = "Total"
+    GridView1[Row, 1].Text = ""
+    GridView1[Row, 2].Text = ""
+    GridView1[Row, 3].Text = xmale
+    GridView1[Row, 4].Text = xfemale
+  Else
+    GridView1[Row, 0].Text = "Total"
+    GridView1[Row, 1].Text = ""
+    GridView1[Row, 2].Text = ""
+    GridView1[Row, 3].Text = ""
+    GridView1[Row, 4].Text = xmale
+    GridView1[Row, 5].Text = xfemale
+    GridView1[Row, 6].Text = xother
+  Endif
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    If cmbsexgroup.Text = "HMIS" Then
+      .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+      .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+
+      .Columns[0].Text = "Age Group"
+      .Columns[1].Text = "New Male"
+      .Columns[2].Text = "New Female"
+      .Columns[3].Text = "Total Male"
+      .Columns[4].Text = "Total Female"
+    Else
+      .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+      .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+      .Columns[0].Text = "Age Group"
+      .Columns[1].Text = "New Male"
+      .Columns[2].Text = "New Female"
+      .Columns[3].Text = "New Other"
+      .Columns[4].Text = "Total Male"
+      .Columns[5].Text = "Total Female"
+      .Columns[6].Text = "Total Other"
+    Endif
+  End With
+  Dec Application.Busy
+
+End
+
+''========================EMERGENCY SERVICES==============================
+Private Sub GetEmergencyServices()
+
+  Dim xDeptList As String[]
+  Dim sdept As String
+
+  Dim ageList As String[]
+  Dim xval As String
+  Dim asx As String[]
+
+  Dim sexList As String[]
+  Dim sex As String
+  Dim agestring As String
+  Dim res As Result
+  Dim k As Integer
+  Dim xcnt As Integer
+
+  Dim Row As Integer
+  Dim xmale As Integer
+  Dim xfemale As Integer
+  Dim xother As Integer
+
+  xDeptList = SelectListView("Select EMERGENCY Consultations", modMisc.RegistrationDeptList(), False)
+  If xDeptList Then
+    If cmbagegroup.Text = "HMIS" Then
+      ageList = ["0-9 years;0;3649", "10-19 years;3650;7299", "20-59 years;7300;21899", ">=60 years;21900;73000"]
+    Else
+      ageList = modMedReports.AgeGroupGeneralList()
+    Endif
+    If cmbsexgroup.Text = "HMIS" Then
+      sexList = ["Male", "Female"]
+    Else
+      sexList = ["Male", "Female", "Other"]
+    Endif
+    agestring = modMedReports.GetAgeStringByTable("tblencounter", modDatabase.$syConn)
+
+    GridView1.Clear()
+    GridView1.Columns.Count = 1 + sexList.Count
+    GridView1.Rows.Count = ageList.Count + 1
+
+    Inc Application.Busy
+    Row = 0
+    xmale = 0
+    xfemale = 0
+    xother = 0
+    For Each xval In ageList
+      asx = Split(xval, ";")
+      GridView1[Row, 0].Text = asx[0]
+      k = 1
+      For Each sex In sexList
+        xcnt = 0
+        For Each sdept In xDeptList
+          res = modDatabase.$syConn.Exec("select COUNT(tblencounter.fldencounterval) as tot from tblencounter inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblencounter.fldregdate>=&1 and tblencounter.fldregdate<=&2 and tblpatientinfo.fldptsex=&3 and " & agestring & ">=&4 and " & agestring & "<&5 and tblencounter.fldadmitlocat=&6", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), sex, CInt(asx[1]), CInt(asx[2]), sdept)                                                       ''
+          If res["tot"] Then
+            xcnt = xcnt + res["tot"]
+          Endif
+        Next
+        GridView1[Row, k].Text = xcnt
+
+        If sex = "Male" Then
+          xmale = xmale + xcnt
+        Else If sex = "Female" Then
+          xfemale = xfemale + xcnt
+        Else If sex = "Other" Then
+          xother = xother + xcnt
+        Endif
+
+        k = k + 1
+      Next
+
+      Row = Row + 1
+      $ProgressBar1.Value = Row / ageList.Count
+      Wait
+    Next
+
+    If cmbsexgroup.Text = "HMIS" Then
+      GridView1[Row, 0].Text = "Total"
+      GridView1[Row, 1].Text = xmale
+      GridView1[Row, 2].Text = xfemale
+    Else
+      GridView1[Row, 0].Text = "Total"
+      GridView1[Row, 1].Text = xmale
+      GridView1[Row, 2].Text = xfemale
+      GridView1[Row, 3].Text = xother
+    Endif
+    GridView1.Row = 0
+
+    With GridView1
+      .Rows.Height = 25 * modBasic.$AppHeightRatio
+      If cmbsexgroup.Text = "HMIS" Then
+        .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+        .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+        .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+        .Columns[0].Text = "Age Group"
+        .Columns[1].Text = "Total Male"
+        .Columns[2].Text = "Total Female"
+      Else
+        .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+        .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+        .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+        .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+        .Columns[0].Text = "Age Group"
+        .Columns[1].Text = "Total Male"
+        .Columns[2].Text = "Total Female"
+        .Columns[3].Text = "Total Other"
+      Endif
+    End With
+    Dec Application.Busy
+
+  Endif
+
+End
+
+''============================Radiology Services======================
+Private Sub GetRadiologyService()
+
+  Dim itmLst As String[]
+  Dim xval As String
+  Dim Row As Integer
+  Dim res As Result
+  Dim xcnt As Integer
+
+  itmLst = modFillContainer.GetListFromResult(modDatabase.$syConn.Exec("select fldsection from tblbillsection where fldcateg=&1", "Radio Diagnostics"))
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = itmLst.Count
+
+  Inc Application.Busy
+  Row = 0
+  For Each xval In itmLst
+    xcnt = 0
+    res = modDatabase.$syConn.Exec("select sum(flditemqty) as tot from tblpatbilling where flditemtype=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblservicecost where fldreport=&4)", "Radio Diagnostics", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xval)
+    If res!tot Then
+      xcnt = xcnt + res!tot
+    Endif
+    GridView1[Row, 0].Text = xval
+    GridView1[Row, 1].Text = "Number"
+    GridView1[Row, 2].Text = xcnt
+
+    Row = Row + 1
+    $ProgressBar1.Value = Row / itmLst.Count
+    Wait
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Unit"
+    .Columns[2].Text = "Number"
+  End With
+  Dec Application.Busy
+
+End
+
+''========================Inpatient Outcome=========================
+Private Function GetTotalPatOutcome(dt1 As Date, dt2 As Date, sGender As String, sMinage As Integer, sMaxage As Integer, sStatus As String, Optional sComment As String, Optional sComment1 As String) As Integer
+
+  Dim res As Result
+  Dim xx As Integer
+  Dim agestring As String
+
+  xx = 0
+  agestring = modMedReports.GetAgeStringByTable("tblpatientdate", modDatabase.$syConn)
+  If sComment Then
+    If sComment1 Then
+      res = modDatabase.$syConn.Exec("select count(tblpatientdate.fldid) as cnt from (tblpatientdate inner join tblencounter on tblpatientdate.fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblpatientdate.fldtime>=&1 and tblpatientdate.fldtime<=&2 and tblpatientdate.fldhead=&3 and (tblpatientdate.fldcomment=&4 or tblpatientdate.fldcomment=&5) and tblpatientinfo.fldptsex=&6 and " & agestring & ">=&7 and " & agestring & "<&8", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sStatus, sComment, sComment1, sGender, sMinage, sMaxage)
+    Else
+      res = modDatabase.$syConn.Exec("select count(tblpatientdate.fldid) as cnt from (tblpatientdate inner join tblencounter on tblpatientdate.fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblpatientdate.fldtime>=&1 and tblpatientdate.fldtime<=&2 and tblpatientdate.fldhead=&3 and tblpatientdate.fldcomment=&4 and tblpatientinfo.fldptsex=&5 and " & agestring & ">=&6 and " & agestring & "<&7", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sStatus, sComment, sGender, sMinage, sMaxage)                                                   ''
+    Endif
+  Else
+    res = modDatabase.$syConn.Exec("select count(tblpatientdate.fldid) as cnt from (tblpatientdate inner join tblencounter on tblpatientdate.fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblpatientdate.fldtime>=&1 and tblpatientdate.fldtime<=&2 and tblpatientdate.fldhead=&3 and tblpatientinfo.fldptsex=&4 and " & agestring & ">=&5 and " & agestring & "<&6", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sStatus, sGender, sMinage, sMaxage)
+  Endif
+  If res!cnt Then
+    xx = xx + res!cnt
+  Endif
+  Return xx
+
+End
+
+Private Function GetTotalDeathOutcome(dt1 As Date, dt2 As Date, sGender As String, sMinage As Integer, sMaxage As Integer, sMinDy As Integer, Optional sMaxDy As Integer) As Integer
+
+  Dim res As Result
+  Dim xx As Integer
+  Dim agestring As String
+
+  Dim dbType As String
+  Dim xdtstr As String
+
+  dbType = modDatabase.$syConn.Type
+  If dbType = "mysql" Then
+    xdtstr = "DATEDIFF(tblpatientdate.fldtime, tblencounter.fldregdate)"
+  Else If dbType = "postgresql" Then
+    xdtstr = "DATE_PART('day',tblpatientdate.fldtime - tblencounter.fldregdate)"
+  Else If dbType = "sqlite3" Then
+    xdtstr = "(julianday(tblpatientdate.fldtime) - julianday(tblencounter.fldregdate))"
+  Endif
+
+  xx = 0
+  agestring = modMedReports.GetAgeStringByTable("tblpatientdate", modDatabase.$syConn)
+  If sMaxDy Then
+    res = modDatabase.$syConn.Exec("select count(tblpatientdate.fldid) as cnt from (tblpatientdate inner join tblencounter on tblpatientdate.fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblpatientdate.fldtime>=&1 and tblpatientdate.fldtime<=&2 and tblpatientdate.fldhead=&3 and tblpatientinfo.fldptsex=&4 and " & agestring & ">=&5 and " & agestring & "<&6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "Death", sGender, sMinage, sMaxage, sMinDy, sMaxDy)
+  Else
+    res = modDatabase.$syConn.Exec("select count(tblpatientdate.fldid) as cnt from (tblpatientdate inner join tblencounter on tblpatientdate.fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblpatientdate.fldtime>=&1 and tblpatientdate.fldtime<=&2 and tblpatientdate.fldhead=&3 and tblpatientinfo.fldptsex=&4 and " & agestring & ">=&5 and " & agestring & "<&6 and " & xdtstr & ">=&7", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "Death", sGender, sMinage, sMaxage, sMinDy)
+  Endif
+  If res!cnt Then
+    xx = xx + res!cnt
+  Endif
+  Return xx
+
+End
+
+Private Sub GetAgeGroupingHMIS() As String[]
+
+  Dim xx As String[]
+
+  xx = New String[]
+  xx.Add("<=28 days;0;28")
+  xx.Add("29 days-1 year;29;364")
+  xx.Add("1-4 years;365;1824")
+  xx.Add("5-14 years;1825;5474")
+  xx.Add("15-19 years;5475;7299")
+  xx.Add("20-29 years;7300;10949")
+  xx.Add("30-39 years;10950;14599")
+  xx.Add("40-49 years;14600;18249")
+  xx.Add("50-59 years;18250;21899")
+  xx.Add(">= 60 years;21900;73000")
+  Return xx
+
+End
+
+Private Sub ShowInpatientsOutcome()
+
+  Dim ageList As String[]
+  Dim xval As String
+  Dim asx As String[]
+  Dim Row As Integer
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = GetAgeGroupingHMIS()
+  Else
+    ageList = modMedReports.AgeGroupGeneralList()
+  Endif
+  GridView1.Clear()
+  GridView1.Columns.Count = 15
+  GridView1.Rows.Count = ageList.Count
+
+  Inc Application.Busy
+  Row = 0
+  For Each xval In ageList
+    asx = Split(xval, ";")
+    GridView1[Row, 0].Text = asx[0]
+    GridView1[Row, 1].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Male", CInt(asx[1]), CInt(asx[2]), "Discharged", "Recovered", "Improved")
+    GridView1[Row, 2].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Female", CInt(asx[1]), CInt(asx[2]), "Discharged", "Recovered", "Improved")
+    GridView1[Row, 3].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Male", CInt(asx[1]), CInt(asx[2]), "Discharged", "Unchanged", "Worse")
+    GridView1[Row, 4].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Female", CInt(asx[1]), CInt(asx[2]), "Discharged", "Unchanged", "Worse")
+    GridView1[Row, 5].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Male", CInt(asx[1]), CInt(asx[2]), "Refer")
+    GridView1[Row, 6].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Female", CInt(asx[1]), CInt(asx[2]), "Refer")
+    GridView1[Row, 7].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Male", CInt(asx[1]), CInt(asx[2]), "LAMA")
+    GridView1[Row, 8].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Female", CInt(asx[1]), CInt(asx[2]), "LAMA")
+    GridView1[Row, 9].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Male", CInt(asx[1]), CInt(asx[2]), "Absconder")
+    GridView1[Row, 10].Text = GetTotalPatOutcome(dtfir.Value, dtlast.Value, "Female", CInt(asx[1]), CInt(asx[2]), "Absconder")
+    GridView1[Row, 11].Text = GetTotalDeathOutcome(dtfir.Value, dtlast.Value, "Male", CInt(asx[1]), CInt(asx[2]), 0, 2)
+    GridView1[Row, 12].Text = GetTotalDeathOutcome(dtfir.Value, dtlast.Value, "Female", CInt(asx[1]), CInt(asx[2]), 0, 2)
+    GridView1[Row, 13].Text = GetTotalDeathOutcome(dtfir.Value, dtlast.Value, "Male", CInt(asx[1]), CInt(asx[2]), 2)
+    GridView1[Row, 14].Text = GetTotalDeathOutcome(dtfir.Value, dtlast.Value, "Female", CInt(asx[1]), CInt(asx[2]), 2)
+
+    Row = Row + 1
+    $ProgressBar1.Value = Row / ageList.Count
+    Wait
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Age Group"
+    .Columns[1].Text = "Improved" & gb.NewLine & "Male"
+    .Columns[2].Text = "Improved" & gb.NewLine & "Female"
+    .Columns[3].Text = "Not Improved" & gb.NewLine & "Male"
+    .Columns[4].Text = "Not Improved" & gb.NewLine & "Female"
+    .Columns[5].Text = "Refer" & gb.NewLine & "Male"
+    .Columns[6].Text = "Refer" & gb.NewLine & "Female"
+    .Columns[7].Text = "LAMA" & gb.NewLine & "Male"
+    .Columns[8].Text = "LAMA" & gb.NewLine & "Female"
+    .Columns[9].Text = "Absconder" & gb.NewLine & "Male"
+    .Columns[10].Text = "Absconder" & gb.NewLine & "Female"
+    .Columns[11].Text = "Death(<2Day)" & gb.NewLine & "Male"
+    .Columns[12].Text = "Death(<2Day)" & gb.NewLine & "Female"
+    .Columns[13].Text = "Death(>=2Day)" & gb.NewLine & "Male"
+    .Columns[14].Text = "Death(>=2Day)" & gb.NewLine & "Female"
+  End With
+  Dec Application.Busy
+
+End
+
+''===================== IP Morbidity ================================================
+Private Sub GetAgeSexGroupingHMIS() As String[]
+
+  Dim xx As String[]
+
+  xx = New String[]
+  xx.Add("<=28 days:Male")
+  xx.Add("<=28 days:Female")
+  xx.Add("29 days-1 year:Male")
+  xx.Add("29 days-1 year:Female")
+  xx.Add("1-4 years:Male")
+  xx.Add("1-4 years:Female")
+  xx.Add("5-14 years:Male")
+  xx.Add("5-14 years:Female")
+  xx.Add("15-19 years:Male")
+  xx.Add("15-19 years:Female")
+  xx.Add("20-29 years:Male")
+  xx.Add("20-29 years:Female")
+  xx.Add("30-39 years:Male")
+  xx.Add("30-39 years:Female")
+  xx.Add("40-49 years:Male")
+  xx.Add("40-49 years:Female")
+  xx.Add("50-59 years:Male")
+  xx.Add("50-59 years:Female")
+  xx.Add(">= 60 years:Male")
+  xx.Add(">= 60 years:Female")
+  xx.Add("Death:Male")
+  xx.Add("Death:Female")
+  Return xx
+
+End
+
+Private Function GetHMISAgeValue(agegroup As String) As String
+
+  Dim xx As String
+
+  If cmbagegroup.Text = "HMIS" Then
+    If agegroup = "<=28 days" Then
+      xx = "0;28"
+    Else If agegroup = "29 days-1 year" Then
+      xx = "29;364"
+    Else If agegroup = "1-4 years" Then
+      xx = "365;1824"
+    Else If agegroup = "5-14 years" Then
+      xx = "1825;5474"
+    Else If agegroup = "15-19 years" Then
+      xx = "5475;7299"
+    Else If agegroup = "20-29 years" Then
+      xx = "7300;10949"
+    Else If agegroup = "30-39 years" Then
+      xx = "10950;14599"
+    Else If agegroup = "40-49 years" Then
+      xx = "14600;18249"
+    Else If agegroup = "50-59 years" Then
+      xx = "18250;21899"
+    Else If agegroup = ">= 60 years" Then
+      xx = "21900;73000"
+    Endif
+  Else
+    xx = modMedReports.GetAgeValuefromgroup(agegroup)
+  Endif
+  Return xx
+
+End
+
+Private Sub GetAgeWiseMorbidity(sType As String)
+
+  Dim itmList As String[]
+  Dim aitem As String
+  Dim Row As Integer
+
+  Dim ageList As String[]
+  Dim xage As String
+  Dim asx As String[]
+  Dim agelim As String[]
+  Dim i As Integer
+  Dim stit As String[]
+
+  Dim xdtstr As String
+  Dim res As Result
+  Dim k As Integer
+  Dim xcnt As Integer
+
+  Inc Application.Busy
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = GetAgeSexGroupingHMIS()
+  Else
+    ageList = modMedReports.AgeGroupGenderList()
+  Endif
+  xdtstr = modMedReports.GetAgeStringByTable("tblpatfindings", modDatabase.$syConn)
+  itmList = modFillContainer.GetListFromResult(modDatabase.$syConn.Exec("select distinct(fldcodeid) as col from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Provisional Diagnosis", True))
+  itmList.Sort()
+
+  GridView1.Clear()
+  GridView1.Columns.Count = ageList.Count + 2
+  GridView1.Rows.Count = itmList.Count
+
+  Row = 0
+  For Each aitem In itmList
+    GridView1[Row, 0].Text = aitem
+    GridView1[Row, 1].Text = modPathology.GetDiagnoCodeValue(aitem)
+
+    k = 2
+    For Each xage In ageList
+      asx = Split(xage, ":")   ''asx[1] is gender
+      If asx[0] = "Death" Then
+        GridView1[Row, k].Text = 0
+      Else
+        agelim = Split(GetHMISAgeValue(asx[0]), ";")   ''agelim[0] is min age agelim[1] is max age
+        xcnt = 0
+        If sType = "InPatient" Then
+          res = modDatabase.$syConn.Exec("select COUNT(tblpatfindings.fldid) as col from (tblpatfindings inner join tblencounter on tblpatfindings.fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblpatfindings.fldtime>=&1 and tblpatfindings.fldtime<=&2 and tblpatfindings.fldtype=&3 and tblpatfindings.fldcodeid like &4 and tblpatientinfo.fldptsex like &5 and " & xdtstr & ">=&6 and " & xdtstr & "<&7 and tblpatfindings.fldsave=&8 and flddoa IS NOT NULL", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Provisional Diagnosis", aitem, asx[1], CInt(agelim[0]), CInt(agelim[1]), True)  ''                      ''
+        Else If sType = "General" Then
+          res = modDatabase.$syConn.Exec("select COUNT(tblpatfindings.fldid) as col from (tblpatfindings inner join tblencounter on tblpatfindings.fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval where tblpatfindings.fldtime>=&1 and tblpatfindings.fldtime<=&2 and tblpatfindings.fldtype=&3 and tblpatfindings.fldcodeid like &4 and tblpatientinfo.fldptsex like &5 and " & xdtstr & ">=&6 and " & xdtstr & "<&7 and tblpatfindings.fldsave=&8", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Provisional Diagnosis", aitem, asx[1], CInt(agelim[0]), CInt(agelim[1]), True)  ''
+        Endif
+        If res!col Then
+          xcnt = xcnt + res!col
+        Endif
+        GridView1[Row, k].Text = xcnt
+      Endif
+      k = k + 1
+    Next
+
+    Row = Row + 1
+    $ProgressBar1.Value = Row / itmList.Count
+    Wait
+  Next
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Code"
+    .Columns[1].Text = "Disease"
+    i = 2
+    For Each xage In ageList
+      stit = Split(xage, ":")
+      .Columns[i].Text = stit[0] & gb.NewLine & stit[1]
+      .Columns[i].Width = 75 * modBasic.$AppWidthRatio
+      i = i + 1
+    Next
+  End With
+
+  Dec Application.Busy
+
+End
+
+''===================== NEW OutPatient Morbidity ================================================
+Private Sub GetNewOPDMorbidity()
+
+  Dim itmList As String[]
+  Dim aitem As String
+  Dim Row As Integer
+  Dim sexList As String[] = ["Male", "Female"]
+  Dim sex As String
+
+  Dim res As Result
+  Dim k As Integer
+  Dim xcnt As Integer
+
+  Inc Application.Busy
+  If cmbcategory.Text = "%" Then
+    itmList = modFillContainer.GetListFromResult(modDatabase.$syConn.Exec("select distinct(fldcodeid) as col from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldencounterval in(select fldencounterval from tblencounter where flddoa IS NULL)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Provisional Diagnosis", True))
+  Else
+    itmList = modFillContainer.GetListFromResult(modDatabase.$syConn.Exec("select distinct(fldcodeid) as col from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldcodeid in(select fldcodeid from tbldiagnogroup where fldgroupname like &5) and fldencounterval in(select fldencounterval from tblencounter where flddoa IS NULL)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Provisional Diagnosis", True, cmbcategory.Text))
+  Endif
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = itmList.Count
+
+  Row = 0
+  For Each aitem In itmList
+    GridView1[Row, 0].Text = aitem
+    GridView1[Row, 1].Text = modPathology.GetDiagnoCodeValue(aitem)
+
+    k = 2
+    For Each sex In sexList
+      xcnt = 0
+      res = modDatabase.$syConn.Exec("select COUNT(fldid) as col from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldcodeid like &4 and fldsave=&5 and fldencounterval in(select fldencounterval from tblencounter where flddoa IS NULL and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&6))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Provisional Diagnosis", aitem, True, sex)  ''  and fldvisit=&7                     ''
+      If res!col Then
+        xcnt = xcnt + res!col
+      Endif
+      GridView1[Row, k].Text = xcnt
+      k = k + 1
+    Next
+
+    Row = Row + 1
+    $ProgressBar1.Value = Row / itmList.Count
+    Wait
+  Next
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 350 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Code"
+    .Columns[1].Text = "Disease"
+    .Columns[2].Text = "Male"
+    .Columns[3].Text = "Female"
+  End With
+  Dec Application.Busy
+
+End
+
+''========================= Gravida Report =============================
+Private Function GetEncounterGestWeek(encid As String) As Integer
+
+  Dim res As Result
+  Dim xval As Integer
+
+  res = modDatabase.$syConn.Exec("select fldreportquanti from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldtype=&3 and flditem=&4", encid, "Obstetrics", "Quantitative", "Gestation")
+  If res.Available Then
+    If res!fldreportquanti Then
+      xval = res!fldreportquanti
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+  Return xval
+
+End
+
+Private Sub GetGravidaReport()
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Dim agefir As Integer
+  Dim agesec As Integer
+  Dim agethrd As Integer
+  Dim agefour As Integer
+  Dim xval As Integer
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 5
+  GridView1.Rows.Count = 3
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Gravida"
+    .Columns[1].Text = "22-27 Week"
+    .Columns[2].Text = "28-36 Week"
+    .Columns[3].Text = "37-41 Week"
+    .Columns[4].Text = ">=42 Week"
+  End With
+
+  Inc Application.Busy
+  agefir = 0
+  agesec = 0
+  agethrd = 0
+  agefour = 0
+  res1 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblexamgeneral where fldinput=&3 and fldtype=&4 and flditem=&5 and fldreportquanti=&6)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Obstetrics", "Quantitative", "Gravida", 1)
+  If res1.Available Then
+    For Each res1
+      xval = GetEncounterGestWeek(res1!col)
+      If xval >= 148 And If xval < 196 Then
+        agefir = agefir + 1
+      Else If xval >= 196 And If xval < 259 Then
+        agesec = agesec + 1
+      Else If xval >= 259 And If xval < 294 Then
+        agethrd = agethrd + 1
+      Else If xval >= 294 Then
+        agefour = agefour + 1
+      Endif
+    Next
+  Endif
+  GridView1[0, 0].Text = "Primi(G=1)"
+  GridView1[0, 1].Text = agefir
+  GridView1[0, 2].Text = agesec
+  GridView1[0, 3].Text = agethrd
+  GridView1[0, 4].Text = agefour
+  $ProgressBar1.Value = 0.33
+  Wait
+
+  agefir = 0
+  agesec = 0
+  agethrd = 0
+  agefour = 0
+  res2 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblexamgeneral where fldinput=&3 and fldtype=&4 and flditem=&5 and fldreportquanti>=&6 and fldreportquanti<&7)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Obstetrics", "Quantitative", "Gravida", 2, 5)
+  If res2.Available Then
+    For Each res2
+      xval = GetEncounterGestWeek(res2!col)
+      If xval >= 148 And If xval < 196 Then
+        agefir = agefir + 1
+      Else If xval >= 196 And If xval < 259 Then
+        agesec = agesec + 1
+      Else If xval >= 259 And If xval < 294 Then
+        agethrd = agethrd + 1
+      Else If xval >= 294 Then
+        agefour = agefour + 1
+      Endif
+    Next
+  Endif
+  GridView1[1, 0].Text = "Multi(G=1-4)"
+  GridView1[1, 1].Text = agefir
+  GridView1[1, 2].Text = agesec
+  GridView1[1, 3].Text = agethrd
+  GridView1[1, 4].Text = agefour
+  $ProgressBar1.Value = 0.66
+  Wait
+
+  agefir = 0
+  agesec = 0
+  agethrd = 0
+  agefour = 0
+  res3 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblexamgeneral where fldinput=&3 and fldtype=&4 and flditem=&5 and fldreportquanti>=&6)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Obstetrics", "Quantitative", "Gravida", 5)
+  If res3.Available Then
+    For Each res3
+      xval = GetEncounterGestWeek(res3!col)
+      If xval >= 148 And If xval < 196 Then
+        agefir = agefir + 1
+      Else If xval >= 196 And If xval < 259 Then
+        agesec = agesec + 1
+      Else If xval >= 259 And If xval < 294 Then
+        agethrd = agethrd + 1
+      Else If xval >= 294 Then
+        agefour = agefour + 1
+      Endif
+    Next
+  Endif
+  GridView1[2, 0].Text = "Grand Multi(G>=5)"
+  GridView1[2, 1].Text = agefir
+  GridView1[2, 2].Text = agesec
+  GridView1[2, 3].Text = agethrd
+  GridView1[2, 4].Text = agefour
+  $ProgressBar1.Value = 1
+  Wait
+
+  GridView1.Row = 0
+  Dec Application.Busy
+
+End
+
+''========================= Maternal Age ======================
+Private Sub FillMaternalAgeData()
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Dim agefir As Integer
+  Dim agesec As Integer
+  Dim agethrd As Integer
+  Dim agefour As Integer
+  Dim xval As Integer
+  Dim xstr As String
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 5
+  GridView1.Rows.Count = 3
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Mother Age"
+    .Columns[1].Text = "22-27 Week"
+    .Columns[2].Text = "28-36 Week"
+    .Columns[3].Text = "37-41 Week"
+    .Columns[4].Text = ">=42 Week"
+  End With
+
+  Inc Application.Busy
+  xstr = modMedReports.GetAgeStringByTable("tblconfinement", modDatabase.$syConn)
+  agefir = 0
+  agesec = 0
+  agethrd = 0
+  agefour = 0
+  res1 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptbirday like &3 and " & xstr & "<&4))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "%", 7300)
+  If res1.Available Then
+    For Each res1
+      xval = GetEncounterGestWeek(res1!col)
+      If xval >= 148 And If xval < 196 Then
+        agefir = agefir + 1
+      Else If xval >= 196 And If xval < 259 Then
+        agesec = agesec + 1
+      Else If xval >= 259 And If xval < 294 Then
+        agethrd = agethrd + 1
+      Else If xval >= 294 Then
+        agefour = agefour + 1
+      Endif
+    Next
+  Endif
+  GridView1[0, 0].Text = "<20 Yrs"
+  GridView1[0, 1].Text = agefir
+  GridView1[0, 2].Text = agesec
+  GridView1[0, 3].Text = agethrd
+  GridView1[0, 4].Text = agefour
+  $ProgressBar1.Value = 0.33
+  Wait
+
+  agefir = 0
+  agesec = 0
+  agethrd = 0
+  agefour = 0
+  res2 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptbirday like &3 and " & xstr & ">=&4 and " & xstr & "<&5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "%", 7300, 12775)
+  If res2.Available Then
+    For Each res2
+      xval = GetEncounterGestWeek(res2!col)
+      If xval >= 148 And If xval < 196 Then
+        agefir = agefir + 1
+      Else If xval >= 196 And If xval < 259 Then
+        agesec = agesec + 1
+      Else If xval >= 259 And If xval < 294 Then
+        agethrd = agethrd + 1
+      Else If xval >= 294 Then
+        agefour = agefour + 1
+      Endif
+    Next
+  Endif
+  GridView1[1, 0].Text = "20-34 Yrs"
+  GridView1[1, 1].Text = agefir
+  GridView1[1, 2].Text = agesec
+  GridView1[1, 3].Text = agethrd
+  GridView1[1, 4].Text = agefour
+  $ProgressBar1.Value = 0.66
+  Wait
+
+  agefir = 0
+  agesec = 0
+  agethrd = 0
+  agefour = 0
+  res3 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptbirday like &3 and " & xstr & ">=&4))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "%", 12775)
+  If res3.Available Then
+    For Each res3
+      xval = GetEncounterGestWeek(res3!col)
+      If xval >= 148 And If xval < 196 Then
+        agefir = agefir + 1
+      Else If xval >= 196 And If xval < 259 Then
+        agesec = agesec + 1
+      Else If xval >= 259 And If xval < 294 Then
+        agethrd = agethrd + 1
+      Else If xval >= 294 Then
+        agefour = agefour + 1
+      Endif
+    Next
+  Endif
+  GridView1[2, 0].Text = ">=35 Yrs"
+  GridView1[2, 1].Text = agefir
+  GridView1[2, 2].Text = agesec
+  GridView1[2, 3].Text = agethrd
+  GridView1[2, 4].Text = agefour
+  $ProgressBar1.Value = 1
+  Wait
+
+  GridView1.Row = 0
+  Dec Application.Busy
+
+End
+
+''====================== Delivery Types Report ===================
+Private Function GetDeliveryTypeEnc(encid As String) As String
+
+  Dim res As Result
+  Dim xval As String
+
+  res = modDatabase.$syConn.Exec("select flddeltype from tblconfinement where fldencounterval=&1", encid)
+  If res.Available Then
+    res.MoveFirst
+    If res!flddeltype Then
+      xval = res!flddeltype
+    Else
+      xval = ""
+    Endif
+  Else
+    xval = ""
+  Endif
+  Return xval
+
+End
+
+Private Sub DeliveryTypeReport()
+
+  Dim xlist1 As String
+  Dim xlist2 As String
+  Dim xlist3 As String
+
+  Dim xsponlist As String[]
+  Dim xinstlist As String[]
+  Dim xcesrlist As String[]
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Dim xdeltype As String
+  Dim xsponval As Integer
+  Dim xinstval As Integer
+  Dim xcessval As Integer
+
+  fmDelTypes.Close()
+  fmDelTypes.ShowModal()
+
+  Inc Application.Busy
+  xlist1 = modSettings.ShowSettingFromFIle("DeliveryTypes/Spontaneous")
+  If xlist1 Then
+    xsponlist = Split(xlist1, ";")
+  Else
+    xsponlist = New String[]
+  Endif
+  xlist2 = modSettings.ShowSettingFromFIle("DeliveryTypes/Instrument")
+  If xlist2 Then
+    xinstlist = Split(xlist2, ";")
+  Else
+    xinstlist = New String[]
+  Endif
+  xlist3 = modSettings.ShowSettingFromFIle("DeliveryTypes/Caeserian")
+  If xlist3 Then
+    xcesrlist = Split(xlist3, ";")
+  Else
+    xcesrlist = New String[]
+  Endif
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 3
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Delivery Type"
+    .Columns[1].Text = "Cephalic"
+    .Columns[2].Text = "Shoulder"
+    .Columns[3].Text = "Breech"
+  End With
+
+  GridView1[0, 0].Text = "Spontaneous"
+  GridView1[1, 0].Text = "Vacuum/Forcep"
+  GridView1[2, 0].Text = "Surgery"
+
+  xsponval = 0
+  xinstval = 0
+  xcessval = 0
+  res1 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblexamgeneral where fldinput=&3 and fldtype=&4 and flditem=&5 and fldreportquali=&6)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Obstetrics", "Qualitative", "Presentation", "Cephalic")
+  If res1.Available Then
+    For Each res1
+      xdeltype = GetDeliveryTypeEnc(res1!col)
+      If xdeltype Then
+        If xsponlist.Exist(xdeltype) = True Then
+          xsponval = xsponval + 1
+        Endif
+        If xinstlist.Exist(xdeltype) = True Then
+          xinstval = xinstval + 1
+        Endif
+        If xcesrlist.Exist(xdeltype) = True Then
+          xcessval = xcessval + 1
+        Endif
+      Endif
+    Next
+  Endif
+  GridView1[0, 1].Text = xsponval
+  GridView1[1, 1].Text = xinstval
+  GridView1[2, 1].Text = xcessval
+  $ProgressBar1.Value = 0.33
+  Wait
+
+  xsponval = 0
+  xinstval = 0
+  xcessval = 0
+  res2 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblexamgeneral where fldinput=&3 and fldtype=&4 and flditem=&5 and fldreportquali=&6)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Obstetrics", "Qualitative", "Presentation", "Shoulder")
+  If res2.Available Then
+    For Each res2
+      xdeltype = GetDeliveryTypeEnc(res2!col)
+      If xdeltype Then
+        If xsponlist.Exist(xdeltype) = True Then
+          xsponval = xsponval + 1
+        Endif
+        If xinstlist.Exist(xdeltype) = True Then
+          xinstval = xinstval + 1
+        Endif
+        If xcesrlist.Exist(xdeltype) = True Then
+          xcessval = xcessval + 1
+        Endif
+      Endif
+    Next
+  Endif
+  GridView1[0, 2].Text = xsponval
+  GridView1[1, 2].Text = xinstval
+  GridView1[2, 2].Text = xcessval
+  $ProgressBar1.Value = 0.66
+  Wait
+
+  xsponval = 0
+  xinstval = 0
+  xcessval = 0
+  res3 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldencounterval in(select fldencounterval from tblexamgeneral where fldinput=&3 and fldtype=&4 and flditem=&5 and fldreportquali=&6)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Obstetrics", "Qualitative", "Presentation", "Breech")
+  If res3.Available Then
+    For Each res3
+      xdeltype = GetDeliveryTypeEnc(res3!col)
+      If xdeltype Then
+        If xsponlist.Exist(xdeltype) = True Then
+          xsponval = xsponval + 1
+        Endif
+        If xinstlist.Exist(xdeltype) = True Then
+          xinstval = xinstval + 1
+        Endif
+        If xcesrlist.Exist(xdeltype) = True Then
+          xcessval = xcessval + 1
+        Endif
+      Endif
+    Next
+  Endif
+  GridView1[0, 3].Text = xsponval
+  GridView1[1, 3].Text = xinstval
+  GridView1[2, 3].Text = xcessval
+  $ProgressBar1.Value = 1
+  Wait
+
+  GridView1.Row = 0
+  Dec Application.Busy
+
+End
+
+''======================== Delivery QTY ==========================
+Private Function GetEncCountDel(encid As String) As Integer
+
+  Dim res As Result
+  Dim xval As Integer
+
+  res = modDatabase.$syConn.Exec("select COUNT(fldencounterval) as col from tblconfinement where fldencounterval=&1 and flddelresult=&2", encid, "Live Baby")
+  If res.Available Then
+    If res!col Then
+      xval = res!col
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+  Return xval
+
+End
+
+Private Sub GetLiveDeliveryBabyQTY()
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim xcount As Integer
+
+  Dim xsingle As Integer
+  Dim xdouble As Integer
+  Dim xmultiple As Integer
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 3
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Variable"
+    .Columns[1].Text = "Single Baby"
+    .Columns[2].Text = "Double Baby"
+    .Columns[3].Text = "Multiple Baby"
+  End With
+
+  Inc Application.Busy
+  xsingle = 0
+  xdouble = 0
+  xmultiple = 0
+  res1 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddelresult=&3", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Live Baby")
+  If res1.Available Then
+    For Each res1
+      xcount = GetEncCountDel(res1!col)
+      If xcount = 1 Then
+        xsingle = xsingle + 1
+      Else If xcount = 2 Then
+        xdouble = xdouble + 1
+      Else If xcount > 2 Then
+        xmultiple = xmultiple + 1
+      Endif
+    Next
+  Endif
+  GridView1[0, 0].Text = "Total Mothers"
+  GridView1[0, 1].Text = xsingle
+  GridView1[0, 2].Text = xdouble
+  GridView1[0, 3].Text = xmultiple
+  $ProgressBar1.Value = 0.33
+  Wait
+
+  xsingle = 0
+  xdouble = 0
+  xmultiple = 0
+  res2 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddelresult=&3 and fldbabypatno in(select fldpatientval from tblpatientinfo where fldptsex=&4)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Live Baby", "Female")
+  If res2.Available Then
+    For Each res2
+      xcount = GetEncCountDel(res2!col)
+      If xcount = 1 Then
+        xsingle = xsingle + 1
+      Else If xcount = 2 Then
+        xdouble = xdouble + 1
+      Else If xcount > 2 Then
+        xmultiple = xmultiple + 1
+      Endif
+    Next
+  Endif
+  GridView1[1, 0].Text = "Live Baby(Female)"
+  GridView1[1, 1].Text = xsingle
+  GridView1[1, 2].Text = xdouble
+  GridView1[1, 3].Text = xmultiple
+  $ProgressBar1.Value = 0.66
+  Wait
+
+  xsingle = 0
+  xdouble = 0
+  xmultiple = 0
+  res3 = modDatabase.$syConn.Exec("select distinct(fldencounterval) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddelresult=&3 and fldbabypatno in(select fldpatientval from tblpatientinfo where fldptsex=&4)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Live Baby", "Male")
+  If res3.Available Then
+    For Each res3
+      xcount = GetEncCountDel(res3!col)
+      If xcount = 1 Then
+        xsingle = xsingle + 1
+      Else If xcount = 2 Then
+        xdouble = xdouble + 1
+      Else If xcount > 2 Then
+        xmultiple = xmultiple + 1
+      Endif
+    Next
+  Endif
+  GridView1[2, 0].Text = "Live Baby(Male)"
+  GridView1[2, 1].Text = xsingle
+  GridView1[2, 2].Text = xdouble
+  GridView1[2, 3].Text = xmultiple
+  $ProgressBar1.Value = 1
+  Wait
+
+  GridView1.Row = 0
+  Dec Application.Busy
+
+End
+
+''==================== Birth weight =========================
+Private Sub BirthWeightreportCompli()
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Dim xtotal As Integer
+  Dim xrespd As Integer
+  Dim xmalfrm As Integer
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 3
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Birth Weight"
+    .Columns[1].Text = "Total"
+    .Columns[2].Text = "Asphyxia"
+    .Columns[3].Text = "Malformations"
+  End With
+
+  Inc Application.Busy
+  xtotal = 0
+  xrespd = 0
+  xmalfrm = 0
+  res1 = modDatabase.$syConn.Exec("select fldencounterval,fldcomplication from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddelwt<&3", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), 1500)
+  If res1.Available Then
+    xtotal = res1.Count
+    For Each res1
+      If res1!fldcomplication And If res1!fldcomplication = "Asphyxia" Then
+        xrespd = xrespd + 1
+      Else If res1!fldcomplication And If res1!fldcomplication = "Malformations" Then
+        xmalfrm = xmalfrm + 1
+      Endif
+    Next
+  Endif
+  GridView1[0, 0].Text = "Very Low(<1.5Kg)"
+  GridView1[0, 1].Text = xtotal
+  GridView1[0, 2].Text = xrespd
+  GridView1[0, 3].Text = xmalfrm
+  $ProgressBar1.Value = 0.33
+  Wait
+
+  xtotal = 0
+  xrespd = 0
+  xmalfrm = 0
+  res2 = modDatabase.$syConn.Exec("select fldencounterval,fldcomplication from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddelwt>=&3 and flddelwt<&4", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), 1500, 2500)
+  If res2.Available Then
+    xtotal = res2.Count
+    For Each res2
+      If res2!fldcomplication And If res2!fldcomplication = "Asphyxia" Then
+        xrespd = xrespd + 1
+      Else If res2!fldcomplication And If res2!fldcomplication = "Malformations" Then
+        xmalfrm = xmalfrm + 1
+      Endif
+    Next
+  Endif
+  GridView1[1, 0].Text = "Low(1.5-2.5Kg)"
+  GridView1[1, 1].Text = xtotal
+  GridView1[1, 2].Text = xrespd
+  GridView1[1, 3].Text = xmalfrm
+  $ProgressBar1.Value = 0.66
+  Wait
+
+  xtotal = 0
+  xrespd = 0
+  xmalfrm = 0
+  res3 = modDatabase.$syConn.Exec("select fldencounterval,fldcomplication from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddelwt>=&3", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), 2500)
+  If res3.Available Then
+    xtotal = res3.Count
+    For Each res3
+      If res3!fldcomplication And If res3!fldcomplication = "Asphyxia" Then
+        xrespd = xrespd + 1
+      Else If res3!fldcomplication And If res3!fldcomplication = "Malformations" Then
+        xmalfrm = xmalfrm + 1
+      Endif
+    Next
+  Endif
+  GridView1[2, 0].Text = "Normal(>=2.5Kg)"
+  GridView1[2, 1].Text = xtotal
+  GridView1[2, 2].Text = xrespd
+  GridView1[2, 3].Text = xmalfrm
+  $ProgressBar1.Value = 1
+  Wait
+
+  GridView1.Row = 0
+  Dec Application.Busy
+
+End
+
+''================== Death Report ==============================
+Public Sub GetDeathReportHMIS()
+
+  Dim res1x As Result
+  Dim res1y As Result
+  Dim res2x As Result
+  Dim res2y As Result
+  Dim res3x As Result
+  Dim res4x As Result
+  Dim res4y As Result
+  Dim res5x As Result
+  Dim res5y As Result
+
+  Dim xtotfemale As Integer
+  Dim xtotmale As Integer
+  Dim xstr As String
+  Dim aa As Integer
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 5
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Category"
+    .Columns[1].Text = "Female"
+    .Columns[2].Text = "Male"
+  End With
+
+  Inc Application.Busy
+  xstr = modMedReports.GetAgeStringByTable("tblpatientdate", modDatabase.$syConn)
+  GridView1[0, 0].Text = "Early Neonatal(0-6 days)"
+  GridView1[1, 0].Text = "Late Neonatal(7-27 days)"
+  GridView1[2, 0].Text = "Maternal (All)"
+  GridView1[3, 0].Text = "Post Operative"
+  GridView1[4, 0].Text = "Others"
+
+  xtotfemale = 0
+  xtotmale = 0
+
+  'early neonatal female
+  aa = 0
+  res1x = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &4 and fldptbirday like &5 and " & xstr & ">=&6 and " & xstr & "<&7))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Female", "%", 0, 7)
+  If res1x.Available Then
+    If res1x!col Then
+      aa = res1x!col
+    Endif
+  Endif
+  xtotfemale = xtotfemale + aa
+  GridView1[0, 1].Text = aa
+  $ProgressBar1.Value = 0.1
+  Wait
+
+  ''early neonatal male
+  aa = 0
+  res1y = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &4 and fldptbirday like &5 and " & xstr & ">=&6 and " & xstr & "<&7))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Male", "%", 0, 7)
+  If res1x.Available Then
+    If res1y!col Then
+      aa = res1y!col
+    Endif
+  Endif
+  xtotmale = xtotmale + aa
+  GridView1[0, 2].Text = aa
+  $ProgressBar1.Value = 0.2
+  Wait
+
+  ''late neonatal female
+  aa = 0
+  res2x = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &4 and fldptbirday like &5 and " & xstr & ">=&6 and " & xstr & "<&7))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Female", "%", 7, 27)
+  If res2x.Available Then
+    If res2x!col Then
+      aa = res2x!col
+    Endif
+  Endif
+  xtotfemale = xtotfemale + aa
+  GridView1[1, 1].Text = aa
+  $ProgressBar1.Value = 0.3
+  Wait
+
+  ''late neonatal male
+  aa = 0
+  res2y = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &4 and fldptbirday like &5 and " & xstr & ">=&6 and " & xstr & "<&7))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Male", "%", 7, 27)
+  If res2y.Available Then
+    If res2y!col Then
+      aa = res2y!col
+    Endif
+  Endif
+  xtotmale = xtotmale + aa
+  GridView1[1, 2].Text = aa
+  $ProgressBar1.Value = 0.4
+  Wait
+
+  ''delivery
+  aa = 0
+  res3x = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblconfinement)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death")
+  If res3x.Available Then
+    If res3x!col Then
+      aa = res3x!col
+    Endif
+  Endif
+  xtotfemale = xtotfemale + aa
+  GridView1[2, 1].Text = aa
+  GridView1[2, 2].Text = 0
+  $ProgressBar1.Value = 0.6
+  Wait
+
+  ''post operative female
+  aa = 0
+  res4x = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblpatgeneral where fldreportquali=&4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Done", "Female")
+  If res4x.Available Then
+    If res4x!col Then
+      aa = res4x!col
+    Endif
+  Endif
+  xtotfemale = xtotfemale + aa
+  GridView1[3, 1].Text = aa
+  $ProgressBar1.Value = 0.7
+  Wait
+
+  ''post operative male
+  aa = 0
+  res4y = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblpatgeneral where fldreportquali=&4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Done", "Male")
+  If res4y.Available Then
+    If res4y!col Then
+      aa = res4y!col
+    Endif
+  Endif
+  xtotmale = xtotmale + aa
+  GridView1[3, 2].Text = aa
+  $ProgressBar1.Value = 0.8
+  Wait
+
+  ''others female
+  aa = 0
+  res5x = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &4))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Female")
+  If res5x.Available Then
+    If res5x!col Then
+      aa = res5x!col
+    Endif
+  Endif
+  GridView1[4, 1].Text = aa - xtotfemale
+  $ProgressBar1.Value = 0.9
+  Wait
+
+  ''others male
+  aa = 0
+  res5y = modDatabase.$syConn.Exec("select count(fldencounterval) as col from tblpatientdate where fldtime>=&1 and fldtime<=&2 and fldhead=&3 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &4))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Death", "Male")
+  If res5y.Available Then
+    If res5y!col Then
+      aa = res5y!col
+    Endif
+  Endif
+  GridView1[4, 2].Text = aa - xtotmale
+  $ProgressBar1.Value = 1
+  Wait
+
+  GridView1.Row = 0
+  Dec Application.Busy
+
+End
+
+''========================= Laboratory ===========================
+Private Sub GetLaboratoryHMISReport()
+
+  Dim sList As String[]
+  Dim sTest As String
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim Row As Integer
+
+  Dim xabn As Integer
+  Dim xtot As Integer
+
+  sList = modFillContainer.GetListFromResult(modDatabase.$syConn.Exec("select fldtestid from tbltest where fldcategory=&1", cmbcategory.Text))
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = sList.Count
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Test Name"
+    .Columns[1].Text = "Abnormal"
+    .Columns[2].Text = "Total"
+  End With
+
+  Inc Application.Busy
+
+  Row = 0
+  For Each sTest In sList
+    xabn = 0
+    res1 = modDatabase.$syConn.Exec("select count(fldid) as col from tblpatlabtest where fldtestid=&1 and fldtime_sample>=&2 and fldtime_sample<=&3 and fldsave_report=&4 and fldabnormal=&5", sTest, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), True, True)
+    If res1.Available Then
+      If res1!col Then
+        xabn = res1!col
+      Endif
+    Endif
+
+    xtot = 0
+    res2 = modDatabase.$syConn.Exec("select count(fldid) as col from tblpatlabtest where fldtestid=&1 and fldtime_sample>=&2 and fldtime_sample<=&3 and fldsave_report=&4", sTest, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), True)
+    If res2.Available Then
+      If res2!col Then
+        xtot = res2!col
+      Endif
+    Endif
+    GridView1[Row, 0].Text = sTest
+    GridView1[Row, 1].Text = xabn
+    GridView1[Row, 2].Text = xtot
+
+    Row = Row + 1
+    $ProgressBar1.Value = Row / sList.Count
+    Wait
+  Next
+
+  GridView1.Row = 0
+  Dec Application.Busy
+
+End
+
+''============================== ALL REPORTS ==========================
+Public Sub btnall_Click()
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xPath As String
+  Dim xicdlist As String[]
+  Dim xicd As String
+  Dim xlablist As String[]
+  Dim xlab As String
+
+  $BillingReport = New CReportHTML(["Data"], modHelpVariable.$htmlDirectory, "", "")
+  $BillingReport.UserData.Add("HMIS REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate), "PARAM2")
+
+  GridView1.Clear()
+  $ProgressBar1 = New ProgressBar(Me)
+
+  GetHospitalService()
+  Wait
+  $BillingReport.AddSection("Hospital Services")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  GetEmergencyServices()
+  Wait
+  $BillingReport.AddSection("Emergency Services")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  GetRadiologyService()
+  Wait
+  $BillingReport.AddSection("Radiology Services")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  ShowInpatientsOutcome()
+  Wait
+  $BillingReport.AddSection("Inpatient Outcome")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  GetAgeWiseMorbidity("InPatient")
+  Wait
+  $BillingReport.AddSection("Inpatient Morbidity")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  $BillingReport.AddSection("Outpatient Morbidity")
+  xicdlist = modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select distinct(fldgroupname) as col from tbldiagnogroup"))
+  If Not xicdlist Or If xicdlist.Count = 0 Then
+    xicdlist = ["%"]
+  Endif
+  For Each xicd In xicdlist
+    cmbcategory.Text = xicd
+    GetNewOPDMorbidity()
+    Wait
+    $BillingReport.AddChapter(xicd)
+    With asx
+      .Add(modString.GetGridViewRichText(GridView1))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    GridView1.Clear()
+  Next
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  FillMaternalAgeData()
+  Wait
+  $BillingReport.AddSection("Maternal Age")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  GetGravidaReport()
+  Wait
+  $BillingReport.AddSection("Gravida Info")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  DeliveryTypeReport()
+  Wait
+  $BillingReport.AddSection("Delivery Type")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  GetLiveDeliveryBabyQTY()
+  Wait
+  $BillingReport.AddSection("Live Deliveries")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  BirthWeightreportCompli()
+  Wait
+  $BillingReport.AddSection("Birth Weight")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  GetDeathReportHMIS()
+  Wait
+  $BillingReport.AddSection("Death Info")
+  With asx
+    .Add(modString.GetGridViewRichText(GridView1))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  GridView1.Clear()
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  $BillingReport.AddSection("Laboratory")
+  xlablist = modMedicine.GetPathoCategoryList("Test")
+  For Each xlab In xlablist
+    cmbcategory.Text = xlab
+    GetLaboratoryHMISReport()
+    Wait
+    $BillingReport.AddChapter(xlab)
+    With asx
+      .Add(modString.GetGridViewRichText(GridView1))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    GridView1.Clear()
+  Next
+  With asx
+    .Add("*****")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  xPath = $BillingReport.NewHTMLPath()
+  modPrint.DisplayReportExport(xPath)
+
+End

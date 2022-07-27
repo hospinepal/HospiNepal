@@ -1,0 +1,701 @@
+' Gambas class file
+
+Private $rData As Result
+Private $encid As String
+Private $status As String
+
+Private hPatient1 As FmBillingEntry
+Private $BillingOption As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Panel4.Height = 0
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  cmbroute.List = ["Medicines", "Surgicals", "Extra Items"]
+  $BillingOption = modGlobalSetting.ShowSettingFromDB("BillingOption/PharmacyReturn")
+  If modBasic.$BillReturnByEnc = "Yes" Then
+    rbEncid.Enabled = True
+    If modSettings.ShowSettingFromFIle("Billing/ReturnMode") = "Encounter" Then
+      rbEncid.Value = True
+    Else
+      rbBill.Value = True
+    Endif
+  Else
+    rbBill.Value = True
+  Endif
+
+  modStock.DisplayDefaultDispensingMode(rbrand, rbgeneric)
+  BlankAllControl()
+
+  If txtbill.Text = "" Then
+    txtbill.SetFocus
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  If $encid Then
+    modPatient.ReleaseLockEncounter($encid, modHelpVariable.$LogInCategory)
+  Endif
+  If hPatient1 Then
+    hPatient1.Close
+  Endif
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub btnshow_GotFocus()
+
+  btnshow_Click()
+
+End
+
+Public Sub btnshow_Click()
+
+  If txtbill.Text Then
+
+    txtbill.Text = UCase(Trim(txtbill.Text))
+    If rbBill.Value = True Then
+      $encid = modBillings.GetEncounterFromBillNo(txtbill.Text)
+    Else If rbEncid.Value = True Then
+      $encid = Trim(txtbill.Text)
+    Endif
+
+    If Not $encid Then Return
+    If modPatient.LockEncounterDesk($encid) = False Then
+      $encid = ""
+      Balloon.Warning(("Encounter Locked"), btnshow)
+      Balloon.Delay = modBasic.$BalloonDelay
+      txtbill.SetFocus
+    Endif
+
+    If $encid Then
+      txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+      txtgender.Text = modPatient.GetPatientSex($encid)
+      txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+      $sTatus = modPatient.CurrentAdmissionStatus($encid)
+      BillingAvailability(ShowBillingRet())
+      Panel2.Enabled = False
+      ShowReturnGrid()
+      cmbreason.SetFocus
+    Endif
+
+  Endif
+
+End
+
+Public Sub cmbroute_LostFocus()
+
+  Dim sql As String
+  Dim res As Result
+
+  If cmbroute.text = "Medicines" Then
+    If rbBill.Value = True Then
+      sql = "select distinct(flditemname) as col from tblpatbilling where fldbillno=&1 and fldstatus=&2 and flditemtype=&3 and (flditemqty-fldretqty)>&4"                                 ''
+      res = modDatabase.$myConn.Exec(sql, Trim(txtbill.Text), "Cleared", "Medicines", 0)
+    Else If rbEncid.Value = True Then
+      sql = "select distinct(flditemname) as col from tblpatbilling where fldencounterval=&1 and fldstatus=&2 and flditemtype=&3 and (flditemqty-fldretqty)>&4"
+      res = modDatabase.$myConn.Exec(sql, Trim(txtbill.Text), "Done", "Medicines", 0)
+    Endif
+    cmbmedicine.Clear
+    For Each res
+      If rbrand.Value = True Then
+        cmbmedicine.Add(modMedConstant.ConvertGenericToBrand(res!col))
+      Else
+        cmbmedicine.Add(res!col)
+      Endif
+    Next
+
+  Else
+    If rbBill.Value = True Then
+      sql = "select distinct(flditemname) as col from tblpatbilling where fldbillno=&1 and fldstatus=&2 and flditemtype=&3 and (flditemqty-fldretqty)>&4"                                 ''
+      res = modDatabase.$myConn.Exec(sql, Trim(txtbill.Text), "Cleared", cmbroute.text, 0)
+    Else If rbEncid.Value = True Then
+      sql = "select distinct(flditemname) as col from tblpatbilling where fldencounterval=&1 and fldstatus=&2 and flditemtype=&3 and (flditemqty-fldretqty)>&4"
+      res = modDatabase.$myConn.Exec(sql, Trim(txtbill.Text), "Done", cmbroute.text, 0)
+    Endif
+    modFillContainer.FillComboBox(cmbmedicine, res)
+
+  Endif
+
+End
+
+Public Sub cmbbatch_GotFocus()
+
+  Dim sql As String
+  Dim res As Result
+
+  If Not cmbbatch.Count Then
+    If cmbmedicine.Text Then
+      If cmbroute.Text = "Medicines" Then
+        If rbrand.Value = True Then
+          cmbmedicine.Text = modMedConstant.ConvertBrandToGenericName(cmbmedicine.Text)
+        Endif
+      Endif
+
+      If rbBill.Value = True Then
+        sql = "select distinct(fldbatch) as col from tblentry where fldstockid=&1 and fldstockno in(select flditemno from tblpatbilling where fldbillno=&2 and fldstatus=&3 and flditemtype=&4 and (flditemqty-fldretqty)>&5)"
+        res = modDatabase.$myConn.Exec(sql, cmbmedicine.Text, Trim(txtbill.Text), "Cleared", cmbroute.text, 0)
+      Else If rbEncid.Value = True Then
+        sql = "select distinct(fldbatch) as col from tblentry where fldstockid=&1 and fldstockno in(select flditemno from tblpatbilling where fldencounterval=&2 and fldstatus=&3 and flditemtype=&4 and (flditemqty-fldretqty)>&5)"
+        res = modDatabase.$myConn.Exec(sql, cmbmedicine.Text, Trim(txtbill.Text), "Done", cmbroute.text, 0)
+      Endif
+      modFillContainer.FillComboBox(cmbbatch, res)
+    Endif
+  Endif
+
+End
+
+Public Sub cmbbatch_Click()
+
+  Dim sql As String
+  Dim res As Result
+
+  lbldate.Value = modStock.GetExpiryFromBatch(cmbmedicine.Text, cmbbatch.Text)
+  If rbBill.Value = True Then
+    sql = "select flditemqty,fldretqty from tblpatbilling where flditemname=&1 and fldbillno=&2 and fldstatus=&3 and flditemtype=&4 and flditemno in(select fldstockno from tblentry where fldbatch=&5) and (flditemqty-fldretqty)>&6"
+    res = modDatabase.$myConn.Exec(sql, cmbmedicine.Text, Trim(txtbill.Text), "Cleared", cmbroute.text, cmbbatch.Text, 0)
+  Else If rbEncid.Value = True Then
+    sql = "select flditemqty,fldretqty from tblpatbilling where flditemname=&1 and fldencounterval=&2 and fldstatus=&3 and flditemtype=&4 and flditemno in(select fldstockno from tblentry where fldbatch=&5) and (flditemqty-fldretqty)>&6"
+    res = modDatabase.$myConn.Exec(sql, cmbmedicine.Text, Trim(txtbill.Text), "Done", cmbroute.text, cmbbatch.Text, 0)
+  Endif
+  If res.Available Then
+    res.MoveFirst
+    txtmax.Value = res!flditemqty - res!fldretqty
+  Endif
+
+End
+
+Private Sub SaveReturnEntry()
+
+  Dim dy As Integer
+  Dim qty As Float
+  Dim res As Result
+  Dim stockno As Long
+  Dim msg As String
+  Dim xnew As Boolean
+  Dim xday As String
+
+  xday = modSettings.ShowSettingFromFIle("InventorySetting/ReturnExpiry")
+  If xday Then
+    dy = CFloat(xday)
+  Else
+    dy = 0
+  Endif
+
+  If rbBill.Value = True Then
+    res = modDatabase.$myConn.Exec("select fldid,fldencounterval,flditemtype,flditemrate,flditemqty,fldtaxper,flddiscper,fldparent,fldbillno,fldbillingmode from tblpatbilling where flditemname=&1 and fldbillno=&2 and fldstatus=&3 and flditemtype=&4 and flditemno in(select fldstockno from tblentry where fldbatch=&5) and (flditemqty-fldretqty)>&6", cmbmedicine.Text, Trim(txtbill.Text), "Cleared", cmbroute.text, cmbbatch.Text, 0)
+  Else If rbEncid.Value = True Then
+    res = modDatabase.$myConn.Exec("select fldid,fldencounterval,flditemtype,flditemrate,flditemqty,fldtaxper,flddiscper,fldparent,fldbillno,fldbillingmode from tblpatbilling where flditemname=&1 and fldencounterval=&2 and fldstatus=&3 and flditemtype=&4 and flditemno in(select fldstockno from tblentry where fldbatch=&5) and (flditemqty-fldretqty)>&6", cmbmedicine.Text, Trim(txtbill.Text), "Done", cmbroute.text, cmbbatch.Text, 0)                                                    ''
+  Endif
+  res.MoveFirst
+
+  Inc Application.Busy
+  xnew = modStock.NewStock(cmbmedicine.Text, cmbbatch.Text, modGeneralMain.compID)
+
+  modDatabase.$myConn.Begin
+  stockno = modStock.GetItemStockNo(cmbmedicine.Text, cmbbatch.Text, modGeneralMain.compID)
+  If stockno Then
+    If xnew = True Then
+      AddNewEntry(stockno, res!flditemrate)
+    Endif
+    If txtqty.Value <= txtmax.Value And If DateDiff(Date(), lbldate.Value, gb.Day) >= dy Then
+      qty = 0 - txtqty.Value
+      modBillings.InsertBlankBillItem(res!fldencounterval, res!fldbillingmode, res!flditemtype, stockno, cmbmedicine.Text, res!flditemrate, qty, res!fldtaxper, res!flddiscper, "Punched", res!fldid, False, False, "", "", "", cmbreason.Text, res!fldbillno)
+    Else
+      msg = ("Return not allowed")
+    Endif
+  Endif
+  modDatabase.$myConn.Commit
+  Dec Application.Busy
+
+  If msg Then
+    Message.Warning(msg, ("OK"))
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub AddNewEntry(StockNo As Long, txtrate As Float)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Create("tblentry")
+  res["fldstockno"] = StockNo
+  res["fldstockid"] = cmbmedicine.Text
+  res["fldbatch"] = cmbbatch.Text
+  res["fldexpiry"] = lbldate.Value
+  res["fldqty"] = 0
+  res["fldstatus"] = modStock.ItemSaleStatus(cmbmedicine.Text, modGeneralMain.compID)
+  res["fldsellpr"] = txtrate
+  res["fldsav"] = True
+  res["fldcategory"] = cmbroute.Text
+  res["fldcomp"] = modGeneralMain.compID
+  res["fldcode"] = 0
+  res.Update()
+
+End
+
+Private Sub BlankAllControl()
+
+  cmbroute.Text = ""
+  cmbmedicine.Text = ""
+  cmbbatch.Clear()
+  cmbbatch.Text = ""
+  txtmax.Value = 0
+  txtqty.Value = 0
+
+End
+
+Public Sub mnublank_Click()
+
+  Me.Close
+  Wait
+  modHelpVariable.AddNewFormToWorkspace(fmReturn)
+
+End
+
+Public Sub chksave_Click()
+
+  If chksave.Value = True Then
+    If txtbill.Text And If cmbroute.Text And If cmbmedicine.Text And If txtmax.Value >= txtqty.Value Then
+      SaveReturnEntry()
+      BlankAllControl()
+      ShowReturnGrid()
+      cmbroute.SetFocus
+    Endif
+  Endif
+
+End
+
+Public Sub chksave_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    chksave.Value = True
+    chksave_Click()
+  Endif
+
+End
+
+Public Sub cmbroute_Click()
+
+  chksave.Value = False
+
+End
+
+Private Sub ShowReturnGrid()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  sql = "select fldid,fldordtime,flditemtype,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt as tot,flduserid from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp=&4 and fldstatus=&5 and flditemqty<&6 and (flditemtype=&7 or flditemtype=&8 or flditemtype=&9)"
+  $rData = modDatabase.$myConn.Exec(sql, $encid, False, False, modGeneralMain.compID, "Punched", 0, "Medicines", "Surgicals", "Extra Items")
+
+  GridView1.Clear
+  GridView1.Columns.Count = $rData.Fields.Count
+  GridView1.Rows.Count = $rData.Count
+
+  For Each $rData
+    Column = 0
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+      If Column = 1 Then
+        GridView1[$rData.Index, Column].Text = modReportVar.GetDateTimeReport($rData["fldordtime"], gb.GeneralDate)
+      Else
+        GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Text = "NO"
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Category"
+    .Columns[3].Text = "Code"
+    .Columns[4].Text = "Particulars"
+    .Columns[5].Text = "Rate"
+    .Columns[6].Text = "QTY"
+    .Columns[7].Text = "Tax %"
+    .Columns[8].Text = "Disc %"
+    .Columns[9].Text = "Total"
+    .Columns[10].Text = "User"
+
+    .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 180 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 40 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+  End With
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modDatabase.$myConn.Delete("tblpatbilling", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+    BlankAllControl()
+    ShowReturnGrid()
+  Endif
+
+End
+
+Private Sub BillingAvailability(phm As Boolean)
+
+  If phm = True Then '
+    Panel4.Height = 104 * modBasic.$AppHeightRatio
+    GridView1.Height = Panel1.Height - (Panel5.Height + Panel4.Height)
+    hPatient1 = New FmBillingEntry(Panel4)
+    hPatient1.$encid = $encid
+    hPatient1.$billtype = "PharmReturn"
+    Wait
+    hPatient1.ShowBillingDatainBox()
+    hPatient1.SetDefaultModeCashCredit()
+  Else If phm = False Then
+    Panel4.Visible = False
+    Panel4.Height = 0
+  Endif
+  If $sTatus = "Admitted" Then
+    If modBasic.$BillLockAdmitted = "Yes" Then
+      If hPatient1 Then
+        hPatient1.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Function ShowBillingRet() As Boolean
+
+  Dim xx As Boolean
+
+  If $BillingOption = "All" Then
+    xx = True
+  Else If $BillingOption = "OPD" Then
+    If $sTatus = "Admitted" Then
+      xx = False
+    Else
+      xx = True
+    Endif
+  Else
+    xx = False
+  Endif
+  Return xx
+
+End
+
+Public Sub mnusave_Click()
+
+  If $encid Then
+    PharmacyReturn()
+    mnubilling_Click()
+  Endif
+
+End
+
+Public Sub mnubilling_Click()
+
+  If ShowBillingRet() = True Then
+    hPatient1.txtdiscamt.SetFocus
+  Endif
+
+End
+
+Private Sub PharmacyReturn()
+
+  Dim sql As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim qtynew As Float
+  Dim xx As Float
+
+  sql = "select fldid,flditemtype,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldparent,fldencounterval from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp=&4 and fldstatus=&5 and flditemqty<&6 and (flditemtype=&7 or flditemtype=&8 or flditemtype=&9)"
+  res = modDatabase.$myConn.Exec(sql, $encid, False, False, modGeneralMain.compID, "Punched", 0, "Medicines", "Surgicals", "Extra Items")
+  If res.Available = True Then
+
+    Inc Application.Busy
+    modDatabase.$myConn.Begin
+    For Each res
+      ''update tblpatdosing
+      qtynew = 0 - res!flditemqty
+      If rbBill.Value = True Then
+        res1 = modDatabase.$myConn.Exec("select fldid,fldqtydisp,fldqtyret from tblpatdosing where fldid in(select fldparent from tblpatbilling where fldid=&1 and flditemname=&2 and fldencounterval=&3)", res!fldparent, res!flditemname, $encid)
+        If qtynew <= (res1!fldqtydisp - res1!fldqtyret) Then
+          res2 = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1", res1!fldid)
+          res2["fldqtyret"] = res2!fldqtyret + qtynew
+          res2["flduptime"] = Now()
+          res2["xyz"] = False
+          res2.Update()
+          qtynew = 0
+        Endif
+      Else If rbEncid.Value = True Then
+        res1 = modDatabase.$myConn.Exec("select fldid,fldqtydisp,fldqtyret from tblpatdosing where flditem=&1 and fldencounterval=&2 and (fldqtydisp-fldqtyret)>&3 ORDER by fldid DESC", res!flditemname, $encid, 0)
+        res1.MoveFirst
+        While qtynew > 0
+          If qtynew <= (res1!fldqtydisp - res1!fldqtyret) Then
+            res2 = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1", res1!fldid)
+            res2["fldqtyret"] = res2!fldqtyret + qtynew
+            res2["flduptime"] = Now()
+            res2["xyz"] = False
+            res2.Update()
+            qtynew = 0
+          Else If qtynew > (res1!fldqtydisp - res1!fldqtyret)
+            xx = res1!fldqtydisp - res1!fldqtyret
+            res2 = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1", res1!fldid)
+            res2["fldqtyret"] = res2!fldqtyret + xx
+            res2["flduptime"] = Now()
+            res2["xyz"] = False
+            res2.Update()
+            qtynew = qtynew - xx
+          Endif
+          res1.MoveNext
+        Wend
+      Endif
+
+      'add QTY to tblentry
+      modStock.AddToExistEntry(res!flditemno, (0 - res!flditemqty), modGeneralMain.compID)
+      ''update journal ''?? not necessary ??
+      ''update parent record with return qty
+      modBillings.UpdateReturnBillQTY(res!fldparent, res!fldencounterval, res!flditemname, res!flditemqty)
+      ''update current record
+      res3 = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", res!fldid)
+      res3["fldstatus"] = "Done"
+      res3["fldsave"] = True
+      res3["flduserid"] = modGeneralMain.$lbluser
+      res3["fldtime"] = Now()
+      res3["fldcomp"] = modGeneralMain.compID
+      res3["xyz"] = False
+      res3.Update()
+
+    Next
+    modDatabase.$myConn.Commit
+    Dec Application.Busy
+    ShowReturnGrid()
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub cmbroute_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbroute)
+  modFillContainer.RestrictComboToContent(cmbroute)
+
+End
+
+Public Sub cmbbatch_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbbatch)
+  modFillContainer.RestrictComboToContent(cmbbatch)
+
+End
+
+Public Sub cmbmedicine_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbmedicine)
+  modFillContainer.RestrictComboToContent(cmbmedicine)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnuhist_Click()
+
+  Dim hForm As FRequest
+  Dim sql As String
+  Dim res As Result
+
+  If txtbill.Text Then
+    If rbEncid.Value = True Then
+      sql = "select fldid,fldtime,flditem,fldqtydisp,fldqtyret from tblpatdosing where fldencounterval=&1 and fldsave_order=&2"
+      res = modDatabase.$myConn.Exec(sql, $encid, True)
+    Else If rbBill.Value = True Then
+      sql = "select fldid,fldtime,flditem,fldqtydisp,fldqtyret from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldid in(select fldparent from tblpatbilling where (flditemtype=&3 or flditemtype=&4 or flditemtype=&5) and fldbillno=&6)"
+      res = modDatabase.$myConn.Exec(sql, $encid, True, "Medicines", "Surgicals", "Extra Items", txtbill.Text)
+    Endif
+
+    If res.Available Then
+      hForm = New FRequest(res, "Dispensing History", "MedList", False)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub rbBill_Click()
+
+  modSettings.SaveSettingsToFile("Billing/ReturnMode", "Invoice")
+  txtbill.SetFocus
+
+End
+
+Public Sub rbEncid_Click()
+
+  modSettings.SaveSettingsToFile("Billing/ReturnMode", "Encounter")
+  txtbill.SetFocus
+
+End
+
+Public Sub rbgeneric_Click()
+
+  modSettings.SaveSettingsToFile("BrandOrGeneric/Dispensing", "Generic")
+
+End
+
+Public Sub rbrand_Click()
+
+  modSettings.SaveSettingsToFile("BrandOrGeneric/Dispensing", "Brand")
+
+End
+
+Public Sub txtbill_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtbill.Text = txtbill.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub mnuinvoice_Click()
+
+  Dim res As Result
+  Dim rsx As Result
+  Dim qty As Float
+
+  If rbBill.Value = True Then
+    If txtbill.Text Like "PHM" & "*" Then
+      rsx = modDatabase.$myConn.Exec("select fldid from tblpatbilling where fldretbill=&1", Trim(txtbill.Text))
+      If rsx.Available = False Then
+
+        res = modDatabase.$myConn.Exec("select fldid,fldencounterval,flditemtype,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldparent,fldpayto,fldrefer,fldtarget,fldbillno,fldbillingmode from tblpatbilling where fldbillno=&1 and (fldstatus=&2 or fldstatus=&3)", Trim(txtbill.Text), "Cleared", "Sampled")
+        If res.Available Then
+          Inc Application.Busy
+          modDatabase.$myConn.Begin
+          For Each res
+            qty = 0 - res!flditemqty
+            modBillings.InsertBlankBillItem(res!fldencounterval, res!fldbillingmode, res!flditemtype, res!flditemno, res!flditemname, res!flditemrate, qty, res!fldtaxper, res!flddiscper, "Punched", res!fldid, False, False, res!fldtarget, res!fldpayto, res!fldrefer, cmbreason.Text, res!fldbillno)
+          Next
+          modDatabase.$myConn.Commit
+          Dec Application.Busy
+          ShowReturnGrid()
+          cmbroute.SetFocus
+        Endif
+
+      Endif
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub mnumed_Click()
+
+  Dim xPath As String
+
+  If $encid Then
+    xPath = modCHTMLInvoice.ShowItemDispensedByPatient(modDatabase.$syConn, $encid, "Medicines")
+    modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnusurg_Click()
+
+  Dim xPath As String
+
+  If $encid Then
+    xPath = modCHTMLInvoice.ShowItemDispensedByPatient(modDatabase.$syConn, $encid, "Surgicals")
+    modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuextra_Click()
+
+  Dim xPath As String
+
+  If $encid Then
+    xPath = modCHTMLInvoice.ShowItemDispensedByPatient(modDatabase.$syConn, $encid, "Extra Items")
+    modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnumedbill_Click()
+
+  Dim xPath As String
+
+  If $encid Then
+    xPath = modCHTMLInvoice.ShowItemDispensedByPatient(modDatabase.$syConn, $encid, "Medicines")
+    modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnusurgbill_Click()
+
+  Dim xPath As String
+
+  If $encid Then
+    xPath = modCHTMLInvoice.ShowItemDispensedByPatient(modDatabase.$syConn, $encid, "Surgicals")
+    modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuextrabill_Click()
+
+  Dim xPath As String
+
+  If $encid Then
+    xPath = modCHTMLInvoice.ShowItemDispensedByPatient(modDatabase.$syConn, $encid, "Extra Items")
+    modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+
+End

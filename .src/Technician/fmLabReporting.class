@@ -1,0 +1,814 @@
+' Gambas class file
+
+Private $encid As String
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  cmbcategory.List = modMedicine.GetPathoCategoryList("Test")
+  cmbcategory.Add("%")
+  cmbcategory.Text = modSettings.ShowSettingFromFIle("Laboratory/DefaultDepartment")
+
+  modLabTest.DisplayDefaultTestUnit(rbsi, rbmetric)
+  modSettings.ShowCheckBox(chkall, "TestReporting/ShowAll")
+  modSettings.ShowCheckBox(chkinfred, "TestReporting/Inform_Red")
+  modSettings.ShowCheckBox(chkinfyellow, "TestReporting/Inform_Yellow")
+  modSettings.ShowCheckBox(chkinfgreen, "TestReporting/Inform_Green")
+  modSettings.ShowCheckBox(chkinfblue, "TestReporting/Inform_Blue")
+  modSettings.ShowCheckBox(chkinfblack, "TestReporting/Inform_Black")
+  rbencounter.Value = True
+  If rbencounter.Value = True Then
+    modGeneralMain.SetEncIDPrefix(txtencid)
+  Endif
+  dtfrom.Value = modDate.StartSqlDate(Now())
+  dtto.Value = modDate.EndSqlDate(Now())
+  DateSelectionSett()
+  txtencid.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["O"] And If Key.Control Then
+    btnwebcam_Click()
+  Else If Key.Code = Key["R"] And If Key.Control Then
+    btnrefresh_Click()
+  Else If Key.Code = Key["F"] And If Key.Control Then
+    txtencid.Text = GetEncid()
+  Else If Key.Code = Key["A"] And If Key.Control Then
+    btncomponent_Click()
+  Else If Key.Code = Key["B"] And If Key.Control Then
+    Me.Close
+    Wait
+    modHelpVariable.AddNewFormToWorkspace(fmLabReporting)
+  Else If Key.Code = Key["X"] And If Key.Control Then
+    Me.Close()
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub mnublak_Click()
+
+  Me.Close
+  Wait
+  modHelpVariable.AddNewFormToWorkspace(fmLabReporting)
+
+End
+
+Public Sub rbsi_Click()
+
+  modSettings.SaveSettingsToFile("TestUnit/Default", "SI")
+
+End
+
+Public Sub rbmetric_Click()
+
+  modSettings.SaveSettingsToFile("TestUnit/Default", "Metric")
+
+End
+
+Public Sub Form_Close()
+
+  modSettings.SaveSettingsToFile("Laboratory/DefaultDepartment", cmbcategory.Text)
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+'''---------------------------------- Reporting List ----------------------------
+Public Sub cmbcategory_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcategory)
+  modFillContainer.RestrictComboToContent(cmbcategory)
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Inc Application.Busy
+  FillReportList()
+  Dec Application.Busy
+  GridView1.SetFocus
+
+End
+
+Private Sub FillReportList()
+
+  Dim str1 As String
+  Dim xcomp As String
+  Dim xstr As String
+
+  If modBasic.$LabReportingComp Then
+    xcomp = modBasic.$LabReportingComp
+  Else
+    xcomp = modGeneralMain.compID
+  Endif
+  If modBasic.$LabReportingFrom = "Not From" Then
+    xstr = " and fldcomp_sample not like &3"
+  Else
+    xstr = " and fldcomp_sample like &3"
+  Endif
+
+  If cmbcategory.Text = "%" Then
+    If rbencounter.Value = True Then
+      str1 = "select distinct(fldencounterval) as fldparent,fldencounterval,fldencounterval,fldencounterval from tblpatlabtest where fldstatus=&1 and fldsave_sample=&2" & xstr & " ORDER BY fldid ASC"
+    Else If rbsample.Value = True Then
+      str1 = "select distinct(fldsampleid) as fldparent,fldencounterval,fldencounterval,fldencounterval from tblpatlabtest where fldstatus=&1 and fldsave_sample=&2" & xstr & " ORDER BY fldid ASC"
+    Endif
+
+  Else
+    If rbencounter.Value = True Then
+      str1 = "select distinct(fldencounterval) as fldparent,fldencounterval,fldencounterval,fldencounterval from tblpatlabtest where fldstatus=&1 and fldsave_sample=&2" & xstr & " and fldtestid in(select fldtestid from tbltest where fldcategory like &4) ORDER BY fldid ASC"
+    Else If rbsample.Value = True Then
+      str1 = "select distinct(fldsampleid) as fldparent,fldencounterval,fldencounterval,fldencounterval from tblpatlabtest where fldstatus=&1 and fldsave_sample=&2" & xstr & " and fldtestid in(select fldtestid from tbltest where fldcategory like &4) ORDER BY fldid ASC"
+    Endif
+
+  Endif
+
+  $rData1 = modDatabase.$myConn.Exec(str1, "Sampled", True, xcomp, cmbcategory.Text)
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView1, $rData1, $aMyFields1)
+  With GridView1
+    .Columns[0].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 1
+    .Columns[2].Width = 10 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Text = "Name"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 2 Then
+    GridView1.Data.Text = ""
+    GridView1.Data.Background = modPatient.GetPatientColor($rData1[$aMyFields1[Column]])
+  Else If Column = 3 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData1[$aMyFields1[Column]])
+  Else
+    GridView1.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    btnshow.Enabled = False
+    txtencid.Text = GridView1[GridView1.Row, 0].Text
+    $encid = GridView1[GridView1.Row, 1].Text
+    txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+    txtgender.Text = modPatient.GetPatientSex($encid)
+    txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+    txtpatientcontact.Text = modPatient.GetLocationSetting($encid)
+    txtcolor.Background = modPatient.GetPatientColor($encid)
+    txtpatlock.Text = modPatient.GetPatientLockMacAdd($encid)
+    FillLabtable()
+    TableView1.SetFocus
+  Endif
+
+End
+
+Public Sub GridView1_KeyRelease()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+      GridView1_Click()
+    Endif
+  Endif
+
+End
+
+Public Sub btnexpotree_Click()
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+
+  Dim sql As String
+  Dim res As Result
+
+  Dim xcomp As String
+  Dim xstr As String
+
+  If modBasic.$LabReportingComp Then
+    xcomp = modBasic.$LabReportingComp
+  Else
+    xcomp = modGeneralMain.compID
+  Endif
+  If modBasic.$LabReportingFrom = "Not From" Then
+    xstr = "fldcomp_sample not like &4"
+  Else
+    xstr = "fldcomp_sample like &4"
+  Endif
+
+  Inc Application.Busy
+  $BillingReport = New CReportHTML([("SNo"), ("SampleTime"), ("Encounter"), ("PatientName"), ("SampleNo"), ("TestName"), ("Observation")], modHelpVariable.$htmlDirectory, " ", "")
+  $BillingReport.UserData.Add("TESTS TO REPORT", "PARAM1")
+  $BillingReport.UserData.Add("Category : " & cmbcategory.Text, "PARAM2")
+
+  sql = "select fldid,fldtime_sample,fldsampleid,fldtestid,fldencounterval from tblpatlabtest where fldstatus=&1 and fldsave_sample=&2 and fldtestid in(select fldtestid from tbltest where fldcategory like &3) and " & xstr
+  res = modDatabase.$myConn.Exec(sql, "Sampled", True, cmbcategory.Text, xcomp)
+  For Each res
+    With asx
+      .Add(res!fldid)
+      .Add(modReportVar.GetDateTimeReport(res!fldtime_sample, gb.GeneralDate))
+      .Add(res!fldencounterval)
+      .Add(modPatient.GetPatientNameByEnc(res!fldencounterval))
+      .Add(res!fldsampleid)
+      .Add(res!fldtestid)
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  Dec Application.Busy
+
+  modPrint.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+''------------------------------------ individual patient tests ------------------------
+Public Sub btnwebcam_Click()
+
+  txtencid.Text = modDevice.ChooseBarCodeSource()
+  txtencid.SetFocus
+  txtencid.Pos = Len(txtencid.Text)
+
+End
+
+Public Sub btnshow_Click()
+
+  If txtencid.Text Then
+    btnshow.Enabled = False
+    If rbencounter.Value = True Then
+      $encid = Trim(txtencid.Text)
+    Else If rbsample.Value = True Then
+      $encid = modLabTest.GetEncounterFromSampleID(txtencid.Text)
+    Endif
+    txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+    txtgender.Text = modPatient.GetPatientAgeString($encid, Now()) & "/" & modPatient.GetPatientSex($encid)
+    txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+    txtpatientcontact.Text = modPatient.GetLocationSetting($encid)
+    txtcolor.Background = modPatient.GetPatientColor($encid)
+    txtpatlock.Text = modPatient.GetPatientLockMacAdd($encid)
+    modGeneralMain.RecordPatientActivity("Patient Data", Me.Name, "EncounterID", $encid)
+    If modPatient.AllowEncIDHistory($encid, modDatabase.$myConn) = True Then
+      FillLabtable()
+      modImage.ShowPhotoSplash("Patient", modPatient.GetPatientNoByEnc($encid))
+      TableView1.SetFocus
+    Else
+      Me.Enabled = False
+    Endif
+  Endif
+
+End
+
+Public Sub txtencid_GotFocus()
+
+  btnshow.Enabled = True
+
+End
+
+Public Sub chkall_Click()
+
+  modSettings.EnterCheckSetting(chkall, "TestReporting/ShowAll")
+
+End
+
+Public Sub chkinfred_Click()
+
+  modSettings.EnterCheckSetting(chkinfred, "TestReporting/Inform_Red")
+
+End
+
+Public Sub chkinfyellow_Click()
+
+  modSettings.EnterCheckSetting(chkinfyellow, "TestReporting/Inform_Yellow")
+
+End
+
+Public Sub chkinfgreen_Click()
+
+  modSettings.EnterCheckSetting(chkinfgreen, "TestReporting/Inform_Green")
+
+End
+
+Public Sub chkinfblue_Click()
+
+  modSettings.EnterCheckSetting(chkinfblue, "TestReporting/Inform_Blue")
+
+End
+
+Public Sub chkinfblack_Click()
+
+  modSettings.EnterCheckSetting(chkinfblack, "TestReporting/Inform_Black")
+
+End
+
+Private Sub DateSelectionSett()
+
+  If chkdate.Value = True Then
+    Panel11.Enabled = True
+  Else
+    Panel11.Enabled = False
+  Endif
+
+End
+
+Public Sub chkdate_Click()
+
+  DateSelectionSett()
+
+End
+
+Private Sub ExecuteQuery()
+
+  Dim sql As String
+  Dim xcomp As String
+  Dim xstr As String
+
+  If Not cmbcategory.Text Then
+    cmbcategory.Text = "%"
+  Endif
+  If modBasic.$LabReportingComp Then
+    xcomp = modBasic.$LabReportingComp
+  Else
+    xcomp = modGeneralMain.compID
+  Endif
+  If modBasic.$LabReportingFrom = "Not From" Then
+    xstr = "fldcomp_sample not like "
+  Else
+    xstr = "fldcomp_sample like "
+  Endif
+
+  If chkdate.Value = True Then
+    If cmbcategory.Text = "%" Then
+      If rbencounter.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and fldstatus=&2 and " & xstr & "&3 and fldtime_sample>=&4 and fldtime_sample<=&5"
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", xcomp, dtfrom.Value, dtto.Value)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and " & xstr & "&4 and fldtime_sample>=&5 and fldtime_sample<=&6"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", "Reported", xcomp, dtfrom.Value, dtto.Value)
+        Endif
+      Else If rbsample.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and fldstatus=&2 and fldencounterval=&3 and " & xstr & "&4 and fldtime_sample>=&5 and fldtime_sample<=&6"
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", $encid, xcomp, dtfrom.Value, dtto.Value)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and (fldstatus=&2 or fldstatus=&3) and fldencounterval=&4 and " & xstr & "&5 and fldtime_sample>=&6 and fldtime_sample<=&7"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", "Reported", $encid, xcomp, dtfrom.Value, dtto.Value)
+        Endif
+      Endif
+    Else
+      If rbencounter.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and fldstatus=&2 and fldtestid in(select fldtestid from tbltest where fldcategory like &3) and " & xstr & "&4 and fldtime_sample>=&5 and fldtime_sample<=&6"
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", cmbcategory.Text, xcomp, dtfrom.Value, dtto.Value)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and fldtestid in(select fldtestid from tbltest where fldcategory like &4) and " & xstr & "&5 and fldtime_sample>=&6 and fldtime_sample<=&7"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", "Reported", cmbcategory.Text, xcomp, dtfrom.Value, dtto.Value)
+        Endif
+      Else If rbsample.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and fldstatus=&2 and fldtestid in(select fldtestid from tbltest where fldcategory like &3) and fldencounterval=&4 and " & xstr & "&5 and fldtime_sample>=&6 and fldtime_sample<=&7"
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", cmbcategory.Text, $encid, xcomp, dtfrom.Value, dtto.Value)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and (fldstatus=&2 or fldstatus=&3) and fldtestid in(select fldtestid from tbltest where fldcategory like &4) and fldencounterval=&5 and " & xstr & "&6 and fldtime_sample>=&7 and fldtime_sample<=&8"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", "Reported", cmbcategory.Text, $encid, xcomp, dtfrom.Value, dtto.Value)
+        Endif
+      Endif
+    Endif
+
+  Else
+    If cmbcategory.Text = "%" Then
+      If rbencounter.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and fldstatus=&2 and " & xstr & "&3"
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", xcomp)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and " & xstr & "&4"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", "Reported", xcomp)
+        Endif
+      Else If rbsample.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and fldstatus=&2 and fldencounterval=&3 and " & xstr & "&4"
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", $encid, xcomp)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and (fldstatus=&2 or fldstatus=&3) and fldencounterval=&4 and " & xstr & "&5"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", "Reported", $encid, xcomp)
+        Endif
+      Endif
+    Else
+      If rbencounter.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and fldstatus=&2 and fldtestid in(select fldtestid from tbltest where fldcategory like &3) and " & xstr & "&4"
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", cmbcategory.Text, xcomp)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and fldtestid in(select fldtestid from tbltest where fldcategory like &4) and " & xstr & "&5"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), "Sampled", "Reported", cmbcategory.Text, xcomp)
+        Endif
+      Else If rbsample.Value = True Then
+        If chkall.Value = False Then
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and fldstatus=&2 and fldtestid in(select fldtestid from tbltest where fldcategory like &3) and fldencounterval=&4 and " & xstr & "&5"
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", cmbcategory.Text, $encid, xcomp)
+        Else
+          sql = "select fldid,fldsampleid,fldtestid,fldstatus,fldsave_report,fldabnormal,fldid,fldtime_sample,flvisible,fldsampletype,fldmethod,fldtest_type,fldcondition,fldcomment,fldtime_sample,fldtime_report from tblpatlabtest where fldsampleid=&1 and (fldstatus=&2 or fldstatus=&3) and fldtestid in(select fldtestid from tbltest where fldcategory like &4) and fldencounterval=&5 and " & xstr & "&6"                               ''
+          $rData = modDatabase.$myConn.Exec(sql, txtencid.Text, "Sampled", "Reported", cmbcategory.Text, $encid, xcomp)
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Private Sub FillLabtable()
+
+  ExecuteQuery()
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(TableView1, $rData, $aMyFields)
+
+  With TableView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 1
+    .Columns[4].Width = 1
+    .Columns[5].Width = 20
+    .Columns[6].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 1
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 1
+    .Columns[12].Width = 1
+    .Columns[13].Width = 1
+    .Columns[14].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[15].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "SamID"
+    .Columns[2].Text = "Test Name"
+    .Columns[6].Text = "Observation"
+    .Columns[8].Text = "Visibility"
+    .Columns[9].Text = "Specimen"
+    .Columns[10].Text = "Method"
+    .Columns[14].Text = "Sample Time"
+    .Columns[15].Text = "Report Time"
+  End With
+  modGridView.SetLabReportIcon(TableView1, 3, 5, 5)
+
+End
+
+Public Sub TableView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(TableView1, Row)
+  If Column = 6 Then
+    TableView1.Data.RichText = modLabTest.GetLabTestValueGridString($rData["fldid"], modLabTest.GetTestUnitFromButton(rbsi, rbmetric), False)
+  Else If Column = 14 Then
+    TableView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldtime_sample"], gb.GeneralDate)
+  Else If Column = 15 Then
+    TableView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldtime_report"], gb.GeneralDate)
+  Else
+    TableView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub TableView1_Click()
+
+  Dim xx As String
+  Dim xopt As String[] = ["Visible", "Hidden"]
+  Dim res As Result
+  Dim Row As Integer
+
+  Row = TableView1.Row
+  If TableView1.Column = 6 Then
+    EnterTextData()
+
+  Else If TableView1.Column = 5 Then
+    xx = InputCombo("Select Flag for the observation", "Change Flag", ["Normal", "Abnormal"], modGridView.GetIconValue(TableView1[TableView1.Row, 5].Picture), True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1", TableView1[TableView1.Row, 0].Text)
+      If xx = "Abnormal" Then
+        res["fldabnormal"] = True
+      Else
+        res["fldabnormal"] = False
+      Endif
+      res["xyz"] = False
+      res.Update
+      FillLabtable()
+    Endif
+
+  Else If TableView1.Column = 8 Then
+    xx = InputCombo("Set Visibility", TableView1[TableView1.Row, 2].Text, xopt, TableView1[TableView1.Row, 8].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1", TableView1[TableView1.Row, 0].Text)
+      res["flvisible"] = xx
+      res["xyz"] = False
+      res.Update
+      FillLabtable()
+    Endif
+
+  Else If TableView1.Column = 9 Then
+    xx = GetTextArea(("Specimen"), TableView1[TableView1.Row, 9].Text)
+    If xx Then
+      modLabTest.UpdateSpecimenTest(TableView1[TableView1.Row, 0].Text, xx)
+      FillLabtable()
+    Endif
+
+  Else If TableView1.Column = 10 Then
+    xx = InputCombo(("Select Test Method"), TableView1[TableView1.Row, 2].Text, modFixLab.MethodsForLabTest(TableView1[TableView1.Row, 2].Text), TableView1[TableView1.Row, 10].Text, True)
+    If xx Then
+      modLabTest.UpdateEquipmentMethod(TableView1[TableView1.Row, 0].Text, xx)
+      FillLabtable()
+    Endif
+
+  Endif
+  TableView1.Row = Row
+
+End
+
+Public Sub TableView1_KeyRelease()
+
+  If TableView1.Rows.Selection.Count > 0 Then
+    If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+      EnterTextData()
+    Endif
+  Endif
+
+End
+
+Private Sub EnterTextData()
+
+  Dim yqualival As Variant[]
+  Dim hForm2 As FmLabQuantiVal
+  Dim hForm3 As FmEnterMultiple
+  Dim res As Result
+  Dim sql As String
+  Dim opx As String[]
+  Dim opt As String[]
+  Dim opid As Long[]
+  Dim option As String[]
+  Dim xx As Integer
+  Dim xunit As String
+  Dim xType As String
+  Dim xdate As Date
+
+  xx = TableView1.Row
+  If TableView1[TableView1.Row, 11].Text = "Qualitative" Then
+    sql = "select fldid,fldsubtest,fldtanswertype,fldreport from tblpatlabsubtest where fldtestid=&1"
+    res = modDatabase.$myConn.Exec(sql, TableView1[TableView1.Row, 0].Text)
+    If res.Available = False Then
+      xType = modFixLab.GetLabTestOptionType(TableView1[TableView1.Row, 2].Text)
+      If xType = "Clinical Scale" Then
+        yqualival = modExamOption.GetClinScalePopUp("Test", TableView1[TableView1.Row, 2].Text)
+        If yqualival Then
+          modLabTest.UpdateLabQualiQuanti(TableView1[TableView1.Row, 0].Text, yqualival[1], CFloat(yqualival[0]), False, "")
+        Endif
+      Else If xType = "Left and Right" Then
+        yqualival = CLeftRight(TableView1[TableView1.Row, 2].Text, TableView1[TableView1.Row, 6].RichText)
+        If yqualival Then
+          modLabTest.UpdateLabTestReportQuali(TableView1[TableView1.Row, 0].Text, modString.GetLefRightJSON(yqualival[0], yqualival[1]), yqualival[2], "")
+        Endif
+      Else If xType = "Date Time" Then
+        xdate = GetDateValue(TableView1[TableView1.Row, 2].Text, ("Select Date Time"), CDate(TableView1[TableView1.Row, 6].RichText))
+        If xdate Then
+          modLabTest.UpdateLabTestReportQuali(TableView1[TableView1.Row, 0].Text, CStr(xdate), False, "")
+        Endif
+      Else
+        yqualival = GetQualiValues(TableView1[TableView1.Row, 2].Text, TableView1[TableView1.Row, 6].RichText, "Test")
+        If yqualival Then
+          modLabTest.UpdateLabTestReportQuali(TableView1[TableView1.Row, 0].Text, yqualival[0], yqualival[1], yqualival[2])
+        Endif
+      Endif
+
+    Else If res.Available = True Then
+      opid = New Long[]
+      opx = New String[]
+      opt = New String[]
+      option = New String[]
+      For Each res
+        opid.Add(res!fldid)
+        opx.Add(res!fldsubtest)
+        opt.Add(res!fldreport)
+        option.Add(res!fldtanswertype)
+      Next
+      opx.Add("Final Impression")
+      opt.Add(TableView1[TableView1.Row, 6].RichText)
+      opid.Add(0)
+      option.Add("No Selection")
+      hForm3 = New FmEnterMultiple(TableView1[TableView1.Row, 0].Text, "Test", TableView1[TableView1.Row, 2].Text, opx, opt, opid, option, TableView1[TableView1.Row, 9].Text)
+      hForm3.ShowModal
+    Endif
+
+  Else If TableView1[TableView1.Row, 11].Text = "Quantitative" Then
+    xunit = modLabTest.GetTestUnitFromButton(rbsi, rbmetric)
+    hForm2 = New FmLabQuantiVal(TableView1[TableView1.Row, 0].Text, TableView1[TableView1.Row, 2].Text, modLabTest.GetTestQuantiValue($encid, TableView1[TableView1.Row, 0].Text, xunit), xunit, TableView1[TableView1.Row, 9].Text, MACLabNotification())
+    hForm2.ShowModal
+
+  Endif
+
+  FillLabtable()
+  TableView1.Row = xx
+
+End
+
+''-------------------------------------- button report -------------------------------------
+Public Sub btnreport_Click()
+
+  Dim hCls As CReportCustom
+  Dim unt As String
+
+  If rbsi.Value = True Then
+    unt = "SI"
+  Else
+    unt = "Metric"
+  Endif
+
+  If $encid Then
+    If modSettings.ShowSettingFromFIle("Diagnostic Help/Name") Then
+      hCls = New CReportCustom($encid, "Diagnostic Help", "ReportSize", unt)
+      hCls.Preview()
+    Endif
+  Endif
+
+End
+
+Public Sub btnfullrep_Click()
+
+  If txtencid.Text Then
+    modCHTMLReport.ExportGridToHTML(TableView1, "", "TEST REPORTING",, txtencid.Text)
+  Endif
+
+End
+
+''------------------------- menu procedures -----------------------------------
+Public Sub btnrepoprint_Click()
+
+  Dim hForm As FmLabRepSettings
+
+  If txtencid.Text Then
+    hForm = New FmLabRepSettings(Trim(txtencid.Text))
+    modHelpVariable.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub btnhistory_Click()
+
+  Dim xPath As String
+  Dim xpatno As String
+
+  If txtencid.Text Then
+    xpatno = modPatient.GetPatientNoByEnc($encid)
+    If modPatient.GetPatPassCheck(modDatabase.$myConn, xpatno) = True Then
+      xPath = modCHTMLPatient.ShowPatientAllLaboratoryReport($encid, modLabTest.GetTestUnitFromButton(rbsi, rbmetric))
+      modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Function MACLabNotification() As String
+
+  Dim xall As Boolean
+  Dim xmac As String
+
+  If txtcolor.Background = Color.Red Then
+    If chkinfred.Value Then
+      xall = True
+    Else
+      xall = False
+    Endif
+  Else If txtcolor.Background = Color.Yellow Then
+    If chkinfyellow.Value Then
+      xall = True
+    Else
+      xall = False
+    Endif
+  Else If txtcolor.Background = Color.Green Then
+    If chkinfgreen.Value Then
+      xall = True
+    Else
+      xall = False
+    Endif
+  Else If txtcolor.Background = Color.Blue Then
+    If chkinfblue.Value Then
+      xall = True
+    Else
+      xall = False
+    Endif
+  Else If txtcolor.Background = Color.Black Then
+    If chkinfblack.Value Then
+      xall = True
+    Else
+      xall = False
+    Endif
+  Else
+    xall = False
+  Endif
+
+  If xall = True Then
+    xmac = txtpatlock.Text
+  Else
+    xmac = ""
+  Endif
+
+  Return xmac
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtencid.Text = txtencid.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub btncomponent_Click()
+
+  Dim xxx As String[]
+  Dim yyy As String[]
+
+  If TableView1.Rows.Selection.Count > 0 Then
+    If modFixLab.GetLabTestOptionType(TableView1[TableView1.Row, 2].Text) = "Custom Components" Then
+      xxx = modFixLab.GetSubTestArray(TableView1[TableView1.Row, 2].Text)   'modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select distinct(fldsubtest) as col from tbltestquali where fldtestid=&1", TableView1[TableView1.Row, 2].Text))
+      yyy = GridListView(("Select Components"), xxx)
+      If yyy Then
+        modLabTest.InsertLabSubTest($encid, TableView1[TableView1.Row, 0].Text, yyy)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btncondi_Click()
+
+  Dim xx As String
+
+  If TableView1.Rows.Selection.Count > 0 Then
+    xx = GetTextArea(("Condition"), TableView1[TableView1.Row, 12].Text)
+    If xx Then
+      modLabTest.UpdateConditionTest(TableView1[TableView1.Row, 0].Text, xx)
+      FillLabtable()
+    Endif
+  Endif
+
+End
+
+Public Sub btncomment_Click()
+
+  Dim xx As String
+  Dim res As Result
+
+  If TableView1.Rows.Selection.Count > 0 Then
+    xx = GetTextArea(TableView1[TableView1.Row, 2].Text, TableView1[TableView1.Row, 13].Text)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1", TableView1[TableView1.Row, 0].Text)
+      res["fldcomment"] = xx
+      res["xyz"] = False
+      res.Update
+      FillLabtable()
+    Endif
+  Endif
+
+End
+
+Public Sub btnimage_Click()
+
+  Dim hForm As FmTestImage
+
+  If TableView1.Rows.Selection.Count > 0 Then
+    hForm = New FmTestImage("IMAGE", $encid, TableView1[TableView1.Row, 0].Text, TableView1[TableView1.Row, 2].Text, TableView1[TableView1.Row, 6].Text, "")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btnsms_Click()
+
+  If TableView1.Rows.Selection.Count > 0 Then
+    modDevice.SendSMSLabConsultant($encid, TableView1[TableView1.Row, 2].Text, modLabTest.GetLabTestValueString($encid, TableView1[TableView1.Row, 0].Text, modLabTest.GetTestUnitFromButton(rbsi, rbmetric), False))
+  Endif
+
+End

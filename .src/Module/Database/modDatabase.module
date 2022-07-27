@@ -1,0 +1,1921 @@
+' Gambas module file
+
+Public $myConn As Connection
+Public $syConn As Connection
+Public $calConn As Connection
+Public $medConn As Connection
+
+'NOTE: ---------------------------------- CONNECTION --------------------------------------------
+Public Function OpenConnection(DBType As String, DBHost As String, DBName As String, UserName As String, UserPassword As String, Optional sPort As String) As Connection
+
+  Dim conn As Connection
+  Dim xtimeout As String
+
+  xtimeout = modSettings.ShowSettingFromFIle("Application/ConnectionTimeOut")
+  conn = New Connection
+  conn.Type = Lower(DBType)
+  conn.Host = DBHost
+  conn.Name = DBName
+  conn.Login = UserName
+  conn.Password = UserPassword
+  If sPort Then
+    conn.Port = sPort
+  Else
+    conn.Port = ""
+  Endif
+  If modGeneralMain.$SysDisableCharset = "Yes" Then
+    conn.IgnoreCharset = True
+  Endif
+  If xtimeout Then
+    conn.Timeout = CInt(xtimeout)
+  Endif
+  Try conn.Open()
+  If conn.Opened = True Then
+    modBasic.DebugString("Open Connection to " & DBName & " on " & DBHost)
+  Endif
+
+  Return conn
+
+End
+
+Public Sub CloseDatabase()
+
+  Try $calConn.Close()
+  modBasic.DebugString("Closing connection to calendar sqlite database")
+  Try $myConn.Close()
+  modBasic.DebugString("Closing connection to master database")
+  Try $syConn.Close()
+  modBasic.DebugString("Closing connection to slave database")
+  Try $medConn.Close()
+  modBasic.DebugString("Closing connection to external medicine database")
+
+End
+
+'
+''
+'''
+''''
+''--------------------------------- DB functions ---------------------------
+Public Function GetAllDBonServer() As String[]
+
+  Dim sDb As String[]
+  Dim xx As Database
+
+  sDb = New String[]
+  For Each xx In $myConn.Databases
+    If xx.System Then
+    Else
+      sDb.Add(xx.Name)
+    Endif
+  Next
+  Return sDb
+
+End
+
+Public Function FillDBTables(withKeyTable As Boolean) As String[]
+
+  Dim hTable As Table
+  Dim xx As String[]
+
+  xx = New String[]
+  For Each hTable In $myConn.Tables
+    If hTable.System = True Then
+    Else If hTable.Name = "tblkey" Then
+      If withKeyTable = True Then
+        xx.Add("tblkey")
+      Endif
+    Else If hTable.Name = "tblnewkey" Then
+      If withKeyTable = True Then
+        xx.Add("tblnewkey")
+      Endif
+    Else If hTable.Name = "tbluser" Then
+      If withKeyTable = True Then
+        xx.Add("tbluser")
+      Endif
+    Else
+      xx.Add(hTable.Name)
+    Endif
+  Next
+  xx.Sort(gb.Ascent)
+  Return xx
+
+End
+
+Public Function DBTablesSelField(sFieldList As String[]) As String[]
+
+  Dim hTable As Table
+  Dim xx As String[]
+  Dim sField As String
+  Dim i As Integer
+
+  xx = New String[]
+  For Each hTable In $myConn.Tables
+    If hTable.System = True Then
+    Else
+      i = 0
+      For Each sField In sFieldList
+        If hTable.Fields.Exist(sField) Then
+          i = i + 1
+        Endif
+      Next
+      If i = sFieldList.Count Then
+        xx.Add(hTable.Name)
+      Endif
+    Endif
+  Next
+  xx.Sort(gb.Ascent)
+  Return xx
+
+End
+
+Public Sub WarmUpDatabase()
+
+  Dim hTable As Table
+  Dim sql As String
+  Dim res As Result
+  Dim xInd As Index
+
+  db.Debug = True
+  For Each hTable In $myConn.Tables
+    If hTable.Indexes.Count > 1 Then
+
+      If hTable.PrimaryKey.Count Then
+        sql = Subst("SELECT count(*) FROM &1 ORDER BY &2", hTable.Name, hTable.PrimaryKey[0])
+        res = $myConn.Exec(sql)
+      Endif
+      For Each xInd In hTable.Indexes
+        If xInd.Name = "PRIMARY" Then
+        Else
+          sql = Subst("SELECT count(*) FROM &1 FORCE INDEX(&2)", hTable.Name, xInd.Name)
+          res = $myConn.Exec(sql)
+        Endif
+      Next
+
+    Endif
+  Next
+
+End
+
+Public Function GetDataTypeFromID(sType As Integer) As String
+
+  Dim xx As String
+
+  If sType = db.Serial Then
+    xx = "Serial"
+  Else If sType = db.Long Then
+    xx = "Long"
+  Else If sType = db.Integer Then
+    xx = "Integer"
+  Else If sType = gb.Float Then
+    xx = "Float"
+  Else If sType = gb.String Then
+    xx = "String"
+  Else If sType = gb.Date Then
+    xx = "Date"
+  Else If sType = gb.Boolean Then
+    xx = "Boolean"
+  Else If sType = db.Blob Then
+    xx = "Blob"
+  Else
+    xx = CStr(sType)
+  Endif
+
+  Return xx
+
+End
+
+Public Function FirstResultField(res As Result) As String
+
+  Dim xx As String
+  Dim ref As ResultField
+
+  For Each ref In res.Fields
+    xx = ref.Name
+    Break
+  Next
+  Return xx
+
+End
+
+Public Function GetFIeldsinTable(sTable As String, withSerial As Boolean, Optional Conn As Connection) As String[]
+
+  Dim hTable As Table
+  Dim ref As Field
+  Dim tabList As String[]
+  Dim xcon As Connection
+
+  If Conn Then
+    xcon = Conn
+  Else
+    xcon = $myConn
+  Endif
+
+  tabList = New String[]
+  For Each hTable In xcon.Tables
+    If hTable.Name = sTable Then
+      For Each ref In hTable.Fields
+
+        If ref.Type = db.Serial Then
+          If withSerial = True Then
+            tabList.Add(ref.Name)
+          Endif
+        Else
+          tabList.Add(ref.Name)
+        Endif
+
+      Next
+    Endif
+  Next
+  Return tabList
+
+End
+
+'
+''
+'''
+''''
+
+'NOTE: ------------------------------------ BACKUP ---------------------------------------
+Public Function GetSelectedBackup(sType As String, DBHost As String, DBName As String, DBUser As String, DBPass As String, sTable As String) As String
+
+  Dim xx As String
+  Dim sPath As String
+  Dim idLock As Boolean
+
+  sPath = Temp() & ".sql"
+  idLock = modNonMedical.LockTableForID("Backup")
+  If idLock = True Then
+    If sType = "mysql" Then
+      If System.Exist("mysqldump") = True Then
+        xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " > " & sPath                                                        ''
+        modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+        Shell xx Wait
+      Else
+        Message.Warning("Install mysql-client or mariadb-client", ("OK"))
+      Endif
+    Else If sType = "postgresql" Then
+    Else If sType = "sqlite3" Then
+    Endif
+    modNonMedical.ReleaseLockTable("Backup")
+  Else
+    Message.Warning(("Backup Process Locked"), ("OK"))
+  Endif
+
+  Return sPath
+
+Catch
+  If idLock = True Then
+    modNonMedical.ReleaseLockTable("Backup")
+  Endif
+
+End
+
+Public Function GetBackUpSelTable(sTable As String) As String
+
+  Dim sType As String
+  Dim sPath As String
+  Dim DBHost As String
+  Dim DBName As String
+  Dim DBUser As String
+  Dim DBPass As String
+
+  sType = $syConn.Type
+  DBHost = $syConn.Host
+  DBName = $syConn.Name
+  DBUser = $syConn.User
+  DBPass = $syConn.Password
+  sPath = GetSelectedBackup(sType, DBHost, DBName, DBUser, DBPass, sTable)
+
+  Return sPath
+
+End
+
+Public Sub BackUpCurrentDB(sFolder As String)
+
+  Dim sType As String
+  Dim DBHost As String
+  Dim DBName As String
+  Dim DBUser As String
+  Dim DBPass As String
+
+  Dim sTargFile As String
+  Dim xcomprs As String
+  Dim xPass As String
+  Dim sTable As String
+  Dim xx As String
+  Dim xenable As String
+  Dim idLock As Boolean
+
+  If Not sFolder Then Return
+  sType = $syConn.Type
+  DBHost = $syConn.Host
+  DBName = $syConn.Name
+  DBUser = $syConn.User
+  DBPass = $syConn.Password
+
+  Inc Application.Busy
+  xenable = modGlobalSetting.ShowSettingFromDB("LocalBackup/Enable")
+  If xenable = "Yes" Then
+    xcomprs = modGlobalSetting.ShowSettingFromDB("LocalBackup/Compression")
+    xPass = modGlobalSetting.ShowSettingFromDB("LocalBackup/Password")
+    sTable = modGlobalSetting.GetDBTableList("LocalBackup/TableList").Join(" ")
+    idLock = modNonMedical.LockTableForID("Backup")
+    If idLock = True Then
+
+      If sType = "mysql" Then
+        If System.Exist("mysqldump") = True Then
+
+          If xcomprs = "Enabled" Then
+            If xPass Then
+              If System.Exist("7z") = True Then
+                sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql.7z"
+                xx = "mysqldump --quick --single-transaction" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | 7z a -mx=1 -mhe=on -p" & xPass & " -si " & sTargFile                    ''
+                modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+                Shell xx Wait
+              Else
+                Print "Install p7zip-full package to proceed"
+              Endif
+            Else   ''if no password
+              If System.Exist("gzip") = True Then
+                sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql.gz"
+                xx = "mysqldump --quick --single-transaction" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | gzip > " & sTargFile                    ''
+                modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+                Shell xx Wait
+              Else If System.Exist("7z") = True Then
+                sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql.7z"
+                xx = "mysqldump --quick --single-transaction" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | 7z a -mx=1 -si " & sTargFile                    ''
+                modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+                Shell xx Wait
+              Else
+                Print "Install gzip package to proceed"
+              Endif
+            Endif  ''password
+          Else ''if no compression
+            sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql"
+            xx = "mysqldump --quick --single-transaction" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " > " & sTargFile
+            modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+            Shell xx Wait
+          Endif  ''compression
+
+        Else
+          Print "Install mysql-client or mariadb-client to proceed"
+        Endif
+
+      Else If sType = "postgresql" Then
+        xx = "PGPASSWORD=" & Quote(DBPass) & " pg_dump -h " & DBHost & " -U " & DBUser & " -F p -b -v -f " & sFolder &/ DBName & "_backup-`date +%Y%m%d-%H`.sql" & Space(1) & DBName                      '''
+        modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+        Shell xx Wait
+
+      Else If sType = "sqlite3" Then
+        Copy DBHost &/ DBName To sFolder &/ DBName & "_backup-`date +%Y%m%d-%H`"
+        Wait
+
+      Endif
+
+      modNonMedical.ReleaseLockTable("Backup")
+    Endif
+  Endif
+  Dec Application.Busy
+
+Catch
+  Dec Application.Busy
+  If idLock = True Then
+    modNonMedical.ReleaseLockTable("Backup")
+  Endif
+
+End
+
+Private Function GetBackUpMultiTable(sTable As String, sCompress As Boolean) As String
+
+  Dim xx As String
+  Dim sPath As String
+
+  Dim sType As String
+  Dim DBHost As String
+  Dim DBName As String
+  Dim DBUser As String
+  Dim DBPass As String
+  Dim idLock As Boolean
+
+  sType = $syConn.Type
+  DBHost = $syConn.Host
+  DBName = $syConn.Name
+  DBUser = $syConn.User
+  DBPass = $syConn.Password
+
+  idLock = modNonMedical.LockTableForID("Backup")
+  If idLock = True Then
+    If sType = "mysql" Then
+      If System.Exist("mysqldump") = True Then
+        If sCompress = True And If System.Exist("gzip") = True Then
+          sPath = Temp() & ".sql.gz"
+          xx = "mysqldump --quick --single-transaction" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | gzip > " & sPath
+        Else
+          sPath = Temp() & ".sql"
+          xx = "mysqldump --quick --single-transaction" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " > " & sPath
+        Endif
+        Shell xx Wait
+      Else
+        Print "Install mysql-client or mariadb-client to proceed"
+      Endif
+
+    Else If sType = "postgresql" Then
+    Else If sType = "sqlite3" Then
+    Endif
+    modNonMedical.ReleaseLockTable("Backup")
+  Endif
+  Return sPath
+
+Catch
+  If idLock = True Then
+    modNonMedical.ReleaseLockTable("Backup")
+  Endif
+
+End
+
+Public Function SendBackupToFTP() As String
+
+  Dim sHost As String
+  Dim sFolder As String
+  Dim sUser As String
+  Dim sPass As String
+  Dim comprs As String
+  Dim xenable As String
+
+  Dim sDump As String
+  Dim sTable As String
+  Dim sTargFile As String
+  Dim xCompress As Boolean
+  Dim xmsg As String
+
+  xenable = modGlobalSetting.ShowSettingFromDB("FTPBackup/Enable")
+  If xenable = "Yes" Then
+
+    sHost = modGlobalSetting.ShowSettingFromDB("FTPBackup/Host")
+    sFolder = modGlobalSetting.ShowSettingFromDB("FTPBackup/Folder")
+    sUser = modGlobalSetting.ShowSettingFromDB("FTPBackup/User")
+    sPass = modPassword.DecryptSimple(modGlobalSetting.ShowSettingFromDB("FTPBackup/Password"))
+    comprs = modGlobalSetting.ShowSettingFromDB("FTPBackup/Compression")
+
+    If comprs = "Enabled" Then
+      xCompress = True
+      sTargFile = modString.GetDateString(Now()) & ".sql.gz"
+    Else
+      xCompress = False
+      sTargFile = modString.GetDateString(Now()) & ".sql"
+    Endif
+    sTable = modGlobalSetting.GetDBTableList("FTPBackup/TableList").Join(" ")
+    sDump = GetBackUpMultiTable(sTable, xCompress)
+
+    If sDump Then
+      xmsg = modDevice.SendFileToFTP(sHost, sFolder, sUser, sPass, sTargFile, sDump)
+      Wait
+    Else
+      xmsg = "No Dump file generated"
+    Endif
+
+    Return xmsg
+
+  Endif
+
+End
+
+Public Sub RestoreBackup(DBType As String, DBHost As String, DBName As String, UserName As String, UserPassword As String, sFIle As String)
+
+  Dim xx As String
+
+  Inc Application.Busy
+  If DBType = "mysql" Then
+    xx = "mysql" & " --host " & DBHost & " -u " & UserName & " -p" & UserPassword & " -f -D " & DBName & " < " & sFIle
+    modBasic.DebugString("Execute " & Replace(xx, UserPassword, "***"))
+    Shell xx Wait
+  Endif
+  Dec Application.Busy
+  Message.Info(("Restore completed"), ("OK"))
+
+End
+
+'
+''
+'''
+'''
+'''
+
+''NOTE: -------------------------------------------- Repair DB ----------------------------------------------------
+Public Sub CHnageUniFIeldDefaultDateTime($con As Connection, tblname As String, fldname As String)
+
+  Dim res As Result
+  Dim sql As String
+
+  If $con.Type = "mysql" Then
+    sql = Subst("ALTER TABLE `&1` CHANGE `&2` `&2` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP", tblname, fldname)
+    res = $con.Exec(sql)
+  Endif
+
+End
+
+Public Sub CHnageUniFIeldNullDefault($con As Connection, tblname As String, fldname As String)
+
+  Dim res As Result
+  Dim res1 As Result
+
+  If $con.Type = "mysql" Then
+    res = $con.Exec(Subst("ALTER TABLE `&1` ALTER `&2` DROP DEFAULT", tblname, fldname))
+    res1 = $con.Exec(Subst("ALTER TABLE `&1` MODIFY `&2` DATETIME NULL", tblname, fldname))
+  Endif
+
+End
+
+Public Sub ChangeToLowerCase($con As Connection)
+
+  Dim hTable As Table
+  Dim hField As Field
+  Dim res As Result
+  Dim xx As String
+
+  Inc Application.Busy
+  For Each hTable In $con.Tables
+    For Each hField In hTable.Fields
+      If IsLCase(hField.Name) = False Then
+        If $con.Type = "mysql" Then
+          xx = $con.MySQL.Field.FieldEspecifications(hField.Name, hTable.Name).Datatype()
+          res = $con.Exec(Subst("ALTER TABLE `&1` CHANGE `&2` `&3` &4 NULL", hTable.Name, hField.Name, LCase(hField.Name), xx))
+        Endif
+      Endif
+    Next
+  Next
+  Dec Application.Busy
+
+End
+
+Public Sub CreateIndexOnTable(sCon As Connection, TableName As String, IndexName As String, IndexFields As String[], sUnique As Boolean)
+
+  Dim hTable As Table
+
+  For Each hTable In sCon.Tables
+    If hTable.Name = TableName Then
+      hTable.Indexes.Add(IndexName, IndexFields, sUnique)
+      Break
+    Endif
+  Next
+
+End
+
+Public Sub DeleteAllIndex(sCon As Connection)
+
+  Dim hTable As Table
+  Dim hIndex As Index
+
+  For Each hTable In sCon.Tables
+    For Each hIndex In hTable.Indexes
+      If hIndex.Primary = False Then
+        sCon.Exec(Subst("ALTER TABLE &1 DROP INDEX &2", hTable.Name, hIndex.Name))
+        '         hTable.Indexes.Remove(hIndex.Name)
+      Endif
+    Next
+  Next
+
+End
+
+'
+''
+'''
+''''
+
+''NOTE: ---------------------------- MYSQL SPECIFIC ---------------------------------------------------
+Public Sub ChangeTableCOllation($con As Connection, sCharset As String, sCollation As String, sTable As String)
+
+  Dim res As Result
+
+  Try res = $con.Exec(Subst("ALTER TABLE `&1` CONVERT TO CHARACTER SET `&2` COLLATE `&3`", sTable, sCharset, sCollation))
+
+End
+
+Public Sub ChangeSingleCOlumnCOllation($con As Connection, TableName As String, FieldName As String, FieldType As String, sCharset As String, sCollation As String)
+
+  Dim res As Result
+
+  Try res = $con.Exec(Subst("ALTER TABLE `&1` MODIFY `&2` &3 CHARACTER SET `&4` COLLATE `&5`", TableName, FieldName, FieldType, sCharset, sCollation))
+
+End
+
+Public Function DateTimeDiffChecking() As Boolean
+
+  Dim resx As Result
+  Dim xgo As Boolean
+  Dim xtimediff As Integer
+
+  If modGeneralMain.$SysDisableDate = "Yes" Then
+    xgo = True
+  Else
+    If modDatabase.$myConn.Type = "sqlite3" Then
+      xgo = True
+    Else
+      resx = modDatabase.$myConn.Exec("SELECT CURRENT_TIMESTAMP as sdate")
+      xtimediff = DateDiff(resx["sdate"], Now(), gb.Second)
+      If xtimediff < 0 Then
+        xtimediff = 0 - xtimediff
+      Endif
+      If xtimediff < 30 Then
+        xgo = True
+      Else
+        xgo = False
+      Endif
+    Endif
+  Endif
+  Return xgo
+
+End
+
+'
+''
+'''
+''''
+
+Public Sub CreateDatabaseForSish($con As Connection, DBAll As Boolean)
+
+  Inc Application.Busy
+  ''-------------------------- Fixed Data table------------------------------------------------
+  CreateDatabaseForSish_Medicine($con)
+  CreateDatabaseForSish_Pathology($con)
+  CreateDatabaseForSish_Diadnostic($con)
+  CreateDatabaseForSish_Data($con)
+  ''---------------------------------------------Patient data-------------------------------------
+  If DBAll = True Then
+    CreateDatabaseForSish_System($con)
+    CreateDatabaseForSish_Finance($con)
+    CreateDatabaseForSish_Inventory($con)
+    CreateDatabaseForSish_Patient($con)
+  Endif
+  Dec Application.Busy
+  Message.Info(("Tables creation completed"), ("OK"))
+
+End
+
+''------------------------------- tables ----------------------------------
+Private Sub CreateDatabaseForSish_Medicine($con As Connection)
+
+  'blood
+  modDBTables.CREATEtblblood($con)
+  modDBTables.CREATEtblbloodstore($con)
+  modDBTables.CREATEtblvaccine($con)
+
+  'medicines
+  modDBTables.CREATEtblmedcategory($con)
+  modDBTables.CREATEtblsensidrugs($con)
+  modDBTables.CREATEtblchemclass($con)
+  modDBTables.CREATEtblcode($con)
+  modDBTables.CREATEtblcodelimit($con)
+  modDBTables.CREATEtblcompatdrug($con)
+  modDBTables.CREATEtblcompatfluid($con)
+  modDBTables.CREATEtbldilutionfluid($con)
+  modDBTables.CREATEtblincompatdrug($con)
+  modDBTables.CREATEtblincompatfluid($con)
+  modDBTables.CREATEtblreconstfluid($con)
+  modDBTables.CREATEtbldosageforms($con)
+  modDBTables.CREATEtbldrug($con)
+  modDBTables.CREATEtblinjection($con)
+  modDBTables.CREATEtbllabel($con)
+  modDBTables.CREATEtblmedbrand($con)
+  modDBTables.CREATEtblmedhepatic($con)
+  modDBTables.CREATEtblmedinteraction($con)
+  modDBTables.CREATEtblmedpregnancy($con)
+  modDBTables.CREATEtblmedrenal($con)
+  modDBTables.CREATEtblmedcontraindication($con)
+  modDBTables.CREATEtblmedadveffect($con)
+  modDBTables.CREATEtblmedmonitor($con)
+  modDBTables.CREATEtblregimen($con)
+  modDBTables.CREATEtbllocallabel($con)
+  modDBTables.CREATEtblmedgroup($con)
+
+  'groupings
+  modDBTables.CREATEtblproductgroup($con)
+  modDBTables.CREATEtblsurgicalname($con)
+
+  'surgicals
+  modDBTables.CREATEtblsuturetype($con)
+  modDBTables.CREATEtblsurgicals($con)
+  modDBTables.CREATEtblsurgbrand($con)
+
+  'extra
+  modDBTables.CREATEtblextra($con)
+  modDBTables.CREATEtblextrabrand($con)
+
+  'nutrition
+  modDBTables.CREATEtblfoodlist($con)
+  modDBTables.CREATEtblfoodtype($con)
+  modDBTables.CREATEtblfoodcontent($con)
+  modDBTables.CREATEtblfoodgroup($con)
+  modDBTables.CREATEtbldietgroup($con)
+  modDBTables.CREATEtblnutrition($con)
+
+End
+
+Private Sub CreateDatabaseForSish_Pathology($con As Connection)
+
+  'general
+  modDBTables.CREATEtblpathocategory($con)
+  modDBTables.CREATEtblbodyfluid($con)
+  modDBTables.CREATEtblsurveillance($con)
+  modDBTables.CREATEtblethnicgroup($con)
+  modDBTables.CREATEtbldiagnogroup($con)
+
+  'symptom/syndrome
+  modDBTables.CREATEtblsymptoms($con)
+  modDBTables.CREATEtblsubsymptoms($con)
+  modDBTables.CREATEtblpathosymp($con)
+  modDBTables.CREATEtblsyndromes($con)
+
+  'features
+  modDBTables.CREATEtblpathotest($con)
+  modDBTables.CREATEtblpathoexam($con)
+  modDBTables.CREATEtbltriage($con)
+
+End
+
+Private Sub CreateDatabaseForSish_Diadnostic($con As Connection)
+
+  'test
+  modDBTables.CREATEtbltestmethod($con)
+  modDBTables.CREATEtblsampletype($con)
+  modDBTables.CREATEtbltestcondition($con)
+  modDBTables.CREATEtbllabchemical($con)
+  modDBTables.CREATEtbltest($con)
+  modDBTables.CREATEtbltestoption($con)
+  modDBTables.CREATEtbltestlimit($con)
+  modDBTables.CREATEtbltestcomment($con)
+  modDBTables.CREATEtblcodehypo($con)
+  modDBTables.CREATEtblcodehyper($con)
+  modDBTables.CREATEtblsyndrohypo($con)
+  modDBTables.CREATEtblsyndrohyper($con)
+  modDBTables.CREATEtbltestquali($con)
+  modDBTables.CREATEtblsubtestquali($con)
+  modDBTables.CREATEtblantipanel($con)
+  modDBTables.CREATEtblgrouptest($con)
+
+  'exam
+  modDBTables.CREATEtblstructexam($con)
+  modDBTables.CREATEtblstructexamoption($con)
+  modDBTables.CREATEtblcompexam($con)
+  modDBTables.CREATEtblcomplaints($con)
+  modDBTables.CREATEtbldeptexam($con)
+  modDBTables.CREATEtbldeptexamoption($con)
+  modDBTables.CREATEtblgroupexam($con)
+  modDBTables.CREATEtblexam($con)
+  modDBTables.CREATEtblexamoption($con)
+  modDBTables.CREATEtblexamlimit($con)
+  modDBTables.CREATEtblexamcomment($con)
+  modDBTables.CREATEtblcodebrady($con)
+  modDBTables.CREATEtblcodetachy($con)
+  modDBTables.CREATEtblsyndrobrady($con)
+  modDBTables.CREATEtblsyndrotachy($con)
+  modDBTables.CREATEtblexamquali($con)
+  modDBTables.CREATEtblsubexamquali($con)
+
+  'radio
+  modDBTables.CREATEtblradio($con)
+  modDBTables.CREATEtblradiooption($con)
+  modDBTables.CREATEtblradiolimit($con)
+  modDBTables.CREATEtblradiocomment($con)
+  modDBTables.CREATEtblradioquali($con)
+  modDBTables.CREATEtblsubradioquali($con)
+  modDBTables.CREATEtblgroupradio($con)
+
+  'demographics
+  modDBTables.CREATEtblprocname($con)
+  modDBTables.CREATEtblgroupproc($con)
+  modDBTables.CREATEtbldemographic($con)
+  modDBTables.CREATEtbldemogoption($con)
+  modDBTables.CREATEtblevents($con)
+  modDBTables.CREATEtblreferlist($con)
+
+  'delivery
+  modDBTables.CREATEtbldelivery($con)
+  modDBTables.CREATEtbldelcomplication($con)
+  modDBTables.CREATEtblprocedure($con)
+  modDBTables.CREATEtblanaesthesia($con)
+  modDBTables.CREATEtblsysconst($con)
+
+End
+
+Private Sub CreateDatabaseForSish_Data($con As Connection)
+
+  modDBTables.CREATEtblmedimage($con)
+  modDBTables.CREATEtblelectrolyte($con)
+  modDBTables.CREATEtblresearch($con)
+
+End
+
+Private Sub CreateDatabaseForSish_System($con As Connection)
+
+  'system tables
+  modDBTables.CREATEtblautoid($con)
+  modDBTables.CREATEtblinvid($con)
+  modDBTables.CREATEtblpatsubs($con)
+  modDBTables.CREATEtbllock($con)
+  modDBTables.CREATEtblenclock($con)
+  modDBTables.CREATEtbltabsettings($con)
+  modDBTables.CREATEtblsettings($con)
+  modDBTables.CREATEtblgnupg($con)
+
+  'logs
+  modDBTables.CREATEtblautoemail($con)
+  modDBTables.CREATEtblcronjob($con)
+  modDBTables.CREATEtblirdactivity($con)
+  modDBTables.CREATEtblactivity($con)
+  modDBTables.CREATEtbljobrecord($con)
+  modDBTables.CREATEtblsystemlog($con)
+  modDBTables.CREATEtblreportlog($con)
+  modDBTables.CREATEtblsmslog($con)
+  modDBTables.CREATEtblmessagelog($con)
+
+  'users
+  modDBTables.CREATEtblstafflist($con)
+  modDBTables.CREATEtbluser($con)
+  modDBTables.CREATEtblusercategory($con)
+  modDBTables.CREATEtbluserimage($con)
+  modDBTables.CREATEtblreportgroup($con)
+  modDBTables.CREATEtblreportuser($con)
+
+  'security
+  modDBTables.CREATEtblkey($con)
+  modDBTables.CREATEtblnewkey($con)
+  modDBTables.CREATEtbluseraccess($con)
+  modDBTables.CREATEtblcompaccess($con)
+  modDBTables.CREATEtblmacaccess($con)
+  modDBTables.CREATEtbluserformaccess($con)
+  modDBTables.CREATEtblclinicentry($con)
+
+  'extra
+  modDBTables.CREATEtblpersonal($con)
+  modDBTables.CREATEtblfileshare($con)
+
+End
+
+Private Sub CreateDatabaseForSish_Finance($con As Connection)
+
+  'general
+  modDBTables.CREATEtblsurname($con)
+  modDBTables.CREATEtblhospitals($con)
+  modDBTables.CREATEtbldistrict($con)
+  modDBTables.CREATEtblmunicipals($con)
+  modDBTables.CREATEtblrelations($con)
+  modDBTables.CREATEtbldepartment($con)
+  modDBTables.CREATEtbldeptgroup($con)
+  modDBTables.CREATEtbldepartmentbed($con)
+
+  'billing
+  modDBTables.CREATEtbldiscount($con)
+  modDBTables.CREATEtblnodiscount($con)
+  modDBTables.CREATEtblcustdiscount($con)
+  modDBTables.CREATEtblbillingset($con)
+  modDBTables.CREATEtblschedule($con)
+  modDBTables.CREATEtblbillitem($con)
+  modDBTables.CREATEtblbillsection($con)
+  modDBTables.CREATEtblcurrency($con)
+  modDBTables.CREATEtblservicecost($con)
+  modDBTables.CREATEtblcostgroup($con)
+  modDBTables.CREATEtblextrasetting($con)
+  modDBTables.CREATEtbldepconsult($con)
+  modDBTables.CREATEtbluserpay($con)
+  modDBTables.CREATEtblservicegroup($con)
+  modDBTables.CREATEtblautogroup($con)
+  modDBTables.CREATEtbltaxgroup($con)
+  modDBTables.CREATEtbldiscgroup($con)
+  modDBTables.CREATEtblaccdemograp($con)
+  modDBTables.CREATEtblaccdemogoption($con)
+
+  'logs
+  modDBTables.CREATEtbljournal($con)
+  modDBTables.CREATEtblbanks($con)
+
+  ''-------------extra payments -------------------------
+  modDBTables.CREATEtblextrapayers($con)
+  modDBTables.CREATEtblextrapayitems($con)
+  modDBTables.CREATEtblextrareceipt($con)
+
+  ''fixed assets
+  modDBTables.CREATEtblassetsname($con)
+  modDBTables.CREATEtblassetsentry($con)
+
+End
+
+Private Sub CreateDatabaseForSish_Inventory($con As Connection)
+
+  'stock
+  modDBTables.CREATEtblentry($con)
+  modDBTables.CREATEtblentrybackup($con)
+  modDBTables.CREATEtbladjustment($con)
+
+  'purchase
+  modDBTables.CREATEtblpurchase($con)
+  modDBTables.CREATEtblpurchasebill($con)
+  modDBTables.CREATEtblstockreturn($con)
+  modDBTables.CREATEtblsupplier($con)
+  modDBTables.CREATEtbltenderlist($con)
+  modDBTables.CREATEtblpayment($con)
+
+  'transfers
+  modDBTables.CREATEtbltransfer($con)
+  modDBTables.CREATEtblrequest($con)
+  modDBTables.CREATEtbltarget($con)
+  modDBTables.CREATEtblbulksale($con)
+
+  'blood/other
+  modDBTables.CREATEtblmedinventory($con)
+
+End
+
+Private Sub CreateDatabaseForSish_Patient($con As Connection)
+
+  'general
+  modDBTables.CREATEtblpatientbook($con)
+  modDBTables.CREATEtblpatientinfo($con)
+  modDBTables.CREATEtblencounter($con)
+  modDBTables.CREATEtblpataccgeneral($con)
+  modDBTables.CREATEtblpatdevice($con)
+  modDBTables.CREATEtblpatientdate($con)
+
+  'exam/test
+  modDBTables.CREATEtblpatientexam($con)
+  modDBTables.CREATEtblpatientsubexam($con)
+  modDBTables.CREATEtblpatexamsubtable($con)
+  modDBTables.CREATEtblpatlabtest($con)
+  modDBTables.CREATEtblpatlabsubtest($con)
+  modDBTables.CREATEtblpatlabsubtable($con)
+  modDBTables.CREATEtblpatfindings($con)
+  modDBTables.CREATEtblexamgeneral($con)
+  modDBTables.CREATEtblpatgeneral($con)
+  modDBTables.CREATEtblpatsubgeneral($con)
+  modDBTables.CREATEtblpatplanning($con)
+  modDBTables.CREATEtblpattiming($con)
+  modDBTables.CREATEtblconsult($con)
+  modDBTables.CREATEtblconfinement($con)
+  modDBTables.CREATEtblpatradiotest($con)
+  modDBTables.CREATEtblpatradiosubtest($con)
+  modDBTables.CREATEtblpatradiosubtable($con)
+  modDBTables.CREATEtblmonitor($con)
+  modDBTables.CREATEtblextradosing($con)
+
+  'billing
+  modDBTables.CREATEtblusercollection($con)
+  modDBTables.CREATEtblfiscal($con)
+  modDBTables.CREATEtblpatbilling($con)
+  modDBTables.CREATEtblpatbilldetail($con)
+  modDBTables.CREATEtblpatusershare($con)
+  modDBTables.CREATEtblpatbillcount($con)
+  modDBTables.CREATEtblpatcharity($con)
+
+  'dispensing
+  modDBTables.CREATEtblpatmeditem($con)
+  modDBTables.CREATEtbldrugproblems($con)
+  modDBTables.CREATEtblpatdosing($con)
+  modDBTables.CREATEtbltaperdose($con)
+  modDBTables.CREATEtblnurdosing($con)
+  modDBTables.CREATEtblvaccdosing($con)
+
+  'images
+  modDBTables.CREATEtblpersonimage($con)
+  modDBTables.CREATEtblpatimagedata($con)
+  modDBTables.CREATEtblpatientimage($con)
+  modDBTables.CREATEtblpatientdicom($con)
+  modDBTables.CREATEtblpatreport($con)
+  modDBTables.CREATEtblofficedocs($con)
+
+  'research
+  modDBTables.CREATEtblpatientstudy($con)
+
+End
+
+Public Sub UpdateAllIndexes(sCon As Connection)
+
+  Dim hTable As Table
+
+  For Each hTable In sCon.Tables
+    If hTable.Name = "tblencounter" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldpatientval", ["fldpatientval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldregdate", ["fldregdate"], False)
+    Else If hTable.Name = "tblextrareceipt" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldreference", ["fldreference"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblentry" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldstockid", ["fldstockid"], False)
+    Else If hTable.Name = "tblmedinventory" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldcode", ["fldcode"], True)
+    Else If hTable.Name = "tblpatdevice" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+    Else If hTable.Name = "tblpatientdate" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatientexam" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatientsubexam" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldheadid", ["fldheadid"], False)
+    Else If hTable.Name = "tblpatexamsubtable" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldsubexamid", ["fldsubexamid"], False)
+    Else If hTable.Name = "tblpatlabtest" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldsampleid", ["fldsampleid"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime_sample", ["fldtime_sample"], False)
+    Else If hTable.Name = "tblpatlabsubtest" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtestid", ["fldtestid"], False)
+    Else If hTable.Name = "tblpatlabsubtable" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldsubtestid", ["fldsubtestid"], False)
+    Else If hTable.Name = "tblpatfindings" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblexamgeneral" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatgeneral" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatsubgeneral" Then
+      Try hTable.Indexes.Add(hTable.Name & "_flditemid", ["flditemid"], False)
+    Else If hTable.Name = "tblpatplanning" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpattiming" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldfirsttime", ["fldfirsttime"], False)
+    Else If hTable.Name = "tblconsult" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldconsulttime", ["fldconsulttime"], False)
+    Else If hTable.Name = "tblconfinement" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_flddeltime", ["flddeltime"], False)
+    Else If hTable.Name = "tblpatradiotest" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime_report", ["fldtime_report"], False)
+    Else If hTable.Name = "tblpatradiosubtest" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtestid", ["fldtestid"], False)
+    Else If hTable.Name = "tblpatradiosubtable" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldsubexamid", ["fldsubexamid"], False)
+    Else If hTable.Name = "tblmonitor" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+    Else If hTable.Name = "tblextradosing" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+    Else If hTable.Name = "tblpatcharity" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+    Else If hTable.Name = "tblfiscal" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldbillno", ["fldbillno"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatbilling" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldbillno", ["fldbillno"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldretbill", ["fldretbill"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatbilldetail" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldbillno", ["fldbillno"], True)
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tbldrugproblems" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatdosing" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tbltaperdose" Then
+      Try hTable.Indexes.Add(hTable.Name & "_flddoseno", ["flddoseno"], False)
+    Else If hTable.Name = "tblnurdosing" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblvaccdosing" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatreport" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblofficedocs" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatientstudy" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+    Else If hTable.Name = "tblpatmeditem" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatientbook" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldpatientval", ["fldpatientval"], False)
+    Else If hTable.Name = "tblpataccgeneral" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatimagedata" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatientimage" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblpatientdicom" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldencounterval", ["fldencounterval"], False)
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+
+    Else If hTable.Name = "tblusercollection" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldcashier", ["fldcashier"], False)
+    Else If hTable.Name = "tblpurchase" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tblbulksale" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tbltransfer" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtoentrytime", ["fldtoentrytime"], False)
+    Else If hTable.Name = "tblrequest" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+    Else If hTable.Name = "tbladjustment" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldtime", ["fldtime"], False)
+
+    Else If hTable.Name = "tblmedcontraindication" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblmedadveffect" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblcompatdrug" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblcompatfluid" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblincompatdrug" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblincompatfluid" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblcodebrady" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblcodetachy" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblcodehypo" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblcodehyper" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblsyndrohypo" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblsyndrohyper" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblsyndrobrady" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblsyndrotachy" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldparent_fldchild", ["fldparent", "fldchild"], False)
+    Else If hTable.Name = "tblmedinteraction" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldcodename_fldcondition", ["fldcodename", "fldcondition"], False)
+    Else If hTable.Name = "tblmedpregnancy" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldcodename_fldcondition", ["fldcodename", "fldcondition"], False)
+    Else If hTable.Name = "tblmedhepatic" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldcodename_fldcondition", ["fldcodename", "fldcondition"], False)
+    Else If hTable.Name = "tblmedrenal" Then
+      Try hTable.Indexes.Add(hTable.Name & "_fldcodename_fldgfrfrom", ["fldcodename", "fldgfrfrom"], False)
+    Endif
+  Next
+
+End
+
+''--------------------------- Create Tables -----------------------------
+Public Sub CreateRequiredTable($con As Connection, sTable As String)
+
+  If sTable = "tblblood" Then
+    modDBTables.CREATEtblblood($con)
+
+  Else If sTable = "tblbloodstore" Then
+    modDBTables.CREATEtblbloodstore($con)
+
+  Else If sTable = "tblvaccine" Then
+    modDBTables.CREATEtblvaccine($con)
+
+  Else If sTable = "tblmedcategory" Then
+    modDBTables.CREATEtblmedcategory($con)
+
+  Else If sTable = "tblsensidrugs" Then
+    modDBTables.CREATEtblsensidrugs($con)
+
+  Else If sTable = "tblchemclass" Then
+    modDBTables.CREATEtblchemclass($con)
+
+  Else If sTable = "tblcode" Then
+    modDBTables.CREATEtblcode($con)
+
+  Else If sTable = "tblcodelimit" Then
+    modDBTables.CREATEtblcodelimit($con)
+
+  Else If sTable = "tblcompatdrug" Then
+    modDBTables.CREATEtblcompatdrug($con)
+
+  Else If sTable = "tblcompatfluid" Then
+    modDBTables.CREATEtblcompatfluid($con)
+
+  Else If sTable = "tbldilutionfluid" Then
+    modDBTables.CREATEtbldilutionfluid($con)
+
+  Else If sTable = "tblincompatdrug" Then
+    modDBTables.CREATEtblincompatdrug($con)
+
+  Else If sTable = "tblincompatfluid" Then
+    modDBTables.CREATEtblincompatfluid($con)
+
+  Else If sTable = "tblreconstfluid" Then
+    modDBTables.CREATEtblreconstfluid($con)
+
+  Else If sTable = "tbldosageforms" Then
+    modDBTables.CREATEtbldosageforms($con)
+
+  Else If sTable = "tbldrug" Then
+    modDBTables.CREATEtbldrug($con)
+
+  Else If sTable = "tblinjection" Then
+    modDBTables.CREATEtblinjection($con)
+
+  Else If sTable = "tbllabel" Then
+    modDBTables.CREATEtbllabel($con)
+
+  Else If sTable = "tblmedbrand" Then
+    modDBTables.CREATEtblmedbrand($con)
+
+  Else If sTable = "tblmedhepatic" Then
+    modDBTables.CREATEtblmedhepatic($con)
+
+  Else If sTable = "tblmedinteraction" Then
+    modDBTables.CREATEtblmedinteraction($con)
+
+  Else If sTable = "tblmedpregnancy" Then
+    modDBTables.CREATEtblmedpregnancy($con)
+
+  Else If sTable = "tblmedrenal" Then
+    modDBTables.CREATEtblmedrenal($con)
+
+  Else If sTable = "tblmedcontraindication" Then
+    modDBTables.CREATEtblmedcontraindication($con)
+
+  Else If sTable = "tblmedadveffect" Then
+    modDBTables.CREATEtblmedadveffect($con)
+
+  Else If sTable = "tblmedmonitor" Then
+    modDBTables.CREATEtblmedmonitor($con)
+
+  Else If sTable = "tblregimen" Then
+    modDBTables.CREATEtblregimen($con)
+
+  Else If sTable = "tbllocallabel" Then
+    modDBTables.CREATEtbllocallabel($con)
+
+  Else If sTable = "tblmedgroup" Then
+    modDBTables.CREATEtblmedgroup($con)
+
+  Else If sTable = "tblproductgroup" Then
+    modDBTables.CREATEtblproductgroup($con)
+
+  Else If sTable = "tblsurgicalname" Then
+    modDBTables.CREATEtblsurgicalname($con)
+
+  Else If sTable = "tblsuturetype" Then
+    modDBTables.CREATEtblsuturetype($con)
+
+  Else If sTable = "tblsurgicals" Then
+    modDBTables.CREATEtblsurgicals($con)
+
+  Else If sTable = "tblsurgbrand" Then
+    modDBTables.CREATEtblsurgbrand($con)
+
+  Else If sTable = "tblextra" Then
+    modDBTables.CREATEtblextra($con)
+
+  Else If sTable = "tblextrabrand" Then
+    modDBTables.CREATEtblextrabrand($con)
+
+  Else If sTable = "tblfoodlist" Then
+    modDBTables.CREATEtblfoodlist($con)
+
+  Else If sTable = "tblfoodtype" Then
+    modDBTables.CREATEtblfoodtype($con)
+
+  Else If sTable = "tblfoodcontent" Then
+    modDBTables.CREATEtblfoodcontent($con)
+
+  Else If sTable = "tblfoodgroup" Then
+    modDBTables.CREATEtblfoodgroup($con)
+
+  Else If sTable = "tbldietgroup" Then
+    modDBTables.CREATEtbldietgroup($con)
+
+  Else If sTable = "tblnutrition" Then
+    modDBTables.CREATEtblnutrition($con)
+
+  Else If sTable = "tblpathocategory" Then
+    modDBTables.CREATEtblpathocategory($con)
+
+  Else If sTable = "tblbodyfluid" Then
+    modDBTables.CREATEtblbodyfluid($con)
+
+  Else If sTable = "tblsurveillance" Then
+    modDBTables.CREATEtblsurveillance($con)
+
+  Else If sTable = "tblethnicgroup" Then
+    modDBTables.CREATEtblethnicgroup($con)
+
+  Else If sTable = "tbldiagnogroup" Then
+    modDBTables.CREATEtbldiagnogroup($con)
+
+  Else If sTable = "tblsymptoms" Then
+    modDBTables.CREATEtblsymptoms($con)
+
+  Else If sTable = "tblsubsymptoms" Then
+    modDBTables.CREATEtblsubsymptoms($con)
+
+  Else If sTable = "tblpathosymp" Then
+    modDBTables.CREATEtblpathosymp($con)
+
+  Else If sTable = "tblsyndromes" Then
+    modDBTables.CREATEtblsyndromes($con)
+
+  Else If sTable = "tblpathotest" Then
+    modDBTables.CREATEtblpathotest($con)
+
+  Else If sTable = "tblpathoexam" Then
+    modDBTables.CREATEtblpathoexam($con)
+
+  Else If sTable = "tbltriage" Then
+    modDBTables.CREATEtbltriage($con)
+
+  Else If sTable = "tblsysconst" Then
+    modDBTables.CREATEtblsysconst($con)
+
+  Else If sTable = "tbltestmethod" Then
+    modDBTables.CREATEtbltestmethod($con)
+
+  Else If sTable = "tblsampletype" Then
+    modDBTables.CREATEtblsampletype($con)
+
+  Else If sTable = "tbltestcondition" Then
+    modDBTables.CREATEtbltestcondition($con)
+
+  Else If sTable = "tbllabchemical" Then
+    modDBTables.CREATEtbllabchemical($con)
+
+  Else If sTable = "tbltest" Then
+    modDBTables.CREATEtbltest($con)
+
+  Else If sTable = "tbltestoption" Then
+    modDBTables.CREATEtbltestoption($con)
+
+  Else If sTable = "tbltestlimit" Then
+    modDBTables.CREATEtbltestlimit($con)
+
+  Else If sTable = "tbltestcomment" Then
+    modDBTables.CREATEtbltestcomment($con)
+
+  Else If sTable = "tblcodehypo" Then
+    modDBTables.CREATEtblcodehypo($con)
+
+  Else If sTable = "tblcodehyper" Then
+    modDBTables.CREATEtblcodehyper($con)
+
+  Else If sTable = "tblsyndrohypo" Then
+    modDBTables.CREATEtblsyndrohypo($con)
+
+  Else If sTable = "tblsyndrohyper" Then
+    modDBTables.CREATEtblsyndrohyper($con)
+
+  Else If sTable = "tbltestquali" Then
+    modDBTables.CREATEtbltestquali($con)
+
+  Else If sTable = "tblsubtestquali" Then
+    modDBTables.CREATEtblsubtestquali($con)
+
+  Else If sTable = "tblantipanel" Then
+    modDBTables.CREATEtblantipanel($con)
+
+  Else If sTable = "tblgrouptest" Then
+    modDBTables.CREATEtblgrouptest($con)
+
+  Else If sTable = "tblstructexam" Then
+    modDBTables.CREATEtblstructexam($con)
+
+  Else If sTable = "tblstructexamoption" Then
+    modDBTables.CREATEtblstructexamoption($con)
+
+  Else If sTable = "tblcompexam" Then
+    modDBTables.CREATEtblcompexam($con)
+
+  Else If sTable = "tblcomplaints" Then
+    modDBTables.CREATEtblcomplaints($con)
+
+  Else If sTable = "tbldeptexam" Then
+    modDBTables.CREATEtbldeptexam($con)
+
+  Else If sTable = "tbldeptexamoption" Then
+    modDBTables.CREATEtbldeptexamoption($con)
+
+  Else If sTable = "tblgroupexam" Then
+    modDBTables.CREATEtblgroupexam($con)
+
+  Else If sTable = "tblexam" Then
+    modDBTables.CREATEtblexam($con)
+
+  Else If sTable = "tblexamoption" Then
+    modDBTables.CREATEtblexamoption($con)
+
+  Else If sTable = "tblexamlimit" Then
+    modDBTables.CREATEtblexamlimit($con)
+
+  Else If sTable = "tblexamcomment" Then
+    modDBTables.CREATEtblexamcomment($con)
+
+  Else If sTable = "tblcodebrady" Then
+    modDBTables.CREATEtblcodebrady($con)
+
+  Else If sTable = "tblcodetachy" Then
+    modDBTables.CREATEtblcodetachy($con)
+
+  Else If sTable = "tblsyndrobrady" Then
+    modDBTables.CREATEtblsyndrobrady($con)
+
+  Else If sTable = "tblsyndrotachy" Then
+    modDBTables.CREATEtblsyndrotachy($con)
+
+  Else If sTable = "tblexamquali" Then
+    modDBTables.CREATEtblexamquali($con)
+
+  Else If sTable = "tblsubexamquali" Then
+    modDBTables.CREATEtblsubexamquali($con)
+
+  Else If sTable = "tblradio" Then
+    modDBTables.CREATEtblradio($con)
+
+  Else If sTable = "tblradiooption" Then
+    modDBTables.CREATEtblradiooption($con)
+
+  Else If sTable = "tblradiolimit" Then
+    modDBTables.CREATEtblradiolimit($con)
+
+  Else If sTable = "tblradiocomment" Then
+    modDBTables.CREATEtblradiocomment($con)
+
+  Else If sTable = "tblradioquali" Then
+    modDBTables.CREATEtblradioquali($con)
+
+  Else If sTable = "tblsubradioquali" Then
+    modDBTables.CREATEtblsubradioquali($con)
+
+  Else If sTable = "tblgroupradio" Then
+    modDBTables.CREATEtblgroupradio($con)
+
+  Else If sTable = "tblgroupproc" Then
+    modDBTables.CREATEtblgroupproc($con)
+
+  Else If sTable = "tblprocname" Then
+    modDBTables.CREATEtblprocname($con)
+
+  Else If sTable = "tbldemographic" Then
+    modDBTables.CREATEtbldemographic($con)
+
+  Else If sTable = "tbldemogoption" Then
+    modDBTables.CREATEtbldemogoption($con)
+
+  Else If sTable = "tblreferlist" Then
+    modDBTables.CREATEtblreferlist($con)
+
+  Else If sTable = "tbldelivery" Then
+    modDBTables.CREATEtbldelivery($con)
+
+  Else If sTable = "tbldelcomplication" Then
+    modDBTables.CREATEtbldelcomplication($con)
+
+  Else If sTable = "tblprocedure" Then
+    modDBTables.CREATEtblprocedure($con)
+
+  Else If sTable = "tblanaesthesia" Then
+    modDBTables.CREATEtblanaesthesia($con)
+
+  Else If sTable = "tblevents" Then
+    modDBTables.CREATEtblevents($con)
+
+  Else If sTable = "tblmedimage" Then
+    modDBTables.CREATEtblmedimage($con)
+
+  Else If sTable = "tblelectrolyte" Then
+    modDBTables.CREATEtblelectrolyte($con)
+
+  Else If sTable = "tblresearch" Then
+    modDBTables.CREATEtblresearch($con)
+
+  Else If sTable = "tblautoid" Then
+    modDBTables.CREATEtblautoid($con)
+
+  Else If sTable = "tblinvid" Then
+    modDBTables.CREATEtblinvid($con)
+
+  Else If sTable = "tblpatsubs" Then
+    modDBTables.CREATEtblpatsubs($con)
+
+  Else If sTable = "tbllock" Then
+    modDBTables.CREATEtbllock($con)
+
+  Else If sTable = "tblenclock" Then
+    modDBTables.CREATEtblenclock($con)
+
+  Else If sTable = "tbltabsettings" Then
+    modDBTables.CREATEtbltabsettings($con)
+
+  Else If sTable = "tblsettings" Then
+    modDBTables.CREATEtblsettings($con)
+
+  Else If sTable = "tblgnupg" Then
+    modDBTables.CREATEtblgnupg($con)
+
+  Else If sTable = "tblautoemail" Then
+    modDBTables.CREATEtblautoemail($con)
+
+  Else If sTable = "tblcronjob" Then
+    modDBTables.CREATEtblcronjob($con)
+
+  Else If sTable = "tbljobrecord" Then
+    modDBTables.CREATEtbljobrecord($con)
+
+  Else If sTable = "tblirdactivity" Then
+    modDBTables.CREATEtblirdactivity($con)
+
+  Else If sTable = "tblactivity" Then
+    modDBTables.CREATEtblactivity($con)
+
+  Else If sTable = "tblsystemlog" Then
+    modDBTables.CREATEtblsystemlog($con)
+
+  Else If sTable = "tblreportlog" Then
+    modDBTables.CREATEtblreportlog($con)
+
+  Else If sTable = "tblsmslog" Then
+    modDBTables.CREATEtblsmslog($con)
+
+  Else If sTable = "tblmessagelog" Then
+    modDBTables.CREATEtblmessagelog($con)
+
+  Else If sTable = "tblstafflist" Then
+    modDBTables.CREATEtblstafflist($con)
+
+  Else If sTable = "tbluser" Then
+    modDBTables.CREATEtbluser($con)
+
+  Else If sTable = "tblusercategory" Then
+    modDBTables.CREATEtblusercategory($con)
+
+  Else If sTable = "tbluserimage" Then
+    modDBTables.CREATEtbluserimage($con)
+
+  Else If sTable = "tblreportuser" Then
+    modDBTables.CREATEtblreportuser($con)
+
+  Else If sTable = "tblkey" Then
+    modDBTables.CREATEtblkey($con)
+
+  Else If sTable = "tblnewkey" Then
+    modDBTables.CREATEtblnewkey($con)
+
+  Else If sTable = "tbluseraccess" Then
+    modDBTables.CREATEtbluseraccess($con)
+
+  Else If sTable = "tblcompaccess" Then
+    modDBTables.CREATEtblcompaccess($con)
+
+  Else If sTable = "tblmacaccess" Then
+    modDBTables.CREATEtblmacaccess($con)
+
+  Else If sTable = "tbluserformaccess" Then
+    modDBTables.CREATEtbluserformaccess($con)
+
+  Else If sTable = "tblclinicentry" Then
+    modDBTables.CREATEtblclinicentry($con)
+
+  Else If sTable = "tblpersonal" Then
+    modDBTables.CREATEtblpersonal($con)
+
+  Else If sTable = "tblfileshare" Then
+    modDBTables.CREATEtblfileshare($con)
+
+  Else If sTable = "tblsurname" Then
+    modDBTables.CREATEtblsurname($con)
+
+  Else If sTable = "tblhospitals" Then
+    modDBTables.CREATEtblhospitals($con)
+
+  Else If sTable = "tbldistrict" Then
+    modDBTables.CREATEtbldistrict($con)
+
+  Else If sTable = "tblmunicipals" Then
+    modDBTables.CREATEtblmunicipals($con)
+
+  Else If sTable = "tblrelations" Then
+    modDBTables.CREATEtblrelations($con)
+
+  Else If sTable = "tbldepartment" Then
+    modDBTables.CREATEtbldepartment($con)
+
+  Else If sTable = "tbldeptgroup" Then
+    modDBTables.CREATEtbldeptgroup($con)
+
+  Else If sTable = "tbldepartmentbed" Then
+    modDBTables.CREATEtbldepartmentbed($con)
+
+  Else If sTable = "tbldiscount" Then
+    modDBTables.CREATEtbldiscount($con)
+
+  Else If sTable = "tblnodiscount" Then
+    modDBTables.CREATEtblnodiscount($con)
+
+  Else If sTable = "tblcustdiscount" Then
+    modDBTables.CREATEtblcustdiscount($con)
+
+  Else If sTable = "tblaccdemograp" Then
+    modDBTables.CREATEtblaccdemograp($con)
+
+  Else If sTable = "tblaccdemogoption" Then
+    modDBTables.CREATEtblaccdemogoption($con)
+
+  Else If sTable = "tblbillingset" Then
+    modDBTables.CREATEtblbillingset($con)
+
+  Else If sTable = "tblschedule" Then
+    modDBTables.CREATEtblschedule($con)
+
+  Else If sTable = "tblbillitem" Then
+    modDBTables.CREATEtblbillitem($con)
+
+  Else If sTable = "tblbillsection" Then
+    modDBTables.CREATEtblbillsection($con)
+
+  Else If sTable = "tblcurrency" Then
+    modDBTables.CREATEtblcurrency($con)
+
+  Else If sTable = "tblservicecost" Then
+    modDBTables.CREATEtblservicecost($con)
+
+  Else If sTable = "tblreportgroup" Then
+    modDBTables.CREATEtblreportgroup($con)
+
+  Else If sTable = "tblcostgroup" Then
+    modDBTables.CREATEtblcostgroup($con)
+
+  Else If sTable = "tblextrasetting" Then
+    modDBTables.CREATEtblextrasetting($con)
+
+  Else If sTable = "tbldepconsult" Then
+    modDBTables.CREATEtbldepconsult($con)
+
+  Else If sTable = "tbluserpay" Then
+    modDBTables.CREATEtbluserpay($con)
+
+  Else If sTable = "tblservicegroup" Then
+    modDBTables.CREATEtblservicegroup($con)
+
+  Else If sTable = "tblautogroup" Then
+    modDBTables.CREATEtblautogroup($con)
+
+  Else If sTable = "tbltaxgroup" Then
+    modDBTables.CREATEtbltaxgroup($con)
+
+  Else If sTable = "tbldiscgroup" Then
+    modDBTables.CREATEtbldiscgroup($con)
+
+  Else If sTable = "tbljournal" Then
+    modDBTables.CREATEtbljournal($con)
+
+  Else If sTable = "tblbanks" Then
+    modDBTables.CREATEtblbanks($con)
+
+  Else If sTable = "tblextrapayers" Then
+    modDBTables.CREATEtblextrapayers($con)
+
+  Else If sTable = "tblextrapayitems" Then
+    modDBTables.CREATEtblextrapayitems($con)
+
+  Else If sTable = "tblextrareceipt" Then
+    modDBTables.CREATEtblextrareceipt($con)
+
+  Else If sTable = "tblassetsname" Then
+    modDBTables.CREATEtblassetsname($con)
+
+  Else If sTable = "tblassetsentry" Then
+    modDBTables.CREATEtblassetsentry($con)
+
+  Else If sTable = "tblentry" Then
+    modDBTables.CREATEtblentry($con)
+
+  Else If sTable = "tblentrybackup" Then
+    modDBTables.CREATEtblentrybackup($con)
+
+  Else If sTable = "tbladjustment" Then
+    modDBTables.CREATEtbladjustment($con)
+
+  Else If sTable = "tblpurchase" Then
+    modDBTables.CREATEtblpurchase($con)
+
+  Else If sTable = "tblpurchasebill" Then
+    modDBTables.CREATEtblpurchasebill($con)
+
+  Else If sTable = "tblstockreturn" Then
+    modDBTables.CREATEtblstockreturn($con)
+
+  Else If sTable = "tblsupplier" Then
+    modDBTables.CREATEtblsupplier($con)
+
+  Else If sTable = "tbltenderlist" Then
+    modDBTables.CREATEtbltenderlist($con)
+
+  Else If sTable = "tblpayment" Then
+    modDBTables.CREATEtblpayment($con)
+
+  Else If sTable = "tbltransfer" Then
+    modDBTables.CREATEtbltransfer($con)
+
+  Else If sTable = "tblrequest" Then
+    modDBTables.CREATEtblrequest($con)
+
+  Else If sTable = "tbltarget" Then
+    modDBTables.CREATEtbltarget($con)
+
+  Else If sTable = "tblbulksale" Then
+    modDBTables.CREATEtblbulksale($con)
+
+  Else If sTable = "tblmedinventory" Then
+    modDBTables.CREATEtblmedinventory($con)
+
+  Else If sTable = "tblpatientbook" Then
+    modDBTables.CREATEtblpatientbook($con)
+
+  Else If sTable = "tblpatientinfo" Then
+    modDBTables.CREATEtblpatientinfo($con)
+
+  Else If sTable = "tblencounter" Then
+    modDBTables.CREATEtblencounter($con)
+
+  Else If sTable = "tblpataccgeneral" Then
+    modDBTables.CREATEtblpataccgeneral($con)
+
+  Else If sTable = "tblpatdevice" Then
+    modDBTables.CREATEtblpatdevice($con)
+
+  Else If sTable = "tblpatientdate" Then
+    modDBTables.CREATEtblpatientdate($con)
+
+  Else If sTable = "tblpatientexam" Then
+    modDBTables.CREATEtblpatientexam($con)
+
+  Else If sTable = "tblpatientsubexam" Then
+    modDBTables.CREATEtblpatientsubexam($con)
+
+  Else If sTable = "tblpatexamsubtable" Then
+    modDBTables.CREATEtblpatexamsubtable($con)
+
+  Else If sTable = "tblpatlabtest" Then
+    modDBTables.CREATEtblpatlabtest($con)
+
+  Else If sTable = "tblpatlabsubtest" Then
+    modDBTables.CREATEtblpatlabsubtest($con)
+
+  Else If sTable = "tblpatlabsubtable" Then
+    modDBTables.CREATEtblpatlabsubtable($con)
+
+  Else If sTable = "tblpatfindings" Then
+    modDBTables.CREATEtblpatfindings($con)
+
+  Else If sTable = "tblexamgeneral" Then
+    modDBTables.CREATEtblexamgeneral($con)
+
+  Else If sTable = "tblpatgeneral" Then
+    modDBTables.CREATEtblpatgeneral($con)
+
+  Else If sTable = "tblpatsubgeneral" Then
+    modDBTables.CREATEtblpatsubgeneral($con)
+
+  Else If sTable = "tblpatplanning" Then
+    modDBTables.CREATEtblpatplanning($con)
+
+  Else If sTable = "tblpattiming" Then
+    modDBTables.CREATEtblpattiming($con)
+
+  Else If sTable = "tblconsult" Then
+    modDBTables.CREATEtblconsult($con)
+
+  Else If sTable = "tblconfinement" Then
+    modDBTables.CREATEtblconfinement($con)
+
+  Else If sTable = "tblpatradiotest" Then
+    modDBTables.CREATEtblpatradiotest($con)
+
+  Else If sTable = "tblpatradiosubtest" Then
+    modDBTables.CREATEtblpatradiosubtest($con)
+
+  Else If sTable = "tblpatradiosubtable" Then
+    modDBTables.CREATEtblpatradiosubtable($con)
+
+  Else If sTable = "tblmonitor" Then
+    modDBTables.CREATEtblmonitor($con)
+
+  Else If sTable = "tblextradosing" Then
+    modDBTables.CREATEtblextradosing($con)
+
+  Else If sTable = "tblusercollection" Then
+    modDBTables.CREATEtblusercollection($con)
+
+  Else If sTable = "tblpatcharity" Then
+    modDBTables.CREATEtblpatcharity($con)
+
+  Else If sTable = "tblfiscal" Then
+    modDBTables.CREATEtblfiscal($con)
+
+  Else If sTable = "tblpatbilling" Then
+    modDBTables.CREATEtblpatbilling($con)
+
+  Else If sTable = "tblpatbilldetail" Then
+    modDBTables.CREATEtblpatbilldetail($con)
+
+  Else If sTable = "tblpatusershare" Then
+    modDBTables.CREATEtblpatusershare($con)
+
+  Else If sTable = "tblpatbillcount" Then
+    modDBTables.CREATEtblpatbillcount($con)
+
+  Else If sTable = "tblpatmeditem" Then
+    modDBTables.CREATEtblpatmeditem($con)
+
+  Else If sTable = "tbldrugproblems" Then
+    modDBTables.CREATEtbldrugproblems($con)
+
+  Else If sTable = "tblpatdosing" Then
+    modDBTables.CREATEtblpatdosing($con)
+
+  Else If sTable = "tbltaperdose" Then
+    modDBTables.CREATEtbltaperdose($con)
+
+  Else If sTable = "tblnurdosing" Then
+    modDBTables.CREATEtblnurdosing($con)
+
+  Else If sTable = "tblvaccdosing" Then
+    modDBTables.CREATEtblvaccdosing($con)
+
+  Else If sTable = "tblpersonimage" Then
+    modDBTables.CREATEtblpersonimage($con)
+
+  Else If sTable = "tblpatimagedata" Then
+    modDBTables.CREATEtblpatimagedata($con)
+
+  Else If sTable = "tblpatientimage" Then
+    modDBTables.CREATEtblpatientimage($con)
+
+  Else If sTable = "tblpatientdicom" Then
+    modDBTables.CREATEtblpatientdicom($con)
+
+  Else If sTable = "tblpatreport" Then
+    modDBTables.CREATEtblpatreport($con)
+
+  Else If sTable = "tblofficedocs" Then
+    modDBTables.CREATEtblofficedocs($con)
+
+  Else If sTable = "tblpatientstudy" Then
+    modDBTables.CREATEtblpatientstudy($con)
+
+  Endif
+
+End
+
+Public Sub CreateLogTable(sConn As Connection, sTab As String)
+
+  If sTab = "tblpatbilling" Then
+    modDBTables.CREATEtblpatbilling_log(sConn)
+  Else If sTab = "tblpatbilldetail" Then
+    modDBTables.CREATEtblpatbilldetail_log(sConn)
+  Else If sTab = "tblpurchase" Then
+    modDBTables.CREATEtblpurchase_log(sConn)
+  Else If sTab = "tblpurchasebill" Then
+    modDBTables.CREATEtblpurchasebill_log(sConn)
+  Else If sTab = "tblbulksale" Then
+    modDBTables.CREATEtblbulksale_log(sConn)
+  Else If sTab = "tblextrareceipt" Then
+    modDBTables.CREATEtblextrareceipt_log(sConn)
+  Else If sTab = "tblservicecost" Then
+    modDBTables.CREATEtblservicecost_log(sConn)
+  Else If sTab = "tblpatientinfo" Then
+    modDBTables.CREATEtblpatientinfo_log(sConn)
+  Else If sTab = "tblencounter" Then
+    modDBTables.CREATEtblencounter_log(sConn)
+  Endif
+
+End
+
+Public Function GetBackTableName(sTab As String) As String
+
+  Dim xx As String
+
+  If sTab = "tblpatbilling" Then
+    xx = "tblpatbilling_log"
+  Else If sTab = "tblpatbilldetail" Then
+    xx = "tblpatbilldetail_log"
+  Else If sTab = "tblpurchase" Then
+    xx = "tblpurchase_log"
+  Else If sTab = "tblpurchasebill" Then
+    xx = "tblpurchasebill_log"
+  Else If sTab = "tblbulksale" Then
+    xx = "tblbulksale_log"
+  Else If sTab = "tblextrareceipt" Then
+    xx = "tblextrareceipt_log"
+  Else If sTab = "tblservicecost" Then
+    xx = "tblservicecost_log"
+  Else If sTab = "tblpatientinfo" Then
+    xx = "tblpatientinfo_log"
+  Else If sTab = "tblencounter" Then
+    xx = "tblencounter_log"
+  Endif
+  Return xx
+
+End

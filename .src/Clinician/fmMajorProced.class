@@ -1,0 +1,232 @@
+' Gambas class file
+
+Private $encid As String
+Private $ProcIndex As Long
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+  txtpatientcontact.Text = modPatient.GetLocationSetting($encid)
+  cmbstatus.List = ["Planned", "Referred", "On Hold", "Cancelled"]
+  cmbmode.List = modBasic.$BillBillingMode
+  dtplan.Value = Now()
+  FillLabtable()
+  CompleteGrid()
+  cmbmode.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Public Sub dtneplan_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtplan.Value))
+  If xx Then
+    dtplan.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub cmbstatus_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbstatus)
+  modFillContainer.RestrictComboToContent(cmbstatus)
+
+End
+
+Public Sub btnsubOK_Click()
+
+  If $encid And If cmbprocedure.Text And If cmbstatus.Text Then
+    If modNonMedical.AllowEntryWithDeposit($encid, "Procedure") = True Then
+      modPatientGeneral.AddProcedureData($encid, "Procedures", cmbprocedure.Text, cmbstatus.Text, cmbmode.Text, dtplan.Value, "Waiting", "")
+      FillLabtable()
+    Endif
+  Endif
+
+End
+
+Public Sub btnsubChange_Click()
+
+  Dim res As Result
+
+  If $ProcIndex Then
+    If cmbstatus.Text Then
+      res = modDatabase.$myConn.Edit("tblpatgeneral", "fldid=&1 and fldsave=&2 and fldstatus=&3", $ProcIndex, False, "Waiting")
+      If res.Available Then
+        If modGeneral.AllowClinicalEdit(res["fldorduserid"]) = True Then
+          res["fldnewdate"] = dtplan.Value
+          res["fldreportquali"] = cmbstatus.Text
+          res["flduserid"] = modGeneralMain.$lbluser
+          res["flduptime"] = Now()
+          res["fldcomp"] = modGeneralMain.compID
+          res["fldorduserid"] = modGeneralMain.$lbluser
+          res["xyz"] = False
+          res.Update()
+          FillLabtable()
+          Balloon.Info(("Information updated"), btnsubChange)
+          Balloon.Delay = modBasic.$BalloonDelay
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub FillLabtable()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim $rData As Result
+
+  sql = "select fldid,fldencounterval,fldnewdate,flditem,fldreportquali,fldid from tblpatgeneral where fldencounterval=&1 and fldinput=&2 and fldreportquali<>&3 and fldstatus=&4"
+  $rData = modDatabase.$myConn.Exec(sql, $encid, "Procedures", "Done", "Waiting")
+
+  GridView1.Clear
+  GridView1.Columns.Count = $rData.Fields.Count
+  GridView1.Rows.Count = $rData.Count
+
+  For Each $rData
+    Column = 0
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+      If Column = 2 Then
+        GridView1[$rData.Index, Column].Text = modReportVar.GetDateTimeReport($rData[fld.Name], gb.GeneralDate)
+      Else If Column = 5 Then
+        GridView1[$rData.Index, Column].Picture = Picture["icon:/small/cancel"]
+        GridView1[$rData.Index, Column].Text = ""
+      Else
+        GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "Target Date"
+    .Columns[3].Text = "Procedure"
+    .Columns[4].Text = "Status"
+  End With
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If GridView1.Column = 5 Then
+      If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+        modDatabase.$myConn.Delete("tblpatgeneral", "fldid=&1 and fldstatus=&2", GridView1[GridView1.Row, 0].Text, "Waiting")
+        FillLabtable()
+      Endif
+    Else
+      $ProcIndex = 0
+      res = modDatabase.$myConn.Exec("select fldid,fldnewdate,flditem,fldreportquali,fldbillingmode,fldtime,fldsave from tblpatgeneral where fldid=&1", GridView1[GridView1.Row, 0].Text)                                                 ''
+      If res.Available Then
+        $ProcIndex = res!fldid
+        cmbmode.Text = res!fldbillingmode
+        cmbprocedure.Text = res!flditem
+        cmbstatus.Text = res!fldreportquali
+        dtplan.Value = res!fldnewdate
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Sub CompleteGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldencounterval,fldnewdate,flditem,fldreportquali from tblpatgeneral where fldencounterval=&1 and fldinput=&2 and fldreportquali=&3"
+  $rData2 = modDatabase.$myConn.Exec(sql, $encid, "Procedures", "Done")
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData2, $aMyFields2)
+
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "Target Date"
+    .Columns[3].Text = "Procedure"
+    .Columns[4].Text = "Status"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 2 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData2[$aMyFields2[Column]], gb.GeneralDate)
+  Else
+    GridView2.Data.Text = $rData2[$aMyFields2[Column]]
+  Endif
+
+End
+
+Public Sub GridView2_Menu()
+
+  mnudone.Popup
+
+End
+
+Public Sub mnureport_Click()
+
+  Dim xPath As String
+
+  If GridView2.Rows.Selection.Count > 0 Then
+    xPath = modCHTMLPatient.ShowUniProcedureReport(GridView2[GridView2.Row, 0].Text, $encid)
+    modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub cmbmode_LostFocus()
+
+  If cmbmode.Text Then
+    cmbprocedure.List = modNonMedical.NonStockBillActiveItemArray("Procedures", cmbmode.Text, "Major")
+  Endif
+
+End
+
+Public Sub cmbprocedure_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbprocedure)
+  modFillContainer.RestrictComboToContent(cmbprocedure)
+
+End

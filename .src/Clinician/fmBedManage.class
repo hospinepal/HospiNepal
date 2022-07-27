@@ -1,0 +1,245 @@
+' Gambas class file
+
+Private $encid As String
+Private $txtbed As TextBox
+
+Private $bedNo As String
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub _new(encid As String, txtbed As TextBox)
+
+  $encid = encid
+  $txtbed = txtbed
+  $bedNo = $txtbed.Text
+
+End
+
+Public Sub Form_Open()
+
+  Dim i As Integer
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  lstdepartment.List = modBasic.$IPDDepartmentsAll
+  If modBasic.$FixedDepartment Then
+    For i = 0 To lstdepartment.Count - 1
+      If lstdepartment[i].Text = modBasic.$FixedDepartment Then
+        lstdepartment.Index = i
+      Endif
+    Next
+  Else
+    lstdepartment.Index = 0
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub FillBedGrid()
+
+  Dim sql As String
+
+  sql = "select fldencounterval,fldbed,fldencounterval,fldencounterval,fldencounterval,fldbed from tbldepartmentbed where flddept=&1"
+  $rData = modDatabase.$myConn.Exec(sql, lstdepartment.Text)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Rows.Height = 30 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 25
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 185 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Bed"
+    .Columns[2].Text = "EncID"
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Prov Diagnosis"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 0 Then
+    GridView1.Data.Picture = Picture[ShowBedColor($rData["fldencounterval"])]
+    GridView1.Data.Text = ""
+  Else If Column = 3 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData["fldencounterval"])
+  Else If Column = 4 Then
+    GridView1.Data.Text = modPatient.PatientFindingList($rData["fldencounterval"], "Provisional Diagnosis").Join(gb.NewLine)
+  Else If Column = 5 Then
+    GridView1.Data.Picture = Picture["icon:/small/apply"]
+    GridView1.Data.Text = ""
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub lstdepartment_Click()
+
+  Inc Application.Busy
+  FillBedGrid()
+  Dec Application.Busy
+
+End
+
+Private Function ShowBedColor(encid As String) As String
+
+  Dim xx As String
+
+  If encid Then
+    xx = "icons/false.svg"
+  Else
+    xx = "icons/null.svg"
+  Endif
+  Return xx
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnusel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If modBasic.$LockToOwnDepart = "Yes" And If modBasic.$FixedDepartment Then
+      If lstdepartment.Text = modBasic.$FixedDepartment Then
+        SelectBed()
+      Endif
+    Else
+      SelectBed()
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Column = 5 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      If modBasic.$LockToOwnDepart = "Yes" And If modBasic.$FixedDepartment Then
+        If lstdepartment.Text = modBasic.$FixedDepartment Then
+          SelectBed()
+        Endif
+      Else
+        SelectBed()
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Sub SelectBed()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim hr As Float
+  Dim Row As Integer
+  Dim newbed As String
+  Dim xitem As String
+  Dim autobil As String
+  Dim unitrate As String
+
+  If $encid Then
+    res1 = modDatabase.$myConn.Exec("select fldencounterval from tbldepartmentbed where flddept=&1 and fldbed=&2", lstdepartment.Text, GridView1[GridView1.Row, 1].Text)
+    If res1.Available And If res1["fldencounterval"] Then
+      Message.Warning(("Bed not free"), ("OK"))
+    Else
+
+      Row = GridView1.Row
+      Inc Application.Busy
+      res = modDatabase.$myConn.Exec("select fldid,flditem,fldfirsttime,fldfirstreport from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4 and fldfirstreport=&5", $encid, "General Services", True, False, "Bed")                                                                   ''
+      If res.Available = False Then
+        modPatientGeneral.AddPatientTableFirstTime($encid, "General Services", lstdepartment.Text, "Bed")
+      Else
+        res.MoveFirst
+        modDatabase.$myConn.Begin
+        autobil = modBasic.$AutoBillService
+        xitem = modNonMedical.GetDepartmentChargeMode(res!flditem)
+        modPatientGeneral.UpdatePatientTableSecondTime(res!fldid, $bedNo)
+
+        unitrate = modNonMedical.GetBillingTargeDept(xitem, "General Services")
+        hr = modPatientGeneral.GetServiceUseDuration($encid, "General Services", res!flditem, unitrate, res!fldfirsttime, Now())
+
+        If autobil = "Yes" Or If autobil = "Full" Or If autobil = "Partial" Then
+          If xitem Then
+            modBillings.EnterBillingForInterval(autobil, "Service", $encid, xitem, hr, 0)
+          Endif
+        Endif
+        modPatientGeneral.AddPatientTableFirstTime($encid, "General Services", lstdepartment.Text, "Bed")
+        modDatabase.$myConn.Commit
+      Endif
+
+      newbed = GridView1[GridView1.Row, 1].Text
+      modPatient.UpdatePatLocation($encid, newbed)
+      $txtbed.Text = newbed
+      Dec Application.Busy
+      FillBedGrid()
+      GridView1.Row = Row
+
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub lstdepartment_KeyRelease()
+
+  If Key.Code = Key.Right Then
+    GridView1.SetFocus
+  Else If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    lstdepartment_Click()
+  Endif
+
+End
+
+Public Sub GridView1_KeyRelease()
+
+  Dim hForm As FmPatientMain
+
+  If Key.Code = Key.Left Then
+    lstdepartment.SetFocus
+  Else If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    hForm = New FmPatientMain(GridView1[GridView1.Row, 2].Text, True)
+    modHelpVariable.AddNewFormToWorkspace(hForm)
+    Me.Close()
+  Endif
+
+End
+
+Public Sub Button2_Click()
+
+  Dim xPath As String
+
+  xPath = modCHTMLPatSummary.ShowBedOccupancyReport()
+  modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+Public Sub Button1_Click()
+
+  Dim xPath As String
+
+  xPath = modCHTMLPatSummary.ShowBedOccupConsultReport()
+  modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+
+End

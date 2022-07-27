@@ -1,0 +1,1160 @@
+' Gambas class file
+
+Private $encid As String
+Private $status As String
+Private $sBillMode As String
+Private $Dept As String
+Private $rData As Result
+Private $aMyFields As String[]
+Private $NumForm As FmQuantiEntry
+
+Private $sType As String
+Private $HideErr As Boolean
+Private $HideDos As Boolean
+
+Public Sub _new(encid As String, sStatus As String, sBillMode As String, sDept As String)
+
+  $encid = encid
+  $status = sStatus
+  $sBillMode = sBillMode
+  $Dept = sDept
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  cmbroute.List = modMedicine.InpatientRoute()
+  cmbroute.Add("Group")
+  cmbfreq.List = modMedicine.FrequencyCombo()
+  modStock.DisplayDefaultDispensingMode(rbrand, rbgeneric)
+  modSettings.ShowCheckBox(chkeypad, "Pharmacy/DisplayKeyPad")
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+  txtpatientcontact.Text = modPatient.GetLocationSetting($encid)
+  cmbdiagnosis.List = modFillContainer.GetListFromResult(modDatabase.$myConn.Exec("select distinct(fldcode) as col from tblpatfindings where fldencounterval=&1 and (fldtype=&2 or fldtype=&3) and fldsave=&4", $encid, "Final Diagnosis", "Provisional Diagnosis", True))
+  ButtonControl()
+  rbvalue.Value = True
+  rbin.Value = True
+  rbsurg.Value = True
+  ShowRunningMedicine()
+
+End
+
+Private Sub ButtonControl()
+
+  Dim xx As Boolean
+
+  xx = modPatient.EnableClinicForm($Status)
+  GridView3.Enabled = xx
+  GridView4.Enabled = xx
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else If Key.Code = Key.F1 Then
+    TabPanel1.Index = 0
+    ShowRunningMedicine()
+  Else If Key.Code = Key.F2 Then
+    TabPanel1.Index = 1
+  Else If Key.Code = Key.F3 Then
+    TabPanel1.Index = 2
+    ShwDefaultMode()
+    FillDosingGrid()
+    BlankDosingBox()
+    cmbroute.SetFocus
+  Else If Key.Code = Key.F4 Then
+    TabPanel1.Index = 3
+    ShowCurrStockGrid()
+    ShowUsedGridViewList()
+    txtname.SetFocus
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub TabPanel1_Click()
+
+  If TabPanel1.Index = 0 Then
+    ShowRunningMedicine()
+  Else If TabPanel1.Index = 1 Then
+  Else If TabPanel1.Index = 2 Then
+    ShwDefaultMode()
+    FillDosingGrid()
+    BlankDosingBox()
+    cmbroute.SetFocus
+  Else If TabPanel1.Index = 3 Then
+    ShowCurrStockGrid()
+    ShowUsedGridViewList()
+    txtname.SetFocus
+  Endif
+
+End
+
+Private Sub BlankDosingBox()
+
+  cmbroute.Text = ""
+  cmbmedicine.Text = ""
+  cmbfreq.Text = ""
+  txtdose.Value = 0
+  txtday.Value = 0
+  txtday.Tag = ""
+  txtqty.Value = 0
+  txtqty.Tag = ""
+  $HideErr = False
+  $HideDos = False
+
+End
+
+Public Sub chkeypad_Click()
+
+  modSettings.EnterCheckSetting(chkeypad, "Pharmacy/DisplayKeyPad")
+  ShowKeyPad()
+
+End
+
+Private Sub ShowKeyPad()
+
+  If chkeypad.Value = True Then
+    pnlquanti.Visible = True
+  Else If chkeypad.Value = False Then
+    pnlquanti.Visible = False
+  Endif
+
+End
+
+''------------------------------ Request ---------------------------------
+Public Sub rbgeneric_Click()
+
+  modSettings.SaveSettingsToFile("BrandOrGeneric/Dispensing", "Generic")
+
+End
+
+Public Sub rbrand_Click()
+
+  modSettings.SaveSettingsToFile("BrandOrGeneric/Dispensing", "Brand")
+
+End
+
+Private Sub ShwDefaultMode()
+
+  Dim xval As String
+
+  xval = modSettings.ShowSettingFromFIle("ClinicForms/RestrictToHospitalInventory")
+  If xval = "Yes" Then
+    $sType = "Restict"
+  Else
+    $sType = "Free"
+  Endif
+
+End
+
+Private Function GetBrandGenerricType() As String
+
+  Dim brandOrGeneric As String
+
+  If rbrand.Value = True Then
+    brandOrGeneric = "Brand"
+  Else
+    brandOrGeneric = "Generic"
+  Endif
+  Return brandOrGeneric
+
+End
+
+Public Sub cmbroute_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbroute)
+  modFillContainer.RestrictComboToContent(cmbroute)
+
+End
+
+Public Sub cmbroute_Click()
+
+  cmbmedicine.Clear
+  cmbmedicine.Text = ""
+  txtdose.Enabled = True
+  cmbfreq.Enabled = True
+  txtday.Enabled = True
+
+End
+
+Public Sub cmbmedicine_GotFocus()
+
+  Dim res As Result
+  Dim xlist1 As String[]
+  Dim xlist As String[]
+
+  If Not cmbroute.Text Then
+    cmbroute.SetFocus
+
+  Else If cmbroute.Text Then
+    If cmbroute.Text = "Group" Then
+    Else
+      If Not cmbmedicine.Text Then
+
+        If modBasic.$ItemListFormat = "GridView" Then
+          txtdose.Tag = "Auto"
+          txtdose.Parent.Tag = "Auto"
+
+          If cmbroute.Text = "suture" Or If cmbroute.Text = "msurg" Or If cmbroute.Text = "ortho" Or If cmbroute.Text = "extra" Then
+            res = modStock.ItemListForPurchaseResult(cmbroute.Text, GetBrandGenerricType(), "")
+            cmbmedicine.Enabled = False
+            cmbmedicine.Text = GridViewNew("Select Particulars", modFillContainer.GetListFromResult(res), False)
+            cmbmedicine.Enabled = True
+          Else
+            If $sType = "Free" Then
+              res = modStock.ItemListForPurchaseResult(cmbroute.Text, GetBrandGenerricType(), "")
+            Else If $sType = "Restict" Then
+              res = modStock.FillMedicinesPrescribingComboResult(cmbroute.Text, GetBrandGenerricType(), "")
+            Endif
+            If modSettings.ShowSettingFromFIle("ClinicForms/CategoryGridView") = "Yes" Then
+              xlist1 = modFillContainer.GetListFromResult(res)
+              If xlist1 Then
+                xlist = modMedConstant.GetStockIDWithCategory(xlist1)
+                If xlist Then
+                  cmbmedicine.Enabled = False
+                  cmbmedicine.Text = GridViewGroup("Select Medicine", xlist)
+                  cmbmedicine.Enabled = True
+                Endif
+              Endif
+            Else
+              cmbmedicine.Enabled = False
+              cmbmedicine.Text = GridViewNew("Select Particulars", modFillContainer.GetListFromResult(res), False)
+              cmbmedicine.Enabled = True
+            Endif
+          Endif
+
+          If Not cmbmedicine.Text Then
+            txtdose.SetFocus
+          Endif
+
+        Endif
+
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Public Sub cmbmedicine_KeyRelease()
+
+  If cmbroute.Text = "suture" Or If cmbroute.Text = "msurg" Or If cmbroute.Text = "ortho" Or If cmbroute.Text = "extra" Then
+    modStock.ItemListForPurchase(cmbroute.Text, cmbmedicine, "Generic")
+  Else If cmbroute.Text = "Group" Then
+    modStock.MedicineGroupItem(cmbmedicine)
+  Else
+    If $sType = "Free" Then
+      modStock.ItemListForPurchase(cmbroute.Text, cmbmedicine, GetBrandGenerricType())
+    Else If $sType = "Restict" Then
+      modStock.FillMedicinesPrescribingCombo(cmbroute.Text, cmbmedicine, GetBrandGenerricType())
+    Endif
+  Endif
+
+End
+
+Public Sub txtdose_GotFocus()
+
+  Dim hForm As FmDiseaseDose
+
+  If cmbmedicine.Text Then
+    If modStock.GetComboControl(cmbroute.Text, cmbmedicine.Text, rbgeneric, rbrand, modDatabase.$medConn) = False Then
+      cmbmedicine.Text = ""
+      Balloon.Warning(("Item not listed"), cmbmedicine)
+      Balloon.Delay = modBasic.$BalloonDelay
+      cmbroute.SetFocus
+    Else
+
+      If cmbroute.Text = "suture" Or If cmbroute.Text = "msurg" Or If cmbroute.Text = "ortho" Or If cmbroute.Text = "extra" Or If cmbroute.Text = "Group" Then
+        txtdose.Enabled = False
+        cmbfreq.Enabled = False
+        txtday.Enabled = False
+        txtqty.SetFocus
+
+      Else
+        If rbrand.Value = True Then
+          cmbmedicine.Text = modMedConstant.ConvertBrandToGeneric(cmbroute.Text, cmbmedicine.Text)
+        Endif
+        txtdose.Enabled = True
+        cmbfreq.Enabled = True
+        txtday.Enabled = True
+
+        If modBasic.$MedDoseRecommend = "Yes" Then
+          txtdose.Value = modMedDosing.RecommendedDoseDrug($encid, cmbmedicine.Text)
+          cmbfreq.Text = modMedDosing.RecommendedFrequencyDrug($encid, cmbmedicine.Text)
+        Endif
+
+        If $HideDos = False Then
+          If modBasic.$MedDiseaseDose = "Yes" Then
+            $HideDos = True
+            hForm = New FmDiseaseDose($encid, cmbroute.Text, cmbmedicine.Text, txtdose, cmbfreq, txtday)
+            hForm.ShowModal
+          Endif
+        Endif
+
+        ClearNumPad()
+        ShowKeyPad()
+        $NumForm = New FmQuantiEntry(txtdose, pnlquanti)
+
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub txtdose_KeyRelease()
+
+  Dim xx As String
+  Dim brandOrGeneric As String
+
+  txtdose.Tag = ""
+  txtdose.Parent.Tag = ""
+
+  If Key.Code = Key.Right Then
+    If cmbroute.Text And If cmbmedicine.Text Then
+      If cmbroute.Text = "suture" Or If cmbroute.Text = "msurg" Or If cmbroute.Text = "ortho" Or If cmbroute.Text = "extra" Then
+      Else
+        If rbrand.Value = True Then
+          brandOrGeneric = "Brand"
+        Else
+          brandOrGeneric = "Generic"
+        Endif
+        xx = CAlternative(cmbroute.Text, cmbmedicine.Text, brandOrGeneric)
+        If xx Then
+          cmbmedicine.Text = xx
+        Endif
+
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfreq_GotFocus()
+
+  If modBasic.$ItemListFormat = "GridView" Then
+    If Not cmbfreq.Text Then
+      cmbfreq.Popup
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfreq_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbfreq)
+  modFillContainer.RestrictComboToContent(cmbfreq)
+  If Key.Code = Key.Down Then
+    $HideErr = True
+  Endif
+
+End
+
+Public Sub cmbfreq_Click()
+
+  $HideErr = False
+
+End
+
+Public Sub txtday_GotFocus()
+
+  ClearNumPad()
+  ShowKeyPad()
+  $NumForm = New FmQuantiEntry(txtday, pnlquanti)
+
+End
+
+Public Sub txtday_LostFocus()
+
+  If txtdose.Value And If cmbfreq.Text And If txtday.Value Then
+    txtqty.Value = Ceil(modMedConstant.GetQuantityDosing(cmbmedicine.Text, txtdose.Value, cmbfreq.Text, txtday.Value))
+  Endif
+
+End
+
+Public Sub txtqty_GotFocus()
+
+  ClearNumPad()
+  ShowKeyPad()
+  $NumForm = New FmQuantiEntry(txtqty, pnlquanti)
+
+  If txtdose.Value And If cmbfreq.Text Then
+    If Not txtday.Value Then
+      txtday.SetFocus
+    Endif
+  Endif
+
+End
+
+Public Sub chksave_Click()
+
+  If cmbroute.Text And If cmbmedicine.Text And If txtqty.Value Then
+    EnterDosingRecord()
+    ClearNumPad()
+    pnlquanti.Visible = False
+    cmbroute.SetFocus
+  Endif '
+
+End
+
+Public Sub chksave_GotFocus()
+
+  chksave_Click()
+
+End
+
+Public Sub chksave_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    chksave_Click()
+  Endif
+
+End
+
+Private Sub EnterDosingRecord()
+
+  Dim txprescriber As String
+  Dim txpresno As String
+  Dim res As Result
+  Dim xdose As Float
+  Dim xtax As Float
+  Dim xdisc As Float
+  Dim itemtype As String
+
+  If cmbroute.Text And If cmbmedicine.Text Then
+
+    If cmbroute.Text = "suture" Or If cmbroute.Text = "msurg" Or If cmbroute.Text = "ortho" Or If cmbroute.Text = "extra" Then
+      itemtype = modNonMedical.GetBillItemCategoryFromCombo(cmbroute.Text)
+      xtax = modNonMedical.ShowTaxValues(itemtype, cmbmedicine.Text)
+      xdisc = modNonMedical.DiscPercentForItem($encid, itemtype, cmbmedicine.Text)
+      modPharmacy.InsertNonMedDosingEntry($encid, cmbroute.Text, cmbmedicine.Text, txtqty.Value, $status, 0, xtax, xdisc, "Request", $Dept)
+
+    Else If cmbroute.Text = "Group" Then
+      res = modDatabase.$myConn.Exec("select fldroute,flditem,flddose,flddoseunit,fldfreq,fldday,fldqty,fldstart from tblproductgroup where fldmedgroup=&1", cmbmedicine.Text)
+      If res.Available Then
+        For Each res
+
+          itemtype = modNonMedical.GetBillItemCategoryFromCombo(res!fldroute)
+          xtax = modNonMedical.ShowTaxValues(itemtype, res!flditem)
+          xdisc = modNonMedical.DiscPercentForItem($encid, itemtype, res!flditem)
+          If res!fldroute = "suture" Or If res!fldroute = "msurg" Or If res!fldroute = "ortho" Or If res!fldroute = "extra" Then
+            modPharmacy.InsertNonMedDosingEntry($encid, res!fldroute, res!flditem, res!fldqty * txtqty.Value, $status, res!fldstart, xtax, xdisc, "Request", $Dept)
+          Else
+            xdose = modMedDosing.GetDoseInMg(res!flddose, res!flddoseunit, $encid)
+            If xdose Then
+              If modMedConstant.GetNarcoticType(res!flditem) = "Yes" Then
+                txprescriber = MedicalSelectedUser(("Select Narcotic Prescriber"), modBasic.$IPConsultUserList)
+                If txprescriber Then
+                  txpresno = modGeneral.GetPrescriberCodeFromName(txprescriber)
+                Endif
+              Else
+                txprescriber = ""
+                txpresno = ""
+              Endif
+              modPharmacy.InsertDosingEntry($encid, res!fldroute, res!flditem, xdose, res!fldfreq, res!fldday, res!fldqty * txtqty.Value, $status, txprescriber, txpresno, res!fldstart, xtax, xdisc, "Request", $Dept)
+            Endif
+          Endif
+
+        Next
+      Endif
+
+    Else
+      If modMedConstant.GetNarcoticType(cmbmedicine.Text) = "Yes" Then
+        txprescriber = MedicalSelectedUser(("Select Narcotic Prescriber"), modBasic.$IPConsultUserList)
+        If txprescriber Then
+          txpresno = modGeneral.GetPrescriberCodeFromName(txprescriber)
+        Endif
+      Else
+        txprescriber = ""
+        txpresno = ""
+      Endif
+      itemtype = modNonMedical.GetBillItemCategoryFromCombo(cmbroute.Text)
+      xtax = modNonMedical.ShowTaxValues(itemtype, cmbmedicine.Text)
+      xdisc = modNonMedical.DiscPercentForItem($encid, itemtype, cmbmedicine.Text)
+      modPharmacy.InsertDosingEntry($encid, cmbroute.Text, cmbmedicine.Text, txtdose.Value, cmbfreq.Text, txtday.Value, txtqty.Value, $status, txprescriber, txpresno, 0, xtax, xdisc, "Request", $Dept)                     '
+    Endif
+
+  Endif
+  BlankDosingBox()
+  FillDosingGrid()
+
+End
+
+Private Sub FillDosingGrid()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldstarttime,fldroute,flditem,flddose,fldfreq,flddays,fldqtydisp,flduserid_order,fldid,fldid,fldstarttime from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldstatus=&3 and fldorder=&4 and fldcurval=&5"                                                   ''
+  res = modDatabase.$myConn.Exec(sql, $encid, False, $status, "Request", "Continue")
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldstarttime"], gb.GeneralDate)
+      Else If Column = 9 Then
+        GridView1[res.Index, Column].Picture = Picture["icon:/small/cancel"]
+        GridView1[res.Index, Column].Text = ""
+      Else If Column = 10 Then
+        GridView1[res.Index, Column].Picture = Picture["icon:/small/print"]
+        GridView1[res.Index, Column].Text = ""
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 40 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 40 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 1
+    .Columns[9].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 1
+
+    .Columns[1].Text = "StartDate"
+    .Columns[2].Text = "Route"
+    .Columns[3].Text = "Particulars"
+    .Columns[4].Text = "Dose"
+    .Columns[5].Text = "Freq"
+    .Columns[6].Text = "Day"
+    .Columns[7].Text = "QTY"
+  End With
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim xval As Float
+  Dim yval As String
+  Dim Column As Integer
+  Dim Row As Integer
+  Dim res As Result
+  Dim xdate As Date
+  Dim hClabel As CLabelSize
+
+  Row = GridView1.Row
+  Column = GridView1.Column
+  If GridView1.Column = 1 Then
+    If modGeneral.AllowClinicalEdit(GridView1[GridView1.Row, 8].Text) = True Then
+      xdate = GetDateValue(("Select Start Date for this medicine"), GridView1[GridView1.Row, 3].Text, GridView1[GridView1.Row, 11].Text)
+      If xdate Then
+        modPharmacy.UpdateStartBefDispensing(GridView1[GridView1.Row, 0].Text, xdate)
+        FillDosingGrid()
+      Endif
+    Endif
+
+  Else If GridView1.Column = 4 Then
+    If modGeneral.AllowClinicalEdit(GridView1[GridView1.Row, 8].Text) = True Then
+      xval = InputValue(GridView1[GridView1.Row, 3].Text, ("Change Value"), GridView1[GridView1.Row, 4].Text)
+      If xval Then
+        modPharmacy.UpdateDoseBefDispensing(GridView1[GridView1.Row, 0].Text, xval)
+        FillDosingGrid()
+      Endif
+    Endif
+
+  Else If GridView1.Column = 5 Then
+    If modGeneral.AllowClinicalEdit(GridView1[GridView1.Row, 8].Text) = True Then
+      yval = InputCombo(GridView1[GridView1.Row, 3].Text, ("Change Value"), modMedicine.FrequencyCombo(), GridView1[GridView1.Row, 5].Text, True)
+      If yval Then
+        modPharmacy.UpdateFreqBefDispensing(GridView1[GridView1.Row, 0].Text, yval)
+        FillDosingGrid()
+      Endif
+    Endif
+
+  Else If GridView1.Column = 6 Then
+    If modGeneral.AllowClinicalEdit(GridView1[GridView1.Row, 8].Text) = True Then
+      xval = InputValue(GridView1[GridView1.Row, 3].Text, ("Change Value"), GridView1[GridView1.Row, 6].Text)
+      If xval Then
+        modPharmacy.UpdateDaysBefDispensing(GridView1[GridView1.Row, 0].Text, xval)
+        FillDosingGrid()
+      Endif
+    Endif
+
+  Else If GridView1.Column = 7 Then
+    xval = InputValue(GridView1[GridView1.Row, 3].Text, ("Change Value"), GridView1[GridView1.Row, 7].Text)
+    modPharmacy.UpdateQTYBefDispensing(GridView1[GridView1.Row, 0].Text, xval)
+    FillDosingGrid()
+
+  Else If GridView1.Column = 9 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      res = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1 and fldsave_order=&2", GridView1[GridView1.Row, 0].Text, False)
+      If modGeneral.AllowClinicalEdit(res["flduserid_order"]) = True Then
+        modDatabase.$myConn.Delete("tblpatdosing", "fldid=&1 and fldsave_order=&2", GridView1[GridView1.Row, 0].Text, False)
+      Else
+        res["fldcurval"] = "Cancelled"
+        res["flduserid_order"] = modGeneralMain.$lbluser
+        res["xyz"] = False
+        res.Update
+      Endif
+      FillDosingGrid()
+    Endif
+
+  Else If GridView1.Column = 10 Then
+    hClabel = New CLabelSize(GridView1[GridView1.Row, 0].Text, GetLabelMode())
+    modPrint.PrintPopUp(CStr(GridView1[GridView1.Row, 0].Text), hClabel.LabelPath(), "LabelSize")
+
+  Else
+    modGridView.CheckUncheckGrid(modDatabase.$myConn, GridView1, 8, "fldlabel", "fldid", "tblpatdosing", GridView1[GridView1.Row, 0].Text)
+  Endif
+  GridView1.Row = Row
+  GridView1.Column = Column
+
+End
+
+Private Function GetLabelMode() As String
+
+  Dim xx As String
+
+  If rbout.Value = True Then
+    xx = "Outpatient"
+  Else If rbin.Value = True Then
+    xx = "Inpatient"
+  Else If rbasep.Value = True Then
+    xx = "Aseptic"
+  Endif
+
+  Return xx
+
+End
+
+Private Sub ClearNumPad()
+
+  txtdose.Tag = ""
+  txtday.Tag = ""
+  txtqty.Tag = ""
+  Try $NumForm.Close
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnutaper_Click()
+
+  Dim Row As Integer
+  Dim hForm As Fmtaperdose
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Row = GridView1.Row
+    If GridView1[GridView1.Row, 5].Text = "Tapering" Then
+      hForm = New Fmtaperdose(GridView1[GridView1.Row, 0].Text)
+      hForm.ShowModal
+    Endif
+    GridView1.Row = Row
+  Endif
+
+End
+
+Public Sub mnusave_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Message.Question(("Do you want to start dosing without pharmacy supply ?"), ("No"), ("Yes")) = 2 Then
+      modPharmacy.UpdateDispensing(GridView1[GridView1.Row, 0].Text, True)
+    Endif
+    FillDosingGrid()
+  Endif
+
+End
+
+Public Sub mnuonline_Click()
+
+  Dim Row As Integer
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Row = GridView1.Row
+    modPharmacy.DisableDispOnline(GridView1[GridView1.Row, 0].Text)
+    FillDosingGrid()
+    GridView1.Row = Row
+    Message.Info(("Request sent"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnureview_Click()
+
+End
+
+Public Sub mnudisplabel_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xPath = modCHTMLPatient.ShowSingleCounselingReport(GridView1[GridView1.Row, 0].Text)
+    modPrint.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnshow_Click()
+
+  Dim xPath As String
+
+  xPath = modCHTMLPatient.ShowMedicationOrder($encid)
+  modPrint.OpenHTMLPreview($encid, xPath, "ReportSize")
+
+End
+
+''====================================Runnung medicines =================================
+Public Sub rbvalue_Click()
+
+  ShowRunningMedicine()
+
+End
+
+Public Sub rblabel_Click()
+
+  ShowRunningMedicine()
+
+End
+
+Private Function DoseFormRoutine() As String
+
+  Dim xx As String
+
+  If rblabel.Value = True Then
+    xx = "Label"
+  Else
+    xx = "Value"
+  Endif
+  Return xx
+
+End
+
+Private Sub ShowRunningMedicine()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldstarttime,fldroute,flditem,fldid,fldfreq,flddays,fldcurval,fldid,fldstarttime,fldstatus from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldstarttime<=&3 and flditemtype=&4 and flddispmode=&5 ORDER BY fldid DESC"                    ''
+  res = modDatabase.$myConn.Exec(sql, $encid, True, modDate.EndSqlDate(Now()), "Medicines", "IPD")
+
+  grdmedicine.Clear
+  grdmedicine.Columns.Count = res.Fields.Count
+  grdmedicine.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(grdmedicine, res.Index, Column)
+      If Column = 1 Then
+        grdmedicine[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldstarttime"], gb.GeneralDate)
+      Else If Column = 4 Then
+        grdmedicine[res.Index, Column].Text = modPharmacy.GetMedicineDoseInFormat(res["fldid"], DoseFormRoutine())
+      Else If Column = 8 Then
+        grdmedicine[res.Index, Column].Text = modPharmacy.TotalDoseNumner(res["fldid"])
+      Else
+        grdmedicine[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  grdmedicine.Row = 0
+
+  With grdmedicine
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 40 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 40 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 1
+    .Columns[10].Width = 1
+
+    .Columns[1].Text = "StartDate"
+    .Columns[2].Text = "Route"
+    .Columns[3].Text = "Medicine"
+    .Columns[4].Text = "Dose"
+    .Columns[5].Text = "Freq"
+    .Columns[6].Text = "Days"
+    .Columns[7].Text = "Status"
+    .Columns[8].Text = "N"
+  End With
+
+End
+
+''================================SELECTION ===============================
+Private Sub ShowStockGrid()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldcodename,flddosetype,flddose,flddoseunit,fldfreq,fldday,fldid,fldid,fldid from tblregimen where flddisease=&1 and (fldgender=&2 or fldgender=&3) and (fldagegroup=&4 or fldagegroup=&5)"
+  res = modDatabase.$myConn.Exec(sql, cmbdiagnosis.Text, modPatient.GetPatientSex($encid), "Both Sex", modPatient.GetAgeGroupFIxed($encid, Now()), "All Age")
+
+  GridView2.Clear
+  GridView2.Columns.Count = res.Fields.Count
+  GridView2.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView2, res.Index, Column)
+      If Column = 7 Then
+        GridView2[res.Index, Column].Picture = Picture["icon:/small/attach"]
+        GridView2[res.Index, Column].Text = ""
+      Else If Column = 8 Then
+        GridView2[res.Index, Column].Picture = Picture["icon:/small/attach"]
+        GridView2[res.Index, Column].Text = ""
+      Else If Column = 9 Then
+        GridView2[res.Index, Column].Picture = Picture["icon:/small/attach"]
+        GridView2[res.Index, Column].Text = ""
+      Else
+        GridView2[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView2.Row = 0
+
+  With GridView2
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 1
+    .Columns[1].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Drug"
+    .Columns[2].Text = "Type"
+    .Columns[3].Text = "Dose"
+    .Columns[4].Text = "Unit"
+    .Columns[5].Text = "Freq"
+    .Columns[6].Text = "Day"
+  End With
+
+End
+
+Public Sub btndiagnosis_Click()
+
+  If cmbdiagnosis.Text Then
+    ShowStockGrid()
+  Endif
+
+End
+
+''==================================== USE OWN ==============================
+Private Sub ShowCurrStockGrid()
+
+  If rbmed.Value = True Then
+    $rData = modDatabase.$syConn.Exec("select fldbrandid,fldbrand,fldbrandid,fldbrandid as qty from tblmedbrand where lower(fldbrandid) like &1 and fldbrandid in(select fldstockid from tblentry where fldqty>&2 and fldcomp like &3) order by fldbrandid ASC", LCase(txtname.Text) & "%", 0, modGeneralMain.compID)                                   ''
+  Else If rbsurg.Value = True Then
+    $rData = modDatabase.$syConn.Exec("select fldbrandid,fldbrand,fldbrandid,fldbrandid as qty from tblsurgbrand where lower(fldbrandid) like &1 and fldbrandid in(select fldstockid from tblentry where fldqty>&2 and fldcomp like &3) order by fldbrandid ASC", LCase(txtname.Text) & "%", 0, modGeneralMain.compID)
+  Else If rbextra.Value = True Then
+    $rData = modDatabase.$syConn.Exec("select fldbrandid,fldbrand,fldbrandid,fldbrandid as qty from tblextrabrand where lower(fldbrandid) like &1 and fldbrandid in(select fldstockid from tblentry where fldqty>&2 and fldcomp like &3) order by fldbrandid ASC", LCase(txtname.Text) & "%", 0, modGeneralMain.compID)
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView3, $rData, $aMyFields)
+  With GridView3
+    .Columns[0].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 1
+    .Columns[2].Width = 1
+    .Columns[3].Width = 40 * modBasic.$AppWidthRatio
+    .Columns[0].Text = "Particulars"
+    .Columns[3].Text = "QTY"
+  End With
+
+End
+
+Public Sub GridView3_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView3, Row)
+  If Column = 3 Then
+    GridView3.Data.Text = modStock.TotalQTYbyBrand($rData["qty"], modGeneralMain.compID)
+  Else
+    GridView3.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub rbmed_Click()
+
+  ShowCurrStockGrid()
+  txtname.SetFocus
+
+End
+
+Public Sub rbsurg_Click()
+
+  ShowCurrStockGrid()
+  txtname.SetFocus
+
+End
+
+Public Sub rbextra_Click()
+
+  ShowCurrStockGrid()
+  txtname.SetFocus
+
+End
+
+Public Sub txtname_Change()
+
+  ShowCurrStockGrid()
+
+End
+
+Public Sub txtname_Click()
+
+  txtname.Text = ""
+  ShowCurrStockGrid()
+
+End
+
+Public Sub GridView3_Click()
+
+  Dim xval As Float
+  Dim sType As String
+
+  If GridView3.Rows.Selection.Count Then
+    Panel4.Enabled = False
+    If rbmed.Value = True Then
+      sType = "Medicines"
+    Else If rbsurg.Value = True Then
+      sType = "Surgicals"
+    Else If rbextra.Value = True Then
+      sType = "Extra Items"
+    Endif
+    xval = InputValue("QUANTITY OF <b>" & GridView3[GridView3.Row, 0].Text & "</b>", "Use Record", 0)
+    Panel4.Enabled = True
+    If xval Then
+      EntryUseOwndata(sType, GridView3[GridView3.Row, 0].Text, xval)
+      ShowUsedGridViewList()
+    Endif
+  Endif
+
+End
+
+Private Sub EntryUseOwndata(sType As String, sItem As String, sQty As Float)
+
+  Dim xroute As String
+  Dim xtax As Float
+  Dim xdisc As Float
+  Dim xdose As Float
+
+  xtax = modNonMedical.ShowTaxValues(sType, sItem)
+  xdisc = modNonMedical.DiscPercentForItem($encid, sType, sItem)
+  xroute = modMedicine.GetRouteFromItem(sItem, sType)
+
+  If sType = "Medicines" Then
+    xdose = sQty * modPharmLabel.GetPackVolValue(sItem) * modMedConstant.GetDrugInitialStrength(sItem)
+    modPharmacy.InsertDosingEntry($encid, xroute, sItem, xdose, 1, 1, sQty, $status, "", "", 0, xtax, xdisc, "UseOwn", $Dept)
+  Else
+    modPharmacy.InsertNonMedDosingEntry($encid, xroute, sItem, sQty, $status, 0, xtax, xdisc, "UseOwn", $Dept)
+  Endif
+
+End
+
+Private Sub ShowUsedGridViewList()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldstarttime,fldroute,flditem,flddose,fldfreq,flddays,fldqtydisp,flduserid_order,fldid,fldid,fldstarttime from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldstatus=&3 and fldorder=&4 and fldcurval=&5 and flddispmode=&6"                                                   ''
+  res = modDatabase.$myConn.Exec(sql, $encid, False, $status, "UseOwn", "Continue", $Dept)
+
+  GridView4.Clear
+  GridView4.Columns.Count = res.Fields.Count
+  GridView4.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView4, res.Index, Column)
+      If Column = 9 Then
+        GridView4[res.Index, Column].Picture = Picture["icon:/small/cancel"]
+        GridView4[res.Index, Column].Text = ""
+      Else If Column = 10 Then
+        GridView4[res.Index, Column].Picture = Picture["icon:/small/apply"]
+        GridView4[res.Index, Column].Text = ""
+      Else
+        GridView4[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView4.Row = 0
+
+  With GridView4
+    .Rows.Height = 25 * modBasic.$AppHeightRatio
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 1
+    .Columns[3].Width = 335 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+    .Columns[5].Width = 1
+    .Columns[6].Width = 1
+    .Columns[7].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 1
+    .Columns[9].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 1
+
+    .Columns[3].Text = "Particulars"
+    .Columns[7].Text = "QTY"
+  End With
+
+End
+
+Public Sub GridView4_Click()
+
+  Dim xval As Float
+  Dim Column As Integer
+  Dim Row As Integer
+  Dim res As Result
+
+  Row = GridView4.Row
+  Column = GridView4.Column
+  If GridView4.Column = 7 Then
+    xval = InputValue(GridView4[GridView4.Row, 3].Text, ("Change Value"), GridView4[GridView4.Row, 7].Text)
+    modPharmacy.UpdateQTYBefDispensing(GridView4[GridView4.Row, 0].Text, xval)
+    ShowUsedGridViewList()
+
+  Else If GridView4.Column = 9 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      res = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1 and fldsave_order=&2", GridView4[GridView4.Row, 0].Text, False)
+      If modGeneral.AllowClinicalEdit(res["flduserid_order"]) = True Then
+        modDatabase.$myConn.Delete("tblpatdosing", "fldid=&1 and fldsave_order=&2", GridView4[GridView4.Row, 0].Text, False)
+      Else
+        res["fldcurval"] = "Cancelled"
+        res["flduserid_order"] = modGeneralMain.$lbluser
+        res["xyz"] = False
+        res.Update
+      Endif
+      ShowUsedGridViewList()
+    Endif
+
+  Else If GridView4.Column = 10 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      If modBasic.$AutoBillPharmacy = "Yes" Or If modBasic.$AutoBillPharmacy = "Full" Then
+        SaveOwnDispensing(GridView4[GridView4.Row, 0].Text)
+        ShowUsedGridViewList()
+        ShowCurrStockGrid()
+      Endif
+    Endif
+
+  Endif
+  GridView4.Row = Row
+  GridView4.Column = Column
+
+End
+
+Private Sub SaveOwnDispensing(sID As Long)
+
+  Dim sql1 As String
+  Dim res1 As Result
+
+  Dim tax As Float
+  Dim disc As Float
+
+  Dim res2 As Result
+  Dim sql2 As String
+
+  Dim qtynew As Float
+  Dim xcateg As String
+
+  sql1 = "select fldid,fldtime,fldroute,flditem,flddose,fldfreq,flddays,fldqtydisp,fldlabel,fldencounterval,flditemtype from tblpatdosing where fldid=&1"                                                   ''
+  res1 = modDatabase.$myConn.Exec(sql1, sID)
+  If res1.Available = True Then
+
+    Inc Application.Busy
+    modDatabase.$myConn.Begin
+    'get tax and discount percentages
+    xcateg = res1!flditemtype
+    tax = modNonMedical.ShowTaxValues(xcateg, res1!flditem)
+    disc = modNonMedical.DiscPercentForItem(res1!fldencounterval, xcateg, res1!flditem)
+
+    qtynew = res1!fldqtydisp
+    While qtynew > 0
+
+      'get stockno, rate and quantity based on expiry check
+      If modBasic.$SkipExpiry = "ExpireOnUse" Then
+        sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus,fldsellpr from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus=&3 and fldexpiry>&4 and fldqty>&5"
+        res2 = modDatabase.$myConn.Exec(sql2, res1!flditem, modGeneralMain.compID, 1, DateAdd(modDate.StartSqlDate(Now()), gb.Day, CInt(res1!flddays)), 0)
+      Else If modBasic.$SkipExpiry = "Expired" Then
+        sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus,fldsellpr from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus=&3 and fldexpiry>&4 and fldqty>&5"
+        res2 = modDatabase.$myConn.Exec(sql2, res1!flditem, modGeneralMain.compID, 1, modDate.StartSqlDate(Now()), 0)
+      Else
+        sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus,fldsellpr from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus=&3 and fldqty>&4"
+        res2 = modDatabase.$myConn.Exec(sql2, res1!flditem, modGeneralMain.compID, 1, 0)
+      Endif
+
+      If res2.Count = 0 Then
+        Dec Application.Busy
+        Break
+      Else If res2.Count > 0 Then
+        If qtynew <= res2!fldqty Then
+          modBillings.InsertBlankBillItem(res1!fldencounterval, $sBillMode, res1!flditemtype, res2!fldstockno, res1!flditem, res2!fldsellpr, qtynew, tax, disc, "Done", res1!fldid, True, False)
+          modStock.AddToExistEntry(res2!fldstockno, (0 - qtynew), modGeneralMain.compID)
+          qtynew = 0
+        Else If qtynew > res2!fldqty Then
+          modBillings.InsertBlankBillItem(res1!fldencounterval, $sBillMode, res1!flditemtype, res2!fldstockno, res1!flditem, res2!fldsellpr, res2!fldqty, tax, disc, "Done", res1!fldid, True, False)
+          modStock.AddToExistEntry(res2!fldstockno, (0 - res2!fldqty), modGeneralMain.compID)
+          qtynew = qtynew - res2!fldqty
+        Endif
+      Endif
+
+    Wend
+
+    If qtynew > 0 Then
+      modPharmacy.DuplicateRecordWithQTY(res1!fldid, qtynew)
+      modPharmacy.UpdateQTYBefDispensing(res1!fldid, res1!fldqtydisp - qtynew)
+    Endif
+    modPharmacy.UpdateDispensing(res1!fldid, True)
+    modDatabase.$myConn.Commit
+    Dec Application.Busy
+
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
