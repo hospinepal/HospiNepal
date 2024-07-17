@@ -1,0 +1,704 @@
+' Gambas module file
+
+Public $lab1Con As Connection '''NDC
+Public $lab2Con As Connection  ''NLNB
+
+Public Sub CreateLabConnections()
+
+  Dim xfile As String
+  Dim xdbname1 As String
+  Dim xservice1 As String
+  Dim xhost1 As String
+  Dim xuser1 As String
+  Dim xpass1 As String
+  Dim xport1 As String
+  Dim xdbname2 As String
+  Dim xservice2 As String
+  Dim xhost2 As String
+  Dim xuser2 As String
+  Dim xpass2 As String
+  Dim xport2 As String
+
+  xfile = modHelpVariable.GetConfigSettingFIle()
+
+  xdbname1 = modControlSub.ShowSettingValue(xfile, "NDC/Database")
+  xservice1 = modControlSub.ShowSettingValue(xfile, "NDC/Service")
+  xhost1 = modControlSub.ShowSettingValue(xfile, "NDC/Host")
+  xuser1 = modControlSub.ShowSettingValue(xfile, "NDC/User")
+  xpass1 = modPassword.DecryptDBPass(modControlSub.ShowSettingValue(xfile, "NDC/Password"), False)
+  xport1 = modControlSub.ShowSettingValue(xfile, "NDC/Port")
+  modHospitalReport.$lab1Con = modDBApp.OpenConnection(xservice1, xhost1, xdbname1, xuser1, xpass1, xport1)                   ''
+
+  xdbname2 = modControlSub.ShowSettingValue(xfile, "NLNP/Database")
+  xservice2 = modControlSub.ShowSettingValue(xfile, "NLNP/Service")
+  xhost2 = modControlSub.ShowSettingValue(xfile, "NLNP/Host")
+  xuser2 = modControlSub.ShowSettingValue(xfile, "NLNP/User")
+  xpass2 = modPassword.DecryptDBPass(modControlSub.ShowSettingValue(xfile, "NLNP/Password"), False)
+  xport2 = modControlSub.ShowSettingValue(xfile, "NLNP/Port")
+  modHospitalReport.$lab2Con = modDBApp.OpenConnection(xservice2, xhost2, xdbname2, xuser2, xpass2, xport2)
+
+End
+
+Public Function ShowCashNobelHospital(dtfrom As Date, dtlast As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim RepoPath As String
+  Dim sDate As Date
+  Dim sdateList As Date[]
+
+  Dim xhospcash As Float
+  Dim xtotCash As Float
+  Dim xlab1cash As Float
+  Dim xlab2cash As Float
+  Dim xpcrcash As Float
+
+  Dim allhosp As Float
+  Dim allLab1 As Float
+  Dim allLab2 As Float
+  Dim allPcr As Float
+  Dim xtotall As Float
+
+  $BillingReport = New CReportHTML([("DATE"), ("HOSPITAL"), ("NDC"), ("NLNP"), ("PCR"), ("TOTAL")], "", "")
+  $BillingReport.UserData.Add("CASH COLLECTION REPORT", "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dtfrom, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate), "PARAM2")
+
+  allhosp = 0
+  allLab1 = 0
+  allLab2 = 0
+  allPcr = 0
+  xtotall = 0
+  sdateList = modDate.GetDateArrayBetween(dtfrom, dtlast)
+  For Each sDate In sdateList
+    xtotCash = modFinance.GetInvoiceAmtbyTypeDay(modDatabase.$syConn, sDate, "Cash", "", "") + modFinance.GetReceiptTotalandDepoAmountDay(modDatabase.$syConn, sDate, "Cash", "", "")
+    xlab1cash = modFinance.GetInvoiceAmtbyTypeDay($lab1Con, sDate, "Cash", "", "")
+    xlab2cash = modFinance.GetInvoiceAmtbyTypeDay($lab2Con, sDate, "Cash", "", "")
+    xpcrcash = GetPCRLabCollection(sDate, "Cash")
+    xhospcash = xtotCash - (xlab1cash + xlab2cash + xpcrcash)
+
+    allhosp = allhosp + xhospcash
+    allLab1 = allLab1 + xlab1cash
+    allLab2 = allLab2 + xlab2cash
+    allPcr = allPcr + xpcrcash
+    xtotall = xtotall + xtotCash
+    With asx
+      .Add(modReportVar.GetDateTimeReport(sDate, gb.MediumDate))
+      .Add(modReportVar.GetLocaleNumberFormat(xhospcash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab1cash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab2cash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xpcrcash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtotCash, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  With asx
+    .Add("GRAND TOTAL")
+    .Add(modReportVar.GetLocaleNumberFormat(allhosp, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(allLab1, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(allLab2, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(allPcr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(xtotall, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  RepoPath = $BillingReport.NewHTMLPath()
+  Return RepoPath
+
+End
+
+Public Function ShowSummaryNobelHospital(dtfrom As Date, dtlast As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim RepoPath As String
+  Dim sDate As Date
+  Dim sdateList As Date[]
+
+  Dim xtotCash As Float
+  Dim xtotCredit As Float
+  Dim xtotHICredit As Float
+  Dim xtotOthCredit As Float
+  Dim xlab1cash As Float
+  Dim xlab1credit As Float
+  Dim xlab1HIcredit As Float
+  Dim xlab1Othcredit As Float
+  Dim xlab2cash As Float
+  Dim xlab2credit As Float
+  Dim xlab2HIcredit As Float
+  Dim xlab2OthCredit As Float
+
+  Dim grpList As String[]
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res33 As Result
+  Dim grpname As String
+  Dim i As Integer
+
+  Dim bcashgrp As Float
+  Dim bcrdtgrp As Float
+  Dim bHIcrdtgrp As Float
+  Dim bOthcrdtgrp As Float
+
+  Dim xcashgrp As Float
+  Dim xcrdtgrp As Float
+  Dim xHIcrdtgrp As Float
+  Dim xOthcrdtgrp As Float
+
+  Dim res4 As Result
+  Dim j As Integer
+  Dim res5 As Result
+  Dim res6 As Result
+  Dim res66 As Result
+  Dim xcashbed As Float
+  Dim xcrdtbed As Float
+  Dim xHIcrdtbed As Float
+  Dim xOthcrdtbed As Float
+
+  Dim xpcrcash As Float
+  Dim xpcrcredit As Float
+  Dim xpcrHIcredit As Float
+  Dim xpcrOthcredit As Float
+
+  Dim hospcashdisc As Float
+  Dim hospcrdtdisc As Float
+  Dim hospHIcrdtdisc As Float
+  Dim hospOthcrdtdisc As Float
+
+  Dim ndccashdisc As Float
+  Dim ndccrdtdisc As Float
+  Dim ndcHIcrdtdisc As Float
+  Dim ndcOthcrdtdisc As Float
+
+  Dim nlnpcashdisc As Float
+  Dim nlnpcrdtdisc As Float
+  Dim nlnpHIcrdtdisc As Float
+  Dim nlnpOthcrdtdisc As Float
+
+  $BillingReport = New CReportHTML([("SN"), ("TITLE"), ("TOTAL CASH"), ("HI CREDIT"), ("OTHER CREDIT"), ("TOTAL CREDIT"), ("TOTAL")], "", "")
+  $BillingReport.UserData.Add("AVERAGE COLLECTION REPORT", "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dtfrom, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate), "PARAM2")
+
+  sdateList = modDate.GetDateArrayBetween(dtfrom, dtlast)
+  For Each sDate In sdateList
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(sDate, gb.MediumDate), True)
+
+    $BillingReport.AddChapter("USER COLLECTION")
+    ''hospital
+    xtotCash = modFinance.GetInvoiceAmtbyTypeDay(modDatabase.$syConn, sDate, "Cash", "", "") + modFinance.GetReceiptTotalandDepoAmountDay(modDatabase.$syConn, sDate, "Cash", "", "")
+    xtotCredit = modFinance.GetInvoiceAmtbyTypeDay(modDatabase.$syConn, sDate, "Credit", "", "") ''+ modFinance.GetReceiptTotalandDepoAmountDay(modDatabase.$syConn, sDate, "Credit","", "")
+    xtotHICredit = modFinance.GetInvoiceAmtbyTypeDayLedger(modDatabase.$syConn, sDate, "Credit", "Health Insurance", "", "") ''+ modFinance.GetReceiptTotalandDepoAmountDayLedger(modDatabase.$syConn, sDate, "Credit", "Health Insurance","", "")
+    xtotOthCredit = xtotCredit - xtotHICredit
+    ''for lab1 NDC
+    xlab1cash = modFinance.GetInvoiceAmtbyTypeDay($lab1Con, sDate, "Cash", "", "")
+    xlab1credit = modFinance.GetInvoiceAmtbyTypeDay($lab1Con, sDate, "Credit", "", "")
+    xlab1HIcredit = modFinance.GetInvoiceAmtbyTypeDayLedger($lab1Con, sDate, "Credit", "Health Insurance", "", "")
+    xlab1Othcredit = xlab1credit - xlab1HIcredit
+    ''lab2 NLNP
+    xlab2cash = modFinance.GetInvoiceAmtbyTypeDay($lab2Con, sDate, "Cash", "", "")
+    xlab2credit = modFinance.GetInvoiceAmtbyTypeDay($lab2Con, sDate, "Credit", "", "")
+    xlab2HIcredit = modFinance.GetInvoiceAmtbyTypeDayLedger($lab2Con, sDate, "Credit", "Health Insurance", "", "")
+    xlab2OthCredit = xlab2credit - xlab2HIcredit
+    ''for PCR
+    xpcrcash = GetPCRLabCollection(sDate, "Cash")
+    xpcrcredit = GetPCRLabCollection(sDate, "Credit")
+    xpcrHIcredit = GetPCRLabCollectionLedger(sDate, "Credit", "Health Insurance")
+    xpcrOthcredit = xpcrcredit - xpcrHIcredit
+    With asx
+      .Add(CStr(1))
+      .Add("Hospital Collection")
+      .Add(modReportVar.GetLocaleNumberFormat(xtotCash - (xlab1cash + xlab2cash + xpcrcash), gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtotHICredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtotOthCredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtotCredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat((xtotCash - (xlab1cash + xlab2cash + xpcrcash)) + (xtotCredit), gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add(CStr(2))
+      .Add("NDC Collection")
+      .Add(modReportVar.GetLocaleNumberFormat(xlab1cash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab1HIcredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab1Othcredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab1credit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab1cash + xlab1credit, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add(CStr(3))
+      .Add("NLNP Collection")
+      .Add(modReportVar.GetLocaleNumberFormat(xlab2cash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab2HIcredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab2OthCredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab2credit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xlab2cash + xlab2credit, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add(CStr(4))
+      .Add("PCR Collection")
+      .Add(modReportVar.GetLocaleNumberFormat(xpcrcash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xpcrHIcredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xpcrOthcredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xpcrcredit, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xpcrcash + xpcrcredit, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add("")
+      .Add("<b>Total Cash Collection</b>")
+      .Add(modReportVar.GetLocaleNumberFormat(xtotCash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtotHICredit + (xlab1HIcredit + xlab2HIcredit + xpcrHIcredit), gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtotOthCredit + (xlab1Othcredit + xlab2OthCredit + xpcrOthcredit), gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtotCredit + (xlab1credit + xlab2credit + xpcrcredit), gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat((xtotCash) + (xtotCredit + (xlab1credit + xlab2credit + xpcrcredit)), gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    With asx
+      .Add("")
+      .Add("<b>Average Collection for the month</b>")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add("")
+      .Add("<b>Projected Collection for the month</b>")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    $BillingReport.AddChapter("DEPARTMENTS")
+    grpList = modNonMedical.GetGroupNameAccount()
+    i = 1
+    xcashgrp = 0
+    xcrdtgrp = 0
+    xHIcrdtgrp = 0
+    xOthcrdtgrp = 0
+    For Each grpname In grpList
+      bcashgrp = 0
+      bcrdtgrp = 0
+      bHIcrdtgrp = 0
+      bOthcrdtgrp = 0
+      res2 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3 and fldbilltype=&4)", grpname, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Cash")                                                      ''
+      res3 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3 and fldbilltype=&4)", grpname, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit")
+      res33 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3 and fldbilltype=&4 and fldbankname=&5)", grpname, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit", "Health Insurance")
+      If res2["tot"] Then
+        bcashgrp = res2["tot"]
+      Endif
+      If res3["tot"] Then
+        bcrdtgrp = res3["tot"]
+      Endif
+      If res33["tot"] Then
+        bHIcrdtgrp = res33["tot"]
+      Endif
+      bOthcrdtgrp = bcrdtgrp - bHIcrdtgrp
+
+      xcashgrp = xcashgrp + bcashgrp
+      xcrdtgrp = xcrdtgrp + bcrdtgrp
+      xHIcrdtgrp = xHIcrdtgrp + bHIcrdtgrp
+      xOthcrdtgrp = xOthcrdtgrp + bOthcrdtgrp
+      If Not bcashgrp And If Not bcrdtgrp Then
+      Else
+        With asx
+          .Add(CStr(i))
+          .Add(grpname)
+          If bcashgrp Then
+            .Add(modReportVar.GetLocaleNumberFormat(bcashgrp, gb.Currency))
+          Else
+            .Add("-")
+          Endif
+          If bHIcrdtgrp Then
+            .Add(modReportVar.GetLocaleNumberFormat(bHIcrdtgrp, gb.Currency))
+          Else
+            .Add("-")
+          Endif
+          If bOthcrdtgrp Then
+            .Add(modReportVar.GetLocaleNumberFormat(bOthcrdtgrp, gb.Currency))
+          Else
+            .Add("-")
+          Endif
+          If bcrdtgrp Then
+            .Add(modReportVar.GetLocaleNumberFormat(bcrdtgrp, gb.Currency))
+          Else
+            .Add("-")
+          Endif
+          .Add(modReportVar.GetLocaleNumberFormat(bcashgrp + bcrdtgrp, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+      Endif
+    Next
+    ''ungrouped
+    bcashgrp = 0
+    bcrdtgrp = 0
+    bHIcrdtgrp = 0
+    bOthcrdtgrp = 0
+    res2 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname not in(select flditemname from tblreportgroup) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3)", grpname, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Cash")                                                      ''
+    res3 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname not in(select flditemname from tblreportgroup) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3)", grpname, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit")
+    res33 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname not in(select flditemname from tblreportgroup) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3 and fldbankname=&4)", grpname, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit", "Health Insurance")
+    If res2["tot"] Then
+      bcashgrp = res2["tot"]
+    Endif
+    If res3["tot"] Then
+      bcrdtgrp = res3["tot"]
+    Endif
+    If res33["tot"] Then
+      bHIcrdtgrp = res33["tot"]
+    Endif
+    bOthcrdtgrp = bcrdtgrp - bHIcrdtgrp
+
+    xcashgrp = xcashgrp + bcashgrp
+    xcrdtgrp = xcrdtgrp + bcrdtgrp
+    xHIcrdtgrp = xHIcrdtgrp + bHIcrdtgrp
+    xOthcrdtgrp = xOthcrdtgrp + bOthcrdtgrp
+    If Not bcashgrp And If Not bcrdtgrp Then
+    Else
+      With asx
+        .Add(CStr(i))
+        .Add("Ungrouped")
+        If bcashgrp Then
+          .Add(modReportVar.GetLocaleNumberFormat(bcashgrp, gb.Currency))
+        Else
+          .Add("-")
+        Endif
+        If bHIcrdtgrp Then
+          .Add(modReportVar.GetLocaleNumberFormat(bHIcrdtgrp, gb.Currency))
+        Else
+          .Add("-")
+        Endif
+        If bOthcrdtgrp Then
+          .Add(modReportVar.GetLocaleNumberFormat(bOthcrdtgrp, gb.Currency))
+        Else
+          .Add("-")
+        Endif
+        If bcrdtgrp Then
+          .Add(modReportVar.GetLocaleNumberFormat(bcrdtgrp, gb.Currency))
+        Else
+          .Add("-")
+        Endif
+        .Add(modReportVar.GetLocaleNumberFormat(bcashgrp + bcrdtgrp, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+    ''total
+    With asx
+      .Add("")
+      .Add("<b>TOTAL</b>")
+      .Add(modReportVar.GetLocaleNumberFormat(xcashgrp, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xHIcrdtgrp, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xOthcrdtgrp, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xcrdtgrp, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xcashgrp + xcrdtgrp, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    $BillingReport.AddChapter("ROOM TYPES")
+    xcashbed = 0
+    xcrdtbed = 0
+    xHIcrdtbed = 0
+    xOthcrdtbed = 0
+    res4 = modDatabase.$syConn.Exec("select distinct(fldbedcharge) as fldbedcharge from tbldepartment where fldbedcharge like &1", "%")
+    If res4.Available Then
+      j = 1
+      For Each res4
+        bcashgrp = 0
+        bcrdtgrp = 0
+        bHIcrdtgrp = 0
+        bOthcrdtgrp = 0
+        res5 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname in(select flditemname from tblservicecost where fldbillitem=&1) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3 and fldbilltype=&4)", res4["fldbedcharge"], modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Cash")
+        res6 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname in(select flditemname from tblservicecost where fldbillitem=&1) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3 and fldbilltype=&4)", res4["fldbedcharge"], modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit")
+        res66 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as tot from tblpatbilling where flditemname in(select flditemname from tblservicecost where fldbillitem=&1) and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3 and fldbilltype=&4 and fldbankname=&5)", res4["fldbedcharge"], modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit", "Health Insurance")
+        If res5["tot"] Then
+          bcashgrp = res5["tot"]
+        Endif
+        If res6["tot"] Then
+          bcrdtgrp = res6["tot"]
+        Endif
+        If res66["tot"] Then
+          bHIcrdtgrp = res66["tot"]
+        Endif
+        bOthcrdtgrp = bcrdtgrp - bHIcrdtgrp
+
+        xcashbed = xcashbed + bcashgrp
+        xcrdtbed = xcrdtbed + bcrdtgrp
+        xHIcrdtbed = xHIcrdtbed + bHIcrdtgrp
+        xOthcrdtbed = xOthcrdtbed + bOthcrdtgrp
+        If Not bcashgrp And If Not bcrdtgrp Then
+        Else
+          With asx
+            .Add(CStr(j))
+            .Add(res4["fldbedcharge"])
+            If bcashgrp Then
+              .Add(modReportVar.GetLocaleNumberFormat(bcashgrp, gb.Currency))
+            Else
+              .Add("-")
+            Endif
+            If bHIcrdtgrp Then
+              .Add(modReportVar.GetLocaleNumberFormat(bHIcrdtgrp, gb.Currency))
+            Else
+              .Add("-")
+            Endif
+            If bOthcrdtgrp Then
+              .Add(modReportVar.GetLocaleNumberFormat(bOthcrdtgrp, gb.Currency))
+            Else
+              .Add("-")
+            Endif
+            If bcrdtgrp Then
+              .Add(modReportVar.GetLocaleNumberFormat(bcrdtgrp, gb.Currency))
+            Else
+              .Add("-")
+            Endif
+            .Add(modReportVar.GetLocaleNumberFormat(bcashgrp + bcrdtgrp, gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          j = j + 1
+        Endif
+      Next
+    Endif
+    With asx
+      .Add("")
+      .Add("<b>TOTAL</b>")
+      .Add(modReportVar.GetLocaleNumberFormat(xcashbed, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xHIcrdtbed, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xOthcrdtbed, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xcrdtbed, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xcashbed + xcrdtbed, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    $BillingReport.AddChapter("DISCOUNT")
+    hospcashdisc = modFinance.GetTotalDiscountDay(modDatabase.$syConn, sDate, "Cash", "", "")
+    hospcrdtdisc = modFinance.GetTotalDiscountDay(modDatabase.$syConn, sDate, "Credit", "", "")
+    hospHIcrdtdisc = modFinance.GetTotalDiscountDayLedger(modDatabase.$syConn, sDate, "Credit", "Health Insurance", "", "")
+    hospOthcrdtdisc = hospcrdtdisc - hospHIcrdtdisc
+    With asx
+      .Add(CStr(1))
+      .Add("Hospital Discount")
+      .Add(modReportVar.GetLocaleNumberFormat(hospcashdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospHIcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospOthcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospcashdisc + hospcrdtdisc, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    ndccashdisc = modFinance.GetTotalDiscountDay($lab1Con, sDate, "Cash", "", "")
+    ndccrdtdisc = modFinance.GetTotalDiscountDay($lab1Con, sDate, "Credit", "", "")
+    ndcHIcrdtdisc = modFinance.GetTotalDiscountDayLedger($lab1Con, sDate, "Credit", "Health Insurance", "", "")
+    ndcOthcrdtdisc = ndccrdtdisc - ndcHIcrdtdisc
+    With asx
+      .Add(CStr(2))
+      .Add("NDC Discount")
+      .Add(modReportVar.GetLocaleNumberFormat(ndccashdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(ndcHIcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(ndcOthcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(ndccrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(ndccashdisc + ndccrdtdisc, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    nlnpcashdisc = modFinance.GetTotalDiscountDay($lab2Con, sDate, "Cash", "", "")
+    nlnpcrdtdisc = modFinance.GetTotalDiscountDay($lab2Con, sDate, "Credit", "", "")
+    nlnpHIcrdtdisc = modFinance.GetTotalDiscountDayLedger($lab2Con, sDate, "Credit", "Health Insurance", "", "")
+    nlnpOthcrdtdisc = nlnpcrdtdisc - nlnpHIcrdtdisc
+    With asx
+      .Add(CStr(3))
+      .Add("NLNB Discount")
+      .Add(modReportVar.GetLocaleNumberFormat(nlnpcashdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(nlnpHIcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(nlnpOthcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(nlnpcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(nlnpcashdisc + nlnpcrdtdisc, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add("")
+      .Add("<b>TOTAL</b>")
+      .Add(modReportVar.GetLocaleNumberFormat(hospcashdisc + ndccashdisc + nlnpcashdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospHIcrdtdisc + ndcHIcrdtdisc + nlnpHIcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospOthcrdtdisc + ndcOthcrdtdisc + nlnpOthcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospcrdtdisc + ndccrdtdisc + nlnpcrdtdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(hospcashdisc + ndccashdisc + nlnpcashdisc + hospcrdtdisc + ndccrdtdisc + nlnpcrdtdisc, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    With asx
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  RepoPath = $BillingReport.NewHTMLPath()
+  Return RepoPath
+
+End
+
+''Particular for Pcr compID
+Private Function GetPCRLabCollection(sDate As String, sMode As String) As Float
+
+  Dim res As Result
+  Dim xval As Float
+
+  If sMode = "Credit" Then
+    res = modDatabase.$syConn.Exec("select SUM(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3 and fldbillno in(select fldbillno from tblpatbilling where (flditemname=&4 or flditemname=&5 or flditemname=&6))", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit", "RT-PCR Covid-19 (G)", "Sample (Swab) Collection (G)", "RT-PCR Covid-19 S (G)")
+  Else If sMode = "Cash" Then
+    res = modDatabase.$syConn.Exec("select SUM(fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbillno in(select fldbillno from tblpatbilling where (flditemname=&3 or flditemname=&4 or flditemname=&5))", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "RT-PCR Covid-19 (G)", "Sample (Swab) Collection (G)", "RT-PCR Covid-19 S (G)")
+  Endif
+  ' res = modDatabase.$syConn.Exec("select SUM(fldditemamt) as totamt from tblpatbilling where fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3) and (flditemname=&4 or flditemname=&5)", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), sMode, "RT-PCR Covid-19 (G)", "Sample (Swab) Collection (G)")
+  If res.Available Then
+    If res["totamt"] Then
+      xval = res["totamt"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Private Function GetPCRLabCollectionLedger(sDate As String, sMode As String, sLedger As String) As Float
+
+  Dim res As Result
+  Dim xval As Float
+
+  If sMode = "Credit" Then
+    res = modDatabase.$syConn.Exec("select SUM(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3 and fldbankname=&4 and fldbillno in(select fldbillno from tblpatbilling where (flditemname=&5 or flditemname=&6 or flditemname=&7))", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Credit", sLedger, "RT-PCR Covid-19 (G)", "Sample (Swab) Collection (G)", "RT-PCR Covid-19 S (G)")     ''
+  Else If sMode = "Cash" Then
+    res = modDatabase.$syConn.Exec("select SUM(fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbankname=&3 and fldbillno in(select fldbillno from tblpatbilling where (flditemname=&4 or flditemname=&5 or flditemname=&6))", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), sLedger, "RT-PCR Covid-19 (G)", "Sample (Swab) Collection (G)", "RT-PCR Covid-19 S (G)")
+  Endif
+  If res.Available Then
+    If res["totamt"] Then
+      xval = res["totamt"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetLaboratoryCollection(sType As String, dtfir As Date, dtlast As Date) As Float
+
+  Dim res As Result
+  Dim xval As Float
+  Dim res1 As Result
+  Dim xval1 As Float
+  Dim totamt As Float
+
+  CreateLabConnections()
+  If modHospitalReport.$lab1Con.Opened Then
+    If sType = "Credit" Then
+      res = modHospitalReport.$lab1Con.Exec("select SUM(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "Credit")
+    Else If sType = "Cash" Then
+      res = modHospitalReport.$lab1Con.Exec("select SUM(fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast))
+    Endif
+    ''
+    If res.Available Then
+      If res["totamt"] Then
+        xval = res["totamt"]
+      Else
+        xval = 0
+      Endif
+    Else
+      xval = 0
+    Endif
+
+  Else
+    xval = 0
+  Endif
+
+  If modHospitalReport.$lab2Con.Opened Then
+    If sType = "Credit" Then
+      res1 = modHospitalReport.$lab2Con.Exec("select SUM(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2 and fldbilltype=&3", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "Credit")
+    Else If sType = "Cash" Then
+      res1 = modHospitalReport.$lab2Con.Exec("select SUM(fldreceivedamt) as totamt from tblpatbilldetail where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast))
+    Endif
+    If res1.Available Then
+      If res1["totamt"] Then
+        xval1 = res1["totamt"]
+      Else
+        xval1 = 0
+      Endif
+    Else
+      xval1 = 0
+    Endif
+
+  Else
+    xval1 = 0
+  Endif
+
+  totamt = xval + xval1
+
+  Return totamt
+
+End

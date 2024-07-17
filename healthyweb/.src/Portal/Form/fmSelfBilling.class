@@ -1,0 +1,362 @@
+' Gambas class file
+
+Private $encid As String
+
+Private $billMode As String
+Private $billAllow As Boolean
+Private $DiscPackage As String
+Private $ACLedger As String
+Private $xbilltype As String
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+Private $ItemList As String[]
+Private $ItemType As String
+
+Private $FileID As String
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+  $DiscPackage = modNonMedical.DefaultBillingScheme($encid, modBasic.$compID)
+  SetBillingParam()
+
+  If modNonMedical.GetFinanceClearance($encid) = True Then
+    $billAllow = False
+  Else
+    $billAllow = True
+  Endif
+
+  If $billAllow = True Then
+    SHowRequestedBilling()
+  Endif
+
+  optTest.Value = True
+  $ItemType = "Test"
+  GetSelectList($ItemType)
+
+End
+
+Public Sub optTest_Click()
+
+  lstletter.Clear()
+  $ItemType = "Test"
+  GetSelectList($ItemType)
+
+End
+
+Public Sub optService_Click()
+
+  lstletter.Clear()
+  $ItemType = "Service"
+  GetSelectList($ItemType)
+
+End
+
+Public Sub optProcedure_Click()
+
+  lstletter.Clear()
+  $ItemType = "Procedure"
+  GetSelectList($ItemType)
+
+End
+
+Public Sub optRadio_Click()
+
+  lstletter.Clear()
+  $ItemType = "Radio"
+  GetSelectList($ItemType)
+
+End
+
+Public Sub optEquipment_Click()
+
+  lstletter.Clear()
+  $ItemType = "Equipment"
+  GetSelectList($ItemType)
+
+End
+
+Public Sub optOthers_Click()
+
+  lstletter.Clear()
+  $ItemType = "Others"
+  GetSelectList($ItemType)
+
+End
+
+Public Sub txtsearch_Change()
+
+  GetSelectList($ItemType)
+
+End
+
+Private Sub GetSelectList(sType As String)
+
+  $rData1 = modDatabase.$myConn.Exec("select flditemname,flditemcost from tblservicecost where flditemtype=&1 and (fldgroup=&2 or fldgroup=&4) and fldstatus=&3 and fldpatentry=&5 and lower(flditemname) like &6" & " ORDER BY flditemname ASC", modNonMedical.GetBillItemCategoryFromCombo(sType), $billMode, "Active", "%", True, LCase(txtsearch.Text) & "%")                                                           ''
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(cmbitem, $rData1, $aMyFields1)
+  If $rData1.Available Then
+    $ItemList = $rData1.All("flditemname")
+    If Not lstletter.Count Then
+      lstletter.List = modString.GetFirstLetterArray($ItemList)
+    Endif
+  Endif
+
+  With cmbitem
+    .Columns[0].Expand = True
+    .Columns[1].Width = CStr(50 * modBasic.$AppWidthRatio) & "px"
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Rate"
+  End With
+
+End
+
+Public Sub cmbitem_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData1.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  Data.Text = $rData1[$aMyFields1[Column]]
+
+End
+
+Public Sub btnaddimage_Click()
+
+  Dim sPath As String
+  Dim sLongID As Long
+
+  If WebButtonBox1.Text Then
+    modImage.StretchtPictureToBox(PictureBox1, WebButtonBox1.Text)
+
+    ''on save
+    sPath = PictureBox1.Tag
+    $FileID = $encid & "-" & modString.GetDateString(Now())
+    sLongID = modImage.SavePatientFileGeneral($encid, "PatientOrderSheet", $FileID, sPath, False)    ''
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+  Endif
+
+End
+
+''============================= BILLING ============================
+Private Sub SetBillingParam()
+
+  Dim resx As Result
+  Dim xledger As String
+
+  resx = modDatabase.$myConn.Exec("select fldmode,fldbillingmode,fldacledger,fldbilltype,fldreference,fldlimit from tbldiscount where fldtype=&1", $DiscPackage)
+  If resx.Available Then
+    ''billingmode
+    If resx["fldbillingmode"] Then
+      $billMode = resx["fldbillingmode"]
+    Else
+      $billMode = modBasic.$BillDefaultMode
+    Endif
+    ''ledger A/C
+    xledger = resx["fldacledger"]
+    If xledger Then
+      $ACLedger = xledger
+    Endif
+    ''BillType
+    $xbilltype = resx["fldbilltype"]
+  Endif
+  If Not $xbilltype Then
+    If $ACLedger Then
+      $xbilltype = modNonMedical.GetDefaultACBillType($ACLedger)
+    Endif
+  Endif
+
+End
+
+Public Sub lstletter_Select()
+
+  txtsearch.Text = lstletter.Text
+  ' cmbitem.List = modString.SelectStringArrayToText(lstletter.Text, $ItemList, False)
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim xtax As Float
+  Dim xdisc As Float
+  Dim xtype As String
+
+  If $billAllow = True Then
+    If $FileID Then
+      If $ItemType And If cmbitem.Selection.Count Then
+        $rData1.MoveTo(cmbitem.Selection[0])
+        xtype = modNonMedical.GetBillItemCategoryFromCombo($ItemType)
+        If $DiscPackage Then
+          xdisc = modNonMedical.DiscPercentForCategoryValue($encid, $DiscPackage, xtype, $rData1["flditemcost"], $billMode)
+        Endif
+        xtax = modNonMedical.ShowTaxValues(xtype, $rData1["flditemcost"])
+
+        modBillings.ServiceBillBlank($encid, $xbilltype, $billMode, $DiscPackage, $ACLedger, $ItemType, $rData1["flditemcost"], 1, xtax, xdisc, "Requested", 0, False, False, "", "", $FileID)
+        SHowRequestedBilling()
+      Endif
+    Endif
+  Else
+    Message.Warning("Request not allowed", "OK")
+  Endif
+
+End
+
+Private Sub SHowRequestedBilling()
+
+  Dim sql As String
+  Dim xtot As Float
+  Dim sBiList As String[]
+  Dim xbill As String
+  Dim xpaid As Float
+
+  sql = "select fldid,fldordtime,flditemtype,fldextracol,flditemname,flditemrate,flditemqty,flddiscper,fldtaxper,fldditemamt,fldtaxamt,flddiscamt,fldbillingmode,fldsample,fldreason,fldbilltype,flddisctype,fldacledger,fldextracol from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp like &4 and fldstatus=&5 and flditemqty>&6 ORDER BY fldid DESC"
+  $rData = modDatabase.$myConn.Exec(sql, $encid, False, False, modBasic.$compID, "Requested", 0)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(WebTable1, $rData, $aMyFields)
+
+  xtot = 0
+  For Each $rData
+    xtot = xtot + $rData["fldditemamt"]
+  Next
+  txttotal.Value = xtot
+
+  xpaid = 0
+  sBiList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldextracol) as col from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp like &4 and fldstatus=&5 and flditemqty>&6 and fldextracol like &7", $encid, False, False, modBasic.$compID, "Requested", 0, "%"))
+  For Each xbill In sBiList
+    xpaid = xpaid + modNonMedical.GetWebPaidAmt(xbill, $encid)
+  Next
+  txtpaid.Value = xpaid
+
+  With WebTable1
+    .Columns[3].Text = "Reference"
+    .Columns[4].Text = "Particulars"
+    .Columns[5].Text = "Rate"
+    .Columns[6].Text = "QTY"
+    .Columns[7].Text = "Disc%"
+    .Columns[8].Text = "Tax%"
+    .Columns[9].Text = "Total"
+    .Columns[14].Text = "Index"
+    .Columns[15].Text = "Mode"
+    .Columns[16].Text = "Package"
+    .Columns[17].Text = "Account"
+
+    .Columns[0].Hidden = True
+    .Columns[1].Hidden = True
+    .Columns[2].Hidden = True
+    .Columns[3].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[4].Width = CStr(300 * modBasic.$AppWidthRatio) & "px"
+    .Columns[5].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+    .Columns[6].Width = CStr(50 * modBasic.$AppWidthRatio) & "px"
+    .Columns[7].Width = CStr(50 * modBasic.$AppWidthRatio) & "px"
+    .Columns[8].Width = CStr(50 * modBasic.$AppWidthRatio) & "px"
+    .Columns[9].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[10].Hidden = True
+    .Columns[11].Hidden = True
+    .Columns[12].Hidden = True
+    .Columns[13].Hidden = True
+    .Columns[14].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[15].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+    .Columns[16].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[17].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[18].Hidden = True
+  End With
+
+End
+
+Public Sub WebTable1_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 1 Then
+    Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 18 Then
+    Data.Text = modGeneral.GetUserFullName($rData[$aMyFields[Column]])
+  Else If Column = 19 Then
+    Data.Text = modGeneral.GetUserFullName($rData[$aMyFields[Column]])
+  Else
+    Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub btndelete_Click()
+
+  If WebTable1.Selection.Count Then
+    $rData.MoveTo(WebTable1.Selection[0])
+    modDatabase.$myConn.Delete("tblpatbilling", "fldid=&1 and fldextracol IS NULL", $rData["fldid"])
+    SHowRequestedBilling()
+  Endif
+
+End
+
+''================== Payment ===========
+Public Sub btnpayment_Click()
+
+  Dim sql As String
+  Dim res As Result
+
+  Dim $billno As String
+  Dim xamt As Float
+
+  Dim xpay As String
+  Dim xIdList As String[]
+  Dim xtot As Float
+
+  xamt = txttotal.Value - txtpaid.Value
+  $billno = "WEB-" & CStr(modBillLock.CurrentWebPayment())
+  If $billno Then
+    If xamt Then
+
+      sql = "select fldid from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp like &4 and fldstatus=&5 and flditemqty>&6 and fldextracol IS NULL"
+      res = modDatabase.$myConn.Exec(sql, $encid, False, False, modBasic.$compID, "Requested", 0)
+      xIdList = New String[]
+      If res.Available Then
+        For Each res
+          xIdList.Add(CStr(res["fldid"]))
+        Next
+      Endif
+
+      modDatabase.$myConn.Begin
+      xpay = WebPayment($encid, $billno, xIdList.Join(";"), $FileID, xamt)
+      xtot = modNonMedical.GetWebPaidAmt($billno, $encid)
+      If xtot Then
+        UpdateWithBill($billno)
+        modDatabase.$myConn.Commit
+      Else
+        modDatabase.$myConn.Rollback
+      Endif
+
+    Else
+      modDatabase.$myConn.Begin
+      UpdateWithBill($billno)
+      modDatabase.$myConn.Commit
+
+    Endif
+  Endif
+  SHowRequestedBilling()
+
+Catch
+  modDatabase.$myConn.Rollback
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub UpdateWithBill(sBillNo As String)
+
+  Dim sql As String
+  Dim res As Result
+  Dim res1 As Result
+
+  sql = "select fldid from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp like &4 and fldstatus=&5 and flditemqty>&6 and fldextracol IS NULL"
+  res = modDatabase.$myConn.Exec(sql, $encid, False, False, modBasic.$compID, "Requested", 0)
+  If res.Available Then
+    For Each res
+      res1 = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", res["fldid"])
+      res1["fldextracol"] = sBillNo
+      res1.Update
+    Next
+  Endif
+
+End

@@ -1,0 +1,177 @@
+' Gambas class file
+
+Private $encid As String
+Private tempFile As String
+Private drwchart As SvgImage
+
+Private drwHt As Integer
+Private maxobs As Float
+Private minobs As Float
+Private xdate As Date
+Private dcons As Float
+Private mul As Float
+Private nul As Float
+Private xdf As Float
+
+Public Sub _new(encid As String, sHeight As Integer, min_date As Float, max_date As Float, min_y As Float, max_y As Float)                       ''
+
+  Dim xhr As String
+  Dim diffhr As Float
+  Dim xadmis As Date
+
+  Dim xdiff As Float
+  Dim k As Integer
+  Dim dt As String
+
+  Dim wid As Float
+  Dim i As Integer
+
+  $encid = encid
+  tempFile = Temp() & ".svg"
+
+  drwHt = sHeight
+  xhr = modSettings.ShowSettingFromFIle("ClinicalChart/HourDifference")
+  If xhr Then
+    xdf = CInt(xhr) / 60
+  Else
+    xdf = 0.25
+  Endif
+
+  xadmis = modPatient.GetAdmissionDate(encid)
+  If xadmis Then
+    xdate = xadmis
+  Else
+    xdate = modPatient.GetRecordDate(encid)
+  Endif
+
+  maxobs = max_y
+  minobs = min_y
+
+  If maxobs = minobs Then
+    mul = drwHt / 2
+  Else
+    mul = (drwHt - 30) / (maxobs - minobs)
+    nul = 15
+  Endif
+
+  dcons = Floor((DateDiff(modDate.StartSqlDate(xdate), min_date, gb.Minute)) / 1440) * 1440
+  diffhr = DateDiff(modDate.StartSqlDate(xdate), max_date, gb.Minute) - dcons
+  xdiff = Fix(diffhr / 60)
+
+  If diffhr < 1440 Then
+    diffhr = 1440
+  Endif
+  wid = (xdf * (diffhr + 6)) + 50 'multiply x-coordinate by 20 for clear view
+
+  drwchart = New SvgImage(wid, drwHt)
+  Paint.Begin(drwchart)
+
+  If modBasic.$ClinChartShowHourGrid = "Yes" Then
+    Paint.Font.Size = 10
+    For i = 0 To xdiff + 6
+      If Frac(i / 24) = 0 Then
+        Paint.LineWidth = 1
+        If modBasic.$ClinColorDayGrid Then
+          Paint.Brush = Paint.Color(modBasic.$ClinColorDayGrid)
+        Else
+          Paint.Brush = Paint.Color(Color.Green)
+        Endif
+      Else
+        Paint.LineWidth = 0.25
+        If modBasic.$ClinColorHourGrid Then
+          Paint.Brush = Paint.Color(modBasic.$ClinColorHourGrid)
+        Else
+          Paint.Brush = Paint.Color(Color.Blue)
+        Endif
+      Endif
+      Paint.MoveTo(i * 60 * xdf, 0)
+      Paint.LineTo(i * 60 * xdf, drwchart.Height)
+      Paint.Stroke
+    Next
+  Endif
+
+  If modBasic.$ClinChartShowGridLabel = "Yes" Then
+    If modBasic.$ClinColorGridLabel Then
+      Paint.Brush = Paint.Color(modBasic.$ClinColorGridLabel)
+    Else
+      Paint.Brush = Paint.Color(Color.Blue)
+    Endif
+    Paint.LineWidth = 0.25
+    Paint.Font.Size = 10
+    For k = 0 To xdiff + 6
+      If k = 0 Then
+        dt = "D:" & CStr(k + (dcons / 1440) + 1)
+      Else If Frac(k / 24) = 0 Then
+        dt = "D:" & CStr(k / 24 + (dcons / 1440) + 1)
+      Else
+        dt = "" ' "H:" & k
+      Endif
+      Paint.Text(dt, k * 60 * xdf, drwchart.Height - 2)
+    Next
+    Paint.Fill
+  Endif
+
+End
+
+Public Sub AddData(pointsArr_x As Date[], pointsArr_y As Float[], xLinecolor As Integer)
+
+  Dim sVal As Integer
+  Dim xVal As Integer
+  Dim i As Integer
+
+  'main chart
+  Paint.Brush = Paint.Color(xLinecolor)
+  Paint.LineWidth = 2
+  Paint.Font.Size = 10
+  For i = 0 To pointsArr_x.Max
+    xVal = DateDiff(modDate.StartSqlDate(xdate), pointsArr_x[i], gb.Minute) - dcons
+    sVal = drwHt - (mul * (pointsArr_y[i] - minobs) + nul)
+    If i = 0 Then
+      Paint.MoveTo(xdf * xVal, sVal)
+    Else
+      Paint.LineTo(xdf * xVal, sVal)
+    Endif
+  Next
+  Paint.Stroke
+
+  'numbers
+  If modBasic.$ClinChartShowLabel = "No" Then
+  Else
+    If modBasic.$ClinColorLabel Then
+      Paint.Brush = Paint.Color(modBasic.$ClinColorLabel)
+    Else
+      Paint.Brush = Paint.Color(Color.Black)
+    Endif
+    For i = 0 To pointsArr_x.Max
+      xVal = DateDiff(modDate.StartSqlDate(xdate), pointsArr_x[i], gb.Minute) - dcons
+      sVal = drwHt - (mul * (pointsArr_y[i] - minobs) + nul)
+      Paint.Text(pointsArr_y[i], xdf * xVal, sVal - 3)
+    Next
+    Paint.Fill
+  Endif
+
+  'points
+  If modBasic.$ClinChartShowPoint = "No" Then
+  Else
+    If modBasic.$ClinColorPoints Then
+      Paint.Brush = Paint.Color(modBasic.$ClinColorPoints)
+    Else
+      Paint.Brush = Paint.Color(Color.Black)
+    Endif
+    For i = 0 To pointsArr_x.Max
+      xVal = DateDiff(modDate.StartSqlDate(xdate), pointsArr_x[i], gb.Minute) - dcons
+      sVal = drwHt - (mul * (pointsArr_y[i] - minobs) + nul)
+      Paint.Arc(xdf * xVal, sVal, 3)
+    Next
+    Paint.Fill
+  Endif
+
+End
+
+Public Function ProduceImage() As String
+
+  Paint.End()
+  drwchart.Save(tempFile)
+  Return tempFile
+
+End

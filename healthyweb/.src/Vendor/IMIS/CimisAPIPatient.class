@@ -1,0 +1,214 @@
+' Gambas class file
+
+Private $xAuthString As String
+Private $HeadString As String
+
+Private $PatCode As String
+Private $PatName As String
+Private $PatSurName As String
+Private $PatGender As String
+Private $PatContact As String
+Private $PatEmail As String
+Private $PatDOB As Date
+Private $PatDistrict As String
+Private $PatFSPoint As String
+Private $PatImage As String
+
+Private Sub SetAuthentication()
+
+  If modBasic.$IMISQuote = "Yes" Then
+    $xAuthString = "'" & modBasic.$IMISUser & ":" & modBasic.$IMISPass & "'"
+  Else
+    $xAuthString = modBasic.$IMISUser & ":" & modBasic.$IMISPass
+  Endif
+  $HeadString = "remote-user:" & modBasic.$IMISRemoUser
+
+End
+
+Public Sub _new(sPatcode As String)
+
+  $PatCode = sPatcode
+  GetIMISPatientDetails()
+
+End
+
+''--------------------------- Patient URL ------------------------
+Private Function GetPatientDetailIMIS(sPatCode As String) As Variant
+
+  Dim acmd As String
+  Dim xurl As String
+  Dim xpatout As String
+  Dim xResColl As Collection
+  Dim xVarPat As Variant[]
+  Dim xhead As String
+
+  SetAuthentication()
+  xurl = modBasic.$IMISPatientURL &/ "?identifier=" & sPatCode
+
+  xhead = Space(1)
+  If modBasic.$IMISCACert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If modBasic.$IMISAgent Then
+    xhead = xhead & "-A " & modBasic.$IMISAgent & Space(1)
+  Endif
+
+  acmd = "curl" & xhead & "-u " & $xAuthString & " -H " & Quote($HeadString) & " -X GET " & xurl
+  modBasic.DebugAPIString(Replace("Execute " & acmd, $xAuthString, "****"))
+  Shell acmd To xpatout
+  modBasic.DebugAPIString("Response: " & xpatout)
+
+  If xpatout Then
+    Try xResColl = JSON.Decode(xpatout)
+    If xResColl Then
+      xVarPat = xResColl["entry"]
+      Return xVarPat
+    Else
+      Message.Warning("Error in getting data", "OK")
+    Endif
+  Else
+    Message.Warning("No Response from server", "OK")
+  Endif
+
+End
+
+Private Sub GetIMISPatientDetails()
+
+  Dim xVarPat As Variant[]
+  Dim xPatNames As Variant[]
+  Dim xPatConts As Variant[]
+  Dim xcont As Variant
+
+  Dim xgender As String
+  Dim xname As String
+  Dim xsurname As String
+  Dim xdateob As String
+
+  Dim xexten As Variant[]
+  Dim xcoll As Collection
+  Dim xdistrict As String
+  Dim xfirserv As String
+  Dim ximage As String
+  Dim xPath As String
+
+  xVarPat = GetPatientDetailIMIS($PatCode)
+  If xVarPat Then
+    xdateob = xVarPat[0]["resource"]["birthDate"]
+    If xdateob Then
+      $PatDOB = modDate.GetDateFromJSON(xdateob)
+    Endif
+
+    xgender = xVarPat[0]["resource"]["gender"]
+    If xgender Then
+      $PatGender = String.UCaseFirst(xgender)
+    Endif
+
+    xPatNames = xVarPat[0]["resource"]["name"]
+    xname = xPatNames[0]["given"][0]
+    If xname Then
+      $PatName = String.UCaseFirst(xname)
+    Endif
+    xsurname = xPatNames[0]["family"]
+    If xsurname Then
+      $PatSurName = String.UCaseFirst(xsurname)
+    Endif
+
+    xPatConts = xVarPat[0]["resource"]["telecom"]
+    For Each xcont In xPatConts
+      If xcont["system"] = "phone" Then
+        $PatContact = xcont["value"]
+        Break
+      Endif
+      If xcont["system"] = "email" Then
+        $PatEmail = xcont["value"]
+        Break
+      Endif
+    Next
+
+    xexten = xVarPat[0]["resource"]["extension"]
+    For Each xcoll In xexten
+      If xcoll["url"] = "https://hib.gov.np/fhir/FHIE+extension+Profile+District" Then
+        xdistrict = xcoll["valueString"]
+        If xdistrict Then
+          $PatDistrict = xdistrict
+        Endif
+      Else If xcoll["url"] = "https://hib.gov.np/fhir/FHIE+extension+Profile+FSP" Then
+        xfirserv = xcoll["valueString"]
+        If xfirserv Then
+          $PatFSPoint = xfirserv
+        Endif
+      Else If xcoll["url"] = "https://hib.gov.np/fhir/FHIE+extension+Profile+Photo+Url" Then
+        ximage = xcoll["valueString"]
+        If ximage Then
+          If File.Ext(ximage) Then
+            xPath = Temp() & "." & File.Ext(ximage)
+          Else
+            xPath = Temp()
+          Endif
+          modDevAll.GetWgetDownload(ximage, xPath)
+          If Exist(xPath) Then
+            $PatImage = xPath
+          Endif
+        Endif
+      Endif
+    Next
+
+  Else
+    Message.Warning("Error in Decoding data", "OK")
+  Endif
+
+End
+
+Public Function GetPatientName() As String
+
+  Return $PatName
+
+End
+
+Public Function GetPatientSurName() As String
+
+  Return $PatSurName
+
+End
+
+Public Function GetPatientGender() As String
+
+  Return $PatGender
+
+End
+
+Public Function GetPatientContact() As String
+
+  Return $PatContact
+
+End
+
+Public Function GetPatientEmail() As String
+
+  Return $PatEmail
+
+End
+
+Public Function GetPatientDateBirth() As Date
+
+  Return $PatDOB
+
+End
+
+Public Function GetPatientDistrict() As String
+
+  Return $PatDistrict
+
+End
+
+Public Function GetPatientFirstService() As String
+
+  Return $PatFSPoint
+
+End
+
+Public Function GetPatientImage() As String
+
+  Return $PatImage
+
+End

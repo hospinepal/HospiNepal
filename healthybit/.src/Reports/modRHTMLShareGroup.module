@@ -1,0 +1,1775 @@
+' Gambas module file
+
+Private $ProgressBar1 As ProgressBar
+
+''-------------------------------- Sharing Reports ---------------------------------------------------------
+Public Function SharingPaymentTaxwiseGROUP(xState As String, $con As Connection, CategType As String, dt1 As Date, dt2 As Date, xcateg As String, UsrType As String, sInvoiced As Boolean, sPackage As String, TotalFormat As String, xuserList As String[], sInput As String, sMode As String, sOpIP As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xpay As Float
+  Dim xshare As Float
+  Dim xtax As Float
+  Dim tot As Float
+  Dim xextr As Float
+  Dim res2 As Result
+
+  Dim upay As Float
+  Dim origshare As Float
+  Dim ushare As Float
+  Dim utax As Float
+  Dim netot As Float
+  Dim uextr As Float
+
+  Dim apay As Float
+  Dim ashare As Float
+  Dim atax As Float
+  Dim antot As Float
+  Dim aextr As Float
+
+  Dim xuser As String
+  Dim totfld As String
+  Dim totqty As String
+  Dim sql2 As String
+  Dim xgroupbool As Boolean
+  Dim xregist As String
+  Dim xregval As String
+
+  Dim rax As Result
+  Dim retx As Result
+  Dim p As Integer
+  Dim remList As String[]
+
+  Dim xremList As String[]
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  If xState = "Locked" Then
+    xgroupbool = False
+  Else
+    xgroupbool = True
+  Endif
+
+  $BillingReport = New CReportHTML([("SNo"), ("UserID"), ("User Name"), ("PAN No"), ("Account"), ("Total"), ("ShareAmt"), ("ExtraAMT"), ("TDSAmt"), ("NetAMT")], "", "")
+  $BillingReport.UserData.Add(UCase(UsrType) & " SHARE : " & " CATEGORY : " & xcateg & " FORMAT: " & TotalFormat & " PACKAGE: " & sPackage & " MODE: " & sMode & " SOURCE: " & sInput, "PARAM1")
+  $BillingReport.UserData.Add(UCase(xState) & " : " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & Space(2) & " STATE: " & sOpIP, "PARAM2")
+
+  apay = 0
+  ashare = 0
+  atax = 0
+  antot = 0
+  aextr = 0
+  p = 0
+  remList = New String[]
+
+  rax = $con.Exec("select distinct(fldtaxpercent) as col from tblstafflist ORDER BY fldtaxpercent")
+  If rax.Available Then
+    For Each rax
+
+      i = 0
+      retx = $con.Exec("select flduserid from tblstafflist where fldtaxpercent=&1", rax["col"])
+      If retx.Available Then
+        If rax["col"] = Null Then
+          $BillingReport.AddChapter("TDS% : NULL")
+        Else
+          $BillingReport.AddChapter("TDS% : " & CStr(rax["col"]))
+        Endif
+
+        For Each retx
+          xuser = retx["flduserid"]
+          If xuser Then
+            If xuserList.Exist(xuser) = True And If remList.Exist(xuser) = False Then
+              remList.Add(xuser)
+
+              xpay = 0
+              xshare = 0
+              xtax = 0
+              tot = 0
+              xextr = 0
+              If TotalFormat = "SubTotal" Then
+                totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)) as totl"
+              Else If TotalFormat = "NetTotal" Then
+                totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)*(1-tblpatbilling.flddiscper/100)) as totl"
+              Endif
+              totqty = "(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty"
+              If sOpIP = "Any" Then
+                xregist = "" '" and tblpatbilling.fldcurrlocat like &6"
+                xregval = "%"
+              Else If sOpIP = "OPD" Then
+                xregist = " and tblpatbilling.fldcurrlocat in(select flddept from tbldepartment where fldcateg<>&6)"
+                xregval = "Patient Ward"
+              Else If sOpIP = "IPD" Then
+                xregist = " and tblpatbilling.fldcurrlocat in(select fldbed from tbldepartmentbed where flddept in(select flddept from tbldepartment where fldcateg like &6)"
+                xregval = "Patient Ward"
+              Endif
+
+              If CategType = "Category" Then
+                If sInvoiced = True Then
+                  sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+                Else
+                  sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+                Endif
+              Else If CategType = "Group" Then
+                If sInvoiced = True Then
+                  sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+                Else
+                  sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+                Endif
+              Endif
+              res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), UsrType, xgroupbool, 0)
+
+              If res2.Available = True Then
+                For Each res2
+                  upay = 0
+                  origshare = 0
+                  ushare = 0
+                  utax = 0
+                  netot = 0
+                  uextr = 0
+                  upay = res2["totl"]
+                  If sInput = "Percent" Then
+                    ushare = res2["totl"] * modSharingGroup.GetUserPayPercentGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+                  Else If sInput = "Amount" Then
+                    origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup(xState, $con, res2["tblpatgenshare.fldid"])
+                    ushare = origshare * (1 - (res2["flddiscper"] / 100))
+                  Endif
+                  uextr = res2["fldchange"]
+                  utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+                  netot = (ushare + uextr) - utax
+
+                  xpay = xpay + upay
+                  xshare = xshare + ushare
+                  xextr = xextr + uextr
+                  xtax = xtax + utax
+                  tot = tot + netot
+                Next
+              Endif
+
+              apay = apay + xpay
+              ashare = ashare + xshare
+              aextr = aextr + xextr
+              atax = atax + xtax
+              antot = antot + tot
+              ''total for each user
+              With asx
+                .Add(CStr(i + 1))
+                .Add(xuser)
+                .Add(modGeneral.GetUserFullName(xuser))
+                .Add(modGeneral.GetStaffPanIdent(xuser))
+                .Add(modGeneral.GetStaffAccountRelig(xuser))
+                .Add(modReportVar.GetLocaleNumberFormat(xpay, gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(xshare, gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(xextr, gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+              i = i + 1
+
+            Endif
+          Endif
+        Next
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (rax.Index + 1) / rax.Count
+        Wait
+      Endif
+      p = p + 1
+    Next  ''tax
+  Endif
+
+  ''not included
+  xremList = modString.GetRemainingArray(xuserList, remList)
+  If xremList.Count Then
+    $BillingReport.AddChapter("USER NOT SET")
+    i = 0
+    For Each xuser In xremList
+      xpay = 0
+      xshare = 0
+      xtax = 0
+      tot = 0
+      xextr = 0
+      If TotalFormat = "SubTotal" Then
+        totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)) as totl"
+      Else If TotalFormat = "NetTotal" Then
+        totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)*(1-tblpatbilling.flddiscper/100)) as totl"
+      Endif
+      totqty = "(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty"
+      If sOpIP = "Any" Then
+        xregist = "" '" and tblpatbilling.fldcurrlocat like &6"
+        xregval = "%"
+      Else If sOpIP = "OPD" Then
+        xregist = " and tblpatbilling.fldcurrlocat in(select flddept from tbldepartment where fldcateg<>&6)"
+        xregval = "Patient Ward"
+      Else If sOpIP = "IPD" Then
+        xregist = " and tblpatbilling.fldcurrlocat in(select fldbed from tbldepartmentbed where flddept in(select flddept from tbldepartment where fldcateg like &6)"
+        xregval = "Patient Ward"
+      Endif
+
+      If CategType = "Category" Then
+        If sInvoiced = True Then
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Else
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Endif
+      Else If CategType = "Group" Then
+        If sInvoiced = True Then
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Else
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Endif
+      Endif
+      res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), UsrType, xgroupbool, 0)
+
+      If res2.Available = True Then
+        For Each res2
+          upay = 0
+          origshare = 0
+          ushare = 0
+          utax = 0
+          netot = 0
+          uextr = 0
+          upay = res2["totl"]
+          If sInput = "Percent" Then
+            ushare = res2["totl"] * modSharingGroup.GetUserPayPercentGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+          Else If sInput = "Amount" Then
+            origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup(xState, $con, res2["tblpatgenshare.fldid"])
+            ushare = origshare * (1 - (res2["flddiscper"] / 100))
+          Endif
+          uextr = res2["fldchange"]
+          utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+          netot = (ushare + uextr) - utax
+
+          xpay = xpay + upay
+          xshare = xshare + ushare
+          xextr = xextr + uextr
+          xtax = xtax + utax
+          tot = tot + netot
+        Next
+      Endif
+
+      apay = apay + xpay
+      ashare = ashare + xshare
+      aextr = aextr + xextr
+      atax = atax + xtax
+      antot = antot + tot
+      ''total for each user
+      With asx
+        .Add(CStr(i + 1))
+        .Add(xuser)
+        .Add(modGeneral.GetUserFullName(xuser))
+        .Add(modGeneral.GetStaffPanIdent(xuser))
+        .Add(modGeneral.GetStaffAccountRelig(xuser))
+        .Add(modReportVar.GetLocaleNumberFormat(xpay, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xshare, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xextr, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next
+  Endif
+
+  With asx
+    .Add("")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add("")
+    .Add("") ''modReportVar.GetLocaleNumberFormat(apay, gb.Currency)
+    .Add(modReportVar.GetLocaleNumberFormat(ashare, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(aextr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(antot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function SharingPaymentPreciseGROUP(xState As String, $con As Connection, CategType As String, dt1 As Date, dt2 As Date, xcateg As String, UsrType As String, sInvoiced As Boolean, sPackage As String, TotalFormat As String, xuserList As String[], sInput As String, sMode As String, sOpIP As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xpay As Float
+  Dim xshare As Float
+  Dim xtax As Float
+  Dim tot As Float
+  Dim xextr As Float
+  Dim res2 As Result
+
+  Dim upay As Float
+  Dim origshare As Float
+  Dim ushare As Float
+  Dim utax As Float
+  Dim netot As Float
+  Dim uextr As Float
+
+  Dim apay As Float
+  Dim ashare As Float
+  Dim atax As Float
+  Dim antot As Float
+  Dim aextr As Float
+
+  Dim xuser As String
+  Dim totfld As String
+  Dim totqty As String
+  Dim sql2 As String
+  Dim xgroupbool As Boolean
+  Dim xregist As String
+  Dim xregval As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  If xState = "Locked" Then
+    xgroupbool = False
+  Else
+    xgroupbool = True
+  Endif
+
+  $BillingReport = New CReportHTML([("SNo"), ("UserID"), ("User Name"), ("PAN No"), ("Account"), ("Total"), ("ShareAmt"), ("ExtraAMT"), ("TDSAmt"), ("NetAMT")], "", "")
+  $BillingReport.UserData.Add(UCase(UsrType) & " SHARE : " & " CATEGORY : " & xcateg & " FORMAT: " & TotalFormat & " PACKAGE: " & sPackage & " MODE: " & sMode & " SOURCE: " & sInput, "PARAM1")
+  $BillingReport.UserData.Add(UCase(xState) & " : " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & Space(2) & " STATE: " & sOpIP, "PARAM2")
+
+  apay = 0
+  ashare = 0
+  atax = 0
+  antot = 0
+  aextr = 0
+  i = 0
+  For Each xuser In xuserList
+    If xuser Then
+      xpay = 0
+      xshare = 0
+      xtax = 0
+      tot = 0
+      xextr = 0
+
+      If TotalFormat = "SubTotal" Then
+        totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)) as totl"
+      Else If TotalFormat = "NetTotal" Then
+        totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)*(1-tblpatbilling.flddiscper/100)) as totl"
+      Endif
+      totqty = "(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty"
+      If sOpIP = "Any" Then
+        xregist = "" '" and tblpatbilling.fldcurrlocat like &6"
+        xregval = "%"
+      Else If sOpIP = "OPD" Then
+        xregist = " and tblpatbilling.fldcurrlocat in(select flddept from tbldepartment where fldcateg<>&6)"
+        xregval = "Patient Ward"
+      Else If sOpIP = "IPD" Then
+        xregist = " and tblpatbilling.fldcurrlocat in(select fldbed from tbldepartmentbed where flddept in(select flddept from tbldepartment where fldcateg like &6)"
+        xregval = "Patient Ward"
+      Endif
+
+      If CategType = "Category" Then
+        If sInvoiced = True Then
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Else
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Endif
+      Else If CategType = "Group" Then
+        If sInvoiced = True Then
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Else
+          sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+        Endif
+      Endif
+      res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), UsrType, xgroupbool, 0)
+
+      If res2.Available = True Then
+        For Each res2
+          upay = 0
+          origshare = 0
+          ushare = 0
+          utax = 0
+          netot = 0
+          uextr = 0
+          upay = res2["totl"]
+          If sInput = "Percent" Then
+            ushare = res2["totl"] * modSharingGroup.GetUserPayPercentGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+          Else If sInput = "Amount" Then
+            origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup(xState, $con, res2["tblpatgenshare.fldid"])
+            ushare = origshare * (1 - (res2["flddiscper"] / 100))
+          Endif
+          uextr = res2["fldchange"]
+          utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+          netot = (ushare + uextr) - utax
+
+          xpay = xpay + upay
+          xshare = xshare + ushare
+          xextr = xextr + uextr
+          xtax = xtax + utax
+          tot = tot + netot
+        Next
+      Endif
+
+      apay = apay + xpay
+      ashare = ashare + xshare
+      aextr = aextr + xextr
+      atax = atax + xtax
+      antot = antot + tot
+      ''total for each user
+      With asx
+        .Add(CStr(i + 1))
+        .Add(xuser)
+        .Add(modGeneral.GetUserFullName(xuser))
+        .Add(modGeneral.GetStaffPanIdent(xuser))
+        .Add(modGeneral.GetStaffAccountRelig(xuser))
+        .Add(modReportVar.GetLocaleNumberFormat(xpay, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xshare, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xextr, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / xuserList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add("")
+    .Add("") ''modReportVar.GetLocaleNumberFormat(apay, gb.Currency)
+    .Add(modReportVar.GetLocaleNumberFormat(ashare, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(aextr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(antot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function SharingCategPaymentSummaryGROUP(xState As String, $con As Connection, CategType As String, dt1 As Date, dt2 As Date, categorylst As String[], UsrType As String, sInvoiced As Boolean, sPackage As String, TotalFormat As String, xuserList As String[], sInput As String, sMode As String, sOpIP As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xpay As Float
+  Dim xshare As Float
+  Dim xtax As Float
+  Dim tot As Float
+  Dim xextr As Float
+  Dim i As Integer
+  Dim xgroupbool As Boolean
+
+  Dim gpay As Float
+  Dim gshare As Float
+  Dim gtax As Float
+  Dim gtot As Float
+  Dim gextr As Float
+  Dim xcateg As String
+  Dim res2 As Result
+
+  Dim upay As Float
+  Dim origshare As Float
+  Dim ushare As Float
+  Dim utax As Float
+  Dim netot As Float
+  Dim uextr As Float
+
+  Dim apay As Float
+  Dim ashare As Float
+  Dim atax As Float
+  Dim antot As Float
+  Dim aextr As Float
+
+  Dim xuser As String
+  Dim totfld As String
+  Dim totqty As String
+  Dim sql2 As String
+
+  Dim xregist As String
+  Dim xregval As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  If xState = "Locked" Then
+    xgroupbool = False
+  Else
+    xgroupbool = True
+  Endif
+
+  $BillingReport = New CReportHTML([("UserID"), ("User Name"), ("PAN No"), ("Account"), ("Total"), ("ShareAmt"), ("ExtraAMT"), ("TDSAmt"), ("NetAMT")], "", "")
+  $BillingReport.UserData.Add(UCase(UsrType) & " SHARE : " & " CATEGORY : " & xcateg & " FORMAT: " & TotalFormat & " PACKAGE: " & sPackage & " MODE: " & sMode & " SOURCE: " & sInput, "PARAM1")
+  $BillingReport.UserData.Add(UCase(xState) & " : " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & Space(2) & " STATE: " & sOpIP, "PARAM2")
+
+  apay = 0
+  ashare = 0
+  atax = 0
+  antot = 0
+  aextr = 0
+  i = 0
+  For Each xcateg In categorylst
+    If xcateg Then
+      $BillingReport.AddChapter(xcateg)
+      gpay = 0
+      gshare = 0
+      gtax = 0
+      gtot = 0
+      gextr = 0
+
+      For Each xuser In xuserList
+        xpay = 0
+        xshare = 0
+        xtax = 0
+        tot = 0
+        xextr = 0
+        If TotalFormat = "SubTotal" Then
+          totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)) as totl"
+        Else If TotalFormat = "NetTotal" Then
+          totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)*(1-tblpatbilling.flddiscper/100)) as totl"
+        Endif
+        totqty = "(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty"
+        If sOpIP = "Any" Then
+          xregist = "" '" and tblpatbilling.fldcurrlocat like &6"
+          xregval = "%"
+        Else If sOpIP = "OPD" Then
+          xregist = " and tblpatbilling.fldcurrlocat in(select flddept from tbldepartment where fldcateg<>&6)"
+          xregval = "Patient Ward"
+        Else If sOpIP = "IPD" Then
+          xregist = " and tblpatbilling.fldcurrlocat in(select fldbed from tbldepartmentbed where flddept in(select flddept from tbldepartment where fldcateg like &6)"
+          xregval = "Patient Ward"
+        Endif
+
+        If CategType = "Category" Then
+          If sInvoiced = True Then
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Else
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Endif
+        Else If CategType = "Group" Then
+          If sInvoiced = True Then
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Else
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Endif
+        Endif
+        res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), UsrType, xgroupbool, 0)
+
+        If res2.Available = True Then
+          For Each res2
+            upay = 0
+            origshare = 0
+            ushare = 0
+            utax = 0
+            netot = 0
+            uextr = 0
+
+            upay = res2["totl"]
+            If sInput = "Percent" Then
+              ushare = res2["totl"] * modSharingGroup.GetUserPayPercentGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+            Else If sInput = "Amount" Then
+              origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup(xState, $con, res2["tblpatgenshare.fldid"])
+              ushare = origshare * (1 - (res2["flddiscper"] / 100))
+            Endif
+            uextr = res2["fldchange"]
+            utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+            netot = ushare - utax
+
+            xpay = xpay + upay
+            xshare = xshare + ushare
+            xextr = xextr + uextr
+            xtax = xtax + utax
+            tot = tot + netot
+          Next
+        Endif
+
+        'for each category
+        gpay = gpay + xpay
+        gshare = gshare + xshare
+        gextr = gextr + xextr
+        gtax = gtax + xtax
+        gtot = gtot + tot
+        If xpay Then
+          With asx
+            .Add(xuser)
+            .Add(modGeneral.GetUserFullName(xuser))
+            .Add(modGeneral.GetStaffPanIdent(xuser))
+            .Add(modGeneral.GetStaffAccountRelig(xuser))
+            .Add(modReportVar.GetLocaleNumberFormat(xpay, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xshare, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xextr, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+      Next
+
+      apay = apay + gpay
+      ashare = ashare + gshare
+      aextr = aextr + gextr
+      atax = atax + gtax
+      antot = antot + gtot
+      ''total for each user
+      With asx
+        .Add("")
+        .Add(modString.HTMLBlankSpace(5) & xcateg)
+        .Add("")
+        .Add("")
+        .Add("") ''modReportVar.GetLocaleNumberFormat(gpay, gb.Currency)
+        .Add(modReportVar.GetLocaleNumberFormat(gshare, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gextr, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gtot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("...")
+        .Add("...")
+        .Add("...")
+        .Add("...")
+        .Add("...")
+        .Add("...")
+        .Add("...")
+        .Add("...")
+        .Add("...")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / categorylst.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add("")
+    .Add("") ''modReportVar.GetLocaleNumberFormat(apay, gb.Currency)
+    .Add(modReportVar.GetLocaleNumberFormat(ashare, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(aextr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(antot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function SharingPaymentSummaryGROUP(xState As String, $con As Connection, CategType As String, dt1 As Date, dt2 As Date, categorylst As String[], UsrType As String, sInvoiced As Boolean, sPackage As String, TotalFormat As String, xuserList As String[], sInput As String, sMode As String, sOpIP As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xpay As Float
+  Dim xshare As Float
+  Dim xtax As Float
+  Dim tot As Float
+  Dim xextr As Float
+  Dim i As Integer
+  Dim xgroupbool As Boolean
+
+  Dim gpay As Float
+  Dim gshare As Float
+  Dim gtax As Float
+  Dim gtot As Float
+  Dim gextr As Float
+  Dim xcateg As String
+  Dim res2 As Result
+
+  Dim upay As Float
+  Dim origshare As Float
+  Dim ushare As Float
+  Dim utax As Float
+  Dim netot As Float
+  Dim uextr As Float
+
+  Dim apay As Float
+  Dim ashare As Float
+  Dim atax As Float
+  Dim antot As Float
+  Dim aextr As Float
+
+  Dim xuser As String
+  Dim totfld As String
+  Dim totqty As String
+  Dim sql2 As String
+
+  Dim xregist As String
+  Dim xregval As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  If xState = "Locked" Then
+    xgroupbool = False
+  Else
+    xgroupbool = True
+  Endif
+
+  $BillingReport = New CReportHTML([("Particulars"), ("Total"), ("ShareAmt"), ("ExtraAMT"), ("TDSAmt"), ("NetAMT")], "", "")
+  $BillingReport.UserData.Add(UCase(UsrType) & " SHARE : " & " CATEGORY : " & xcateg & " FORMAT: " & TotalFormat & " PACKAGE: " & sPackage & " MODE: " & sMode & " SOURCE: " & sInput, "PARAM1")
+  $BillingReport.UserData.Add(UCase(xState) & " : " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & Space(2) & " STATE: " & sOpIP, "PARAM2")
+
+  apay = 0
+  ashare = 0
+  atax = 0
+  antot = 0
+  aextr = 0
+  i = 0
+  For Each xuser In xuserList
+    If xuser Then
+      $BillingReport.AddChapter(xuser & " [" & modGeneral.GetUserFullName(xuser) & "]")
+      gpay = 0
+      gshare = 0
+      gtax = 0
+      gtot = 0
+      gextr = 0
+
+      For Each xcateg In categorylst
+        xpay = 0
+        xshare = 0
+        xtax = 0
+        tot = 0
+        xextr = 0
+        If TotalFormat = "SubTotal" Then
+          totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)) as totl"
+        Else If TotalFormat = "NetTotal" Then
+          totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)*(1-tblpatbilling.flddiscper/100)) as totl"
+        Endif
+        totqty = "(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty"
+        If sOpIP = "Any" Then
+          xregist = "" '" and tblpatbilling.fldcurrlocat like &6"
+          xregval = "%"
+        Else If sOpIP = "OPD" Then
+          xregist = " and tblpatbilling.fldcurrlocat in(select flddept from tbldepartment where fldcateg<>&6)"
+          xregval = "Patient Ward"
+        Else If sOpIP = "IPD" Then
+          xregist = " and tblpatbilling.fldcurrlocat in(select fldbed from tbldepartmentbed where flddept in(select flddept from tbldepartment where fldcateg like &6)"
+          xregval = "Patient Ward"
+        Endif
+
+        If CategType = "Category" Then
+          If sInvoiced = True Then
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Else
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Endif
+        Else If CategType = "Group" Then
+          If sInvoiced = True Then
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Else
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Endif
+        Endif
+        res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), UsrType, xgroupbool, 0)
+
+        If res2.Available = True Then
+          For Each res2
+            upay = 0
+            origshare = 0
+            ushare = 0
+            utax = 0
+            netot = 0
+            uextr = 0
+
+            upay = res2["totl"]
+            If sInput = "Percent" Then
+              ushare = res2["totl"] * modSharingGroup.GetUserPayPercentGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+            Else If sInput = "Amount" Then
+              origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup(xState, $con, res2["tblpatgenshare.fldid"])
+              ushare = origshare * (1 - (res2["flddiscper"] / 100))
+            Endif
+            uextr = res2["fldchange"]
+            utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+            netot = (ushare + uextr) - utax
+
+            xpay = xpay + upay
+            xshare = xshare + ushare
+            xextr = xextr + uextr
+            xtax = xtax + utax
+            tot = tot + netot
+          Next
+        Endif
+
+        'for each category
+        gpay = gpay + xpay
+        gshare = gshare + xshare
+        gextr = gextr + xextr
+        gtax = gtax + xtax
+        gtot = gtot + tot
+        If xpay Then
+          With asx
+            .Add(xcateg)
+            .Add(modReportVar.GetLocaleNumberFormat(xpay, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xshare, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xextr, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+      Next
+
+      apay = apay + gpay
+      ashare = ashare + gshare
+      aextr = aextr + gextr
+      atax = atax + gtax
+      antot = antot + gtot
+      ''total for each user
+      With asx
+        .Add(modString.HTMLBlankSpace(5) & xuser & " [" & modGeneral.GetUserFullName(xuser) & "]")
+        .Add("")  ''modReportVar.GetLocaleNumberFormat(gpay, gb.Currency)
+        .Add(modReportVar.GetLocaleNumberFormat(gshare, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gextr, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gtot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / xuserList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("GRAND TOTAL")
+    .Add("") ''modReportVar.GetLocaleNumberFormat(apay, gb.Currency)
+    .Add(modReportVar.GetLocaleNumberFormat(ashare, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(aextr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(antot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function SharingPaymentItemSummaryGROUP(xState As String, $con As Connection, CategType As String, dt1 As Date, dt2 As Date, categorylst As String[], UsrType As String, sInvoiced As Boolean, sPackage As String, TotalFormat As String, xuserList As String[], sInput As String, sMode As String, sOpIP As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xpay As Float
+  Dim xshare As Float
+  Dim xtax As Float
+  Dim tot As Float
+  Dim xextr As Float
+  Dim i As Integer
+  Dim xgroupbool As Boolean
+  Dim origshare As Float
+
+  Dim gpay As Float
+  Dim gshare As Float
+  Dim gtax As Float
+  Dim gtot As Float
+  Dim gextr As Float
+  Dim xcateg As String
+  Dim res2 As Result
+
+  Dim upay As Float
+  Dim ushare As Float
+  Dim utax As Float
+  Dim netot As Float
+  Dim uextr As Float
+
+  Dim apay As Float
+  Dim ashare As Float
+  Dim atax As Float
+  Dim antot As Float
+  Dim aextr As Float
+
+  Dim xuser As String
+  Dim totfld As String
+  Dim totqty As String
+  Dim sql2 As String
+
+  Dim xregist As String
+  Dim xregval As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  If xState = "Locked" Then
+    xgroupbool = False
+  Else
+    xgroupbool = True
+  Endif
+
+  $BillingReport = New CReportHTML([("Date"), ("Encounter"), ("Particulars"), ("Rate"), ("Total"), ("ShareAmt"), ("ExtraAMT"), ("TDSAmt"), ("NetAMT"), ("Mode"), ("Invoice"), ("Package")], "", "")
+  $BillingReport.UserData.Add(UCase(UsrType) & " SHARE : " & " CATEGORY : " & xcateg & " FORMAT: " & TotalFormat & " PACKAGE: " & sPackage & " MODE: " & sMode & " SOURCE: " & sInput, "PARAM1")
+  $BillingReport.UserData.Add(UCase(xState) & " : " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & Space(2) & " STATE: " & sOpIP, "PARAM2")
+
+  apay = 0
+  ashare = 0
+  atax = 0
+  antot = 0
+  aextr = 0
+  i = 0
+  For Each xuser In xuserList
+    If xuser Then
+      $BillingReport.AddSection(xuser & " [" & modGeneral.GetUserFullName(xuser) & "]", True)
+      gpay = 0
+      gshare = 0
+      gtax = 0
+      gtot = 0
+      gextr = 0
+
+      For Each xcateg In categorylst
+        xpay = 0
+        xshare = 0
+        xtax = 0
+        tot = 0
+        xextr = 0
+        If TotalFormat = "SubTotal" Then
+          totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)) as totl"
+        Else If TotalFormat = "NetTotal" Then
+          totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)*(1-tblpatbilling.flddiscper/100)) as totl"
+        Endif
+        totqty = "(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty"
+        If sOpIP = "Any" Then
+          xregist = "" '" and tblpatbilling.fldcurrlocat like &6"
+          xregval = "%"
+        Else If sOpIP = "OPD" Then
+          xregist = " and tblpatbilling.fldcurrlocat in(select flddept from tbldepartment where fldcateg<>&6)"
+          xregval = "Patient Ward"
+        Else If sOpIP = "IPD" Then
+          xregist = " and tblpatbilling.fldcurrlocat in(select fldbed from tbldepartmentbed where flddept in(select flddept from tbldepartment where fldcateg like &6)"
+          xregval = "Patient Ward"
+        Endif
+
+        If CategType = "Category" Then
+          If sInvoiced = True Then
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange,tblpatgenshare.fldtime,tblpatgenshare.fldencounterval,tblpatbilling.flditemname,tblpatbilling.flditemrate,tblpatbilling.fldbilltype,tblpatbilling.fldbillno,tblpatbilling.flddisctype", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Else
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange,tblpatgenshare.fldtime,tblpatgenshare.fldencounterval,tblpatbilling.flditemname,tblpatbilling.flditemrate,tblpatbilling.fldbilltype,tblpatbilling.fldbillno,tblpatbilling.flddisctype", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Endif
+        Else If CategType = "Group" Then
+          If sInvoiced = True Then
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange,tblpatgenshare.fldtime,tblpatgenshare.fldencounterval,tblpatbilling.flditemname,tblpatbilling.flditemrate,tblpatbilling.fldbilltype,tblpatbilling.fldbillno,tblpatbilling.flddisctype", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Else
+            sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange,tblpatgenshare.fldtime,tblpatgenshare.fldencounterval,tblpatbilling.flditemname,tblpatbilling.flditemrate,tblpatbilling.fldbilltype,tblpatbilling.fldbillno,tblpatbilling.flddisctype", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}" & xregist & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12}"
+          Endif
+        Endif
+        res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), UsrType, xgroupbool, 0)
+
+        If res2.Available = True Then
+          $BillingReport.AddChapter(xcateg)
+          For Each res2
+            upay = 0
+            origshare = 0
+            ushare = 0
+            utax = 0
+            netot = 0
+            uextr = 0
+            If sInput = "Percent" Then
+              ushare = res2["totl"] * modSharingGroup.GetUserPayPercentGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+            Else If sInput = "Amount" Then
+              origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup(xState, $con, res2["tblpatgenshare.fldid"])
+              ushare = origshare * (1 - (res2["flddiscper"] / 100))
+            Endif
+            uextr = res2["fldchange"]
+            utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+            netot = ushare - utax
+
+            xpay = xpay + upay
+            xshare = xshare + ushare
+            xextr = xextr + uextr
+            xtax = xtax + utax
+            tot = tot + netot
+            With asx
+              .Add(modReportVar.GetDateTimeReport(res2["tblpatgenshare.fldtime"], gb.GeneralDate))
+              .Add(res2["tblpatgenshare.fldencounterval"])
+              .Add(res2["tblpatbilling.flditemname"])
+              .Add(modReportVar.GetLocaleNumberFormat(res2["tblpatbilling.flditemrate"], gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(upay, gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(ushare, gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(uextr, gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(utax, gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(netot, gb.Currency))
+              .Add(res2["tblpatbilling.fldbilltype"])
+              .Add(res2["tblpatbilling.fldbillno"])
+              .Add(res2["tblpatbilling.flddisctype"])
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Next
+
+          'for each category
+          gpay = gpay + xpay
+          gshare = gshare + xshare
+          gextr = gextr + xextr
+          gtax = gtax + xtax
+          gtot = gtot + tot
+          With asx
+            .Add("")
+            .Add("")
+            .Add(xuser & "@" & xcateg)
+            .Add("")
+            .Add("") ''modReportVar.GetLocaleNumberFormat(xpay, gb.Currency)
+            .Add(modReportVar.GetLocaleNumberFormat(xshare, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xextr, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+            .Add("")
+            .Add("")
+            .Add("")
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          With asx
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+
+      Next
+
+      apay = apay + gpay
+      ashare = ashare + gshare
+      aextr = aextr + gextr
+      atax = atax + gtax
+      antot = antot + gtot
+      ''total for each user
+      With asx
+        .Add("")
+        .Add("")
+        .Add("<b>" & xuser & " [" & modGeneral.GetUserFullName(xuser) & "]" & "</b>")
+        .Add("")
+        .Add("") ''modReportVar.GetLocaleNumberFormat(gpay, gb.Currency)
+        .Add(modReportVar.GetLocaleNumberFormat(gshare, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gextr, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(gtot, gb.Currency))
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+        .Add("***")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / xuserList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add("") ''modReportVar.GetLocaleNumberFormat(apay, gb.Currency)
+    .Add(modReportVar.GetLocaleNumberFormat(ashare, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(aextr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(antot, gb.Currency))
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''================ ONLY FOR GROUP SHARING ===============
+Public Function SharingCategPaymentGroupSummaryGROUP(xState As String, $con As Connection, CategType As String, dt1 As Date, dt2 As Date, categorylst As String[], sInvoiced As Boolean, sPackage As String, TotalFormat As String, sInput As String, sMode As String, sOpIP As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xshare As Float
+  Dim xtax As Float
+  Dim tot As Float
+  Dim xextr As Float
+  Dim i As Integer
+  Dim xgroupbool As Boolean
+
+  Dim gshare As Float
+  Dim gtax As Float
+  Dim gtot As Float
+  Dim gextr As Float
+  Dim xcateg As String
+  Dim res2 As Result
+
+  Dim upay As Float
+  Dim origshare As Float
+  Dim ushare As Float
+  Dim utax As Float
+  Dim netot As Float
+  Dim uextr As Float
+
+  Dim ashare As Float
+  Dim atax As Float
+  Dim antot As Float
+  Dim aextr As Float
+
+  Dim xuser As String
+  Dim totfld As String
+  Dim sql2 As String
+
+  Dim res3 As Result
+  Dim xsql As String
+  Dim xrevenue As Float
+  Dim arevenue As Float
+
+  Dim sql5 As String
+  Dim xtotfld As String
+  Dim totqty As String
+  Dim res5 As Result
+  Dim userList As String[]
+
+  Dim xregist As String
+  Dim xregval As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  If xState = "Locked" Then
+    xgroupbool = False
+  Else
+    xgroupbool = True
+  Endif
+
+  $BillingReport = New CReportHTML([("Category"), ("Revenue"), ("ShareAmt"), ("ExtraAMT"), ("TDSAmt"), ("NetAMT")], "", "")
+  $BillingReport.UserData.Add(" SHARE : " & " CATEGORY : " & xcateg & " FORMAT: " & TotalFormat & " PACKAGE: " & sPackage & " MODE: " & sMode & " SOURCE: " & sInput, "PARAM1")
+  $BillingReport.UserData.Add(UCase(xState) & " : " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  ashare = 0
+  atax = 0
+  antot = 0
+  aextr = 0
+  arevenue = 0
+  i = 0
+  For Each xcateg In categorylst
+    If xcateg Then
+      gshare = 0
+      gtax = 0
+      gtot = 0
+      gextr = 0
+      xrevenue = 0
+
+      ''get total revenue
+      If TotalFormat = "SubTotal" Then
+        xtotfld = "SUM(flditemrate*(flditemqty-fldretqty)) as totl"
+      Else If TotalFormat = "NetTotal" Then
+        xtotfld = "SUM(flditemrate*(flditemqty-fldretqty)*(1-flddiscper/100)) as totl"
+      Endif
+      If CategType = "Category" Then
+        If sInvoiced = True Then
+          xsql = Subst("select fldid,&1", xtotfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and tblpatbilling.fldtime>=&2 and tblpatbilling.fldtime<=&3 and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{11}" & " and fldid in(select flditemid from tblpatgenshare where fldvalue like &7 and fldactive=&8 and fldsave=&{10})"
+          sql5 = "select distinct(fldvalue) as col from tblpatgenshare where fldactive=&7 and fldsave=&9 and flditemid in(select fldid from tblpatbilling where fldsave=&1 and fldbilltype like &8 and tblpatbilling.fldtime>=&2 and tblpatbilling.fldtime<=&3 and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{10})"
+        Else
+          xsql = Subst("select fldid,&1", xtotfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{11}" & " and fldid in(select flditemid from tblpatgenshare where fldvalue like &7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3 and fldsave=&{10})"
+          sql5 = "select distinct(fldvalue) as col from tblpatgenshare where fldactive=&7 and fldsave=&9 and fldtime>=&2 and fldtime<=&3 and flditemid in(select fldid from tblpatbilling where fldsave=&1 and fldbilltype like &8 and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{10})"
+        Endif
+      Else If CategType = "Group" Then
+        If sInvoiced = True Then
+          xsql = Subst("select fldid,&1", xtotfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and tblpatbilling.fldtime>=&2 and tblpatbilling.fldtime<=&3 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{11}" & " and fldid in(select flditemid from tblpatgenshare where fldvalue like &7 and fldactive=&8 and fldsave=&{10})"
+          sql5 = "select distinct(fldvalue) as col from tblpatgenshare where fldactive=&7 and fldsave=&9 and flditemid in(select fldid from tblpatbilling where fldsave=&1 and fldbilltype like &8 and tblpatbilling.fldtime>=&2 and tblpatbilling.fldtime<=&3 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{10})"
+        Else
+          xsql = Subst("select fldid,&1", xtotfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{11}" & " and fldid in(select flditemid from tblpatgenshare where fldvalue like &7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3 and fldsave=&{10})"
+          sql5 = "select distinct(fldvalue) as col from tblpatgenshare where fldactive=&7 and fldsave=&9 and fldtime>=&2 and fldtime<=&3 and flditemid in(select fldid from tblpatbilling where fldsave=&1 and fldbilltype like &8 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{10})"
+        Endif
+      Endif
+      res3 = $con.Exec(xsql, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", xcateg, sPackage, "%", "Active", sMode, xgroupbool, 0)
+      res5 = $con.Exec(sql5, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", xcateg, sPackage, "Active", sMode, xgroupbool, 0)
+      If res3.Available Then
+        If res3["totl"] Then
+          xrevenue = res3["totl"]
+        Else
+          xrevenue = 0
+        Endif
+      Else
+        xrevenue = 0
+      Endif
+      userList = modControlSub.GetDirectFillresult(res5)
+
+      ''get share for individual
+      If userList.Count Then
+        For Each xuser In userList
+          xshare = 0
+          xtax = 0
+          tot = 0
+          xextr = 0
+          If TotalFormat = "SubTotal" Then
+            totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)) as totl"
+          Else If TotalFormat = "NetTotal" Then
+            totfld = "(tblpatbilling.flditemrate*(tblpatbilling.flditemqty-tblpatbilling.fldretqty)*(1-tblpatbilling.flddiscper/100)) as totl"
+          Endif
+          totqty = "(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty"
+          ' If CategType = "Category" Then
+          '   If sInvoiced = True Then
+          '     sql2 = Subst("select fldid,&1", totfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemtype like &5 and flddisctype like &6" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldsave=&{10})"
+          '   Else
+          '     sql2 = Subst("select fldid,&1", totfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and flditemname like &4 and flditemtype like &5 and flddisctype like &6" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3 and fldsave=&{10})"
+          '   Endif
+          ' Else If CategType = "Group" Then
+          '   If sInvoiced = True Then
+          '     sql2 = Subst("select fldid,&1", totfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldsave=&{10})"
+          '   Else
+          '     sql2 = Subst("select fldid,&1", totfld) & " from tblpatbilling " & "where fldsave=&1 and fldbilltype like &9 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3 and fldsave=&{10})"
+          '   Endif
+          ' Endif
+          ' res2 = $con.Exec(sql2, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", xcateg, sPackage, xuser, "Active", sMode, xgroupbool)
+          xregval = ""
+          If CategType = "Category" Then
+            If sInvoiced = True Then
+              sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5" & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12} and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}"
+            Else
+              sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemtype like &5" & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12} and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}"
+            Endif
+          Else If CategType = "Group" Then
+            If sInvoiced = True Then
+              sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5)" & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatbilling.fldtime>=&9 and tblpatbilling.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12} and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}"
+            Else
+              sql2 = Subst("select tblpatgenshare.fldid,&1,&2,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange", totfld, totqty) & " from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid " & "where tblpatbilling.fldsave=&1 and tblpatbilling.flditemname like &2 and tblpatbilling.fldbilltype like &3 and tblpatbilling.flddisctype like &4 and tblpatbilling.flditemname in(select flditemname from tblreportgroup where fldgroup like &5)" & " and tblpatgenshare.fldvalue like &7 and tblpatgenshare.fldactive=&8 and tblpatgenshare.fldtime>=&9 and tblpatgenshare.fldtime<=&{10} and tblpatgenshare.fldusertype like &{11} and tblpatgenshare.fldsave=&{12} and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&{13}"
+            Endif
+          Endif
+          res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", xgroupbool, 0)
+
+          If res2.Available = True Then
+            For Each res2
+              upay = 0
+              origshare = 0
+              ushare = 0
+              utax = 0
+              netot = 0
+              uextr = 0
+
+              upay = res2["totl"]
+              If sInput = "Percent" Then
+                ushare = res2["totl"] * modSharingGroup.GetUserPayPercentGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+              Else If sInput = "Amount" Then
+                origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup(xState, $con, res2["tblpatgenshare.fldid"])
+                ushare = origshare * (1 - (res2["flddiscper"] / 100))
+              Endif
+              uextr = res2["fldchange"]
+              utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup(xState, $con, res2["tblpatgenshare.fldid"]) / 100
+              netot = (ushare + uextr) - utax
+
+              xshare = xshare + ushare
+              xextr = xextr + uextr
+              xtax = xtax + utax
+              tot = tot + netot
+            Next
+          Endif
+
+          'for each user
+          gshare = gshare + xshare
+          gextr = gextr + xextr
+          gtax = gtax + xtax
+          gtot = gtot + tot
+        Next
+      Endif
+
+      ashare = ashare + gshare
+      aextr = aextr + gextr
+      atax = atax + gtax
+      antot = antot + gtot
+      arevenue = arevenue + xrevenue
+      ''total for each categ
+      If xrevenue Or If gshare Then
+        With asx
+          .Add(xcateg)
+          .Add(modReportVar.GetLocaleNumberFormat(xrevenue, gb.Currency)) ''
+          .Add(modReportVar.GetLocaleNumberFormat(gshare, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(gextr, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(gtax, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(gtot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / categorylst.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("GRAND TOTAL")
+    .Add(modReportVar.GetLocaleNumberFormat(arevenue, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(ashare, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(aextr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(antot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''======================= Fraction Error =====================
+Public Function GetFractionErrorReport($conn As Connection, dt1 As Date, dt2 As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim resx As Result
+  Dim res As Result
+  Dim res1 As Result
+  Dim xtot As Float
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+
+  $BillingReport = New CReportHTML([("SNo"), ("Entry EncID"), ("Orig EncID"), ("Particular"), ("UserType"), ("UserID"), ("Frac%")], "", "")
+  $BillingReport.UserData.Add("FRACTION ERRORS", "PARAM1")
+  $BillingReport.UserData.Add(modDate.StartSqlDate(dt1) & " TO " & modDate.EndSqlDate(dt2), "PARAM2")
+
+  resx = $conn.Exec("select distinct(flditemid) as flditemid from tblpatgenshare where fldtime>=&1 and fldtime<=&2 and fldactive=&3", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "Active")
+  If resx.Available Then
+    For Each resx
+      res = $conn.Exec("select fldusertype,SUM(fldmixper) as fldmixper from tblpatgenshare where flditemid=&1 GROUP BY fldusertype", resx["flditemid"])
+      If res.Available Then
+        For Each res
+
+          If res["fldmixper"] And If res["fldmixper"] = 100 Then
+          Else
+            ' res1 = modDatabase.$syConn.Exec("select fldid,fldencounterval,flditemid,fldusertype,fldvalue,fldmixper from tblpatgenshare where flditemid=&1 and fldusertype=&2 and fldencounterval in(select fldencounterval from tblpatbilling where fldid=&3)", resx["flditemid"], res["fldusertype"], resx["flditemid"])
+            res1 = $conn.Exec("select tblpatgenshare.fldid,tblpatgenshare.fldencounterval,tblpatgenshare.flditemid,tblpatgenshare.fldusertype,tblpatgenshare.fldvalue,tblpatgenshare.fldmixper,tblpatbilling.fldencounterval from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid where tblpatgenshare.flditemid=&1 and tblpatgenshare.fldusertype=&2", resx["flditemid"], res["fldusertype"])
+            If res.Available Then
+              $BillingReport.AddChapter(CStr(resx["flditemid"]) & ") " & modNonMedical.GetBillingItemFromID(resx["flditemid"]))
+              xtot = 0
+              For Each res1
+                xtot = xtot + res1["tblpatgenshare.fldmixper"]
+                With asx
+                  .Add(res1["tblpatgenshare.fldid"])
+                  .Add(res1["tblpatgenshare.fldencounterval"])
+                  .Add(res1["tblpatbilling.fldencounterval"])
+                  .Add(modNonMedical.GetBillingItemFromID(res1["tblpatgenshare.flditemid"]))
+                  .Add(res1["tblpatgenshare.fldusertype"])
+                  .Add(res1["tblpatgenshare.fldvalue"])
+                  .Add(res1["tblpatgenshare.fldmixper"])
+                End With
+                $BillingReport.Add(asx)
+                asx.Clear()
+              Next
+              With asx
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add(xtot)
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+              With asx
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+            Endif
+          Endif
+
+        Next
+      Endif
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (resx.Index + 1) / resx.Count
+        Wait
+      Endif
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetShareMismatchReport($conn As Connection, dt1 As Date, dt2 As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim resx As Result
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim xList As String[]
+  Dim yList As String[]
+  Dim xbool As Boolean
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+
+  $BillingReport = New CReportHTML([("SNo"), ("EncID"), ("Category"), ("Particular"), ("Setting"), ("Entry")], "", "")
+  $BillingReport.UserData.Add("USER TYPE MISMATCH REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modDate.StartSqlDate(dt1) & " TO " & modDate.EndSqlDate(dt2), "PARAM2")
+
+  resx = $conn.Exec("select distinct(flditemid) as flditemid from tblpatgenshare where fldtime>=&1 and fldtime<=&2 and fldactive=&3", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "Active")
+  If resx.Available Then
+    For Each resx
+      res = $conn.Exec("select distinct(fldusertype) as col from tblpatgenshare where flditemid=&1 and fldactive=&2", resx["flditemid"], "Active")
+      xList = modControlSub.GetDirectFillresult(res)
+      If xList Then
+        xList.Sort()
+      Endif
+
+      res2 = $conn.Exec("select fldencounterval,fldbillingmode,flditemtype,flditemname from tblpatbilling where fldid=&1", resx["flditemid"])
+      If res2.Available Then
+        res1 = $conn.Exec("select distinct(fldusertype) as col from tblprocedureshare where fldactive=&1 and fldsharetype=&2 and flditemtype=&3 and fldbillingmode=&4 and flditemname=&5", "Active", "Payable", res2["flditemtype"], res2["fldbillingmode"], res2["flditemname"])
+        yList = modControlSub.GetDirectFillresult(res1)
+        If yList Then
+          yList.Sort()
+        Endif
+      Endif
+
+      If xList And If yList Then
+        If modString.GetStringArrayDiff(xList, yList) = False Then
+          xbool = True
+        Else
+          xbool = False
+        Endif
+      Else
+        xbool = False
+      Endif
+
+      If xbool = False Then
+        With asx
+          .Add(resx["flditemid"])
+          .Add(res2["fldencounterval"])
+          .Add(res2["flditemtype"])
+          .Add(res2["flditemname"])
+          If yList Then
+            .Add(yList.join("<br>"))
+          Else
+            .Add("")
+          Endif
+          .Add(xList.Join("<br>"))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (resx.Index + 1) / resx.Count
+        Wait
+      Endif
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''===================== FINAL REPORT =======================
+Public Function SharingPaymentFixAMT($con As Connection, dt1 As Date, dt2 As Date, sInvoiced As Boolean, xuserList As String[]) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xshare As Float
+  Dim xtax As Float
+  Dim tot As Float
+  Dim xextr As Float
+  Dim res2 As Result
+
+  Dim origshare As Float
+  Dim ushare As Float
+  Dim utax As Float
+  Dim netot As Float
+  Dim uextr As Float
+
+  Dim ashare As Float
+  Dim atax As Float
+  Dim antot As Float
+  Dim aextr As Float
+
+  Dim xuser As String
+  Dim sql2 As String
+  Dim xgroupbool As Boolean
+
+  Dim resx As Result
+  Dim xformat As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  xgroupbool = False
+
+  $BillingReport = New CReportHTML([("SNo"), ("UserID"), ("User Name"), ("PAN No"), ("Account"), ("ShareAmt"), ("ExtraAMT"), ("TDSAmt"), ("NetAMT"), ("Format")], "", "")
+  $BillingReport.UserData.Add("USER SHARE REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  ashare = 0
+  atax = 0
+  antot = 0
+  aextr = 0
+  i = 0
+  For Each xuser In xuserList
+    If xuser Then
+      xshare = 0
+      xtax = 0
+      tot = 0
+      xextr = 0
+
+      resx = $con.Exec("select fldshareamt,fldextra,fldtdsper,fldsharenet from tblsharepayment where fldpayto=&1 and fldfrom>=&2 and fldto<=&3", xuser, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      If resx.Available Then
+        resx.MoveLast
+        xshare = resx["fldshareamt"]
+        xextr = resx["fldextra"]
+        xtax = resx["fldtdsper"]
+        tot = resx["fldsharenet"]
+        xformat = "Fixed"
+
+      Else
+        xformat = ""
+        If sInvoiced = True Then
+          sql2 = "select tblpatgenshare.fldid,(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid where tblpatbilling.fldsave=&1 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&7 and tblpatgenshare.fldvalue like &2 and tblpatgenshare.fldactive=&3 and tblpatbilling.fldtime>=&4 and tblpatbilling.fldtime<=&5 and tblpatgenshare.fldsave=&6"
+        Else
+          sql2 = "select tblpatgenshare.fldid,(tblpatbilling.flditemqty-tblpatbilling.fldretqty) as xqty,tblpatbilling.flddiscper as flddiscper,tblpatgenshare.fldchange as fldchange from tblpatgenshare inner join tblpatbilling on tblpatgenshare.flditemid=tblpatbilling.fldid where tblpatbilling.fldsave=&1 and (tblpatbilling.flditemqty-tblpatbilling.fldretqty)>&7 and tblpatgenshare.fldvalue like &2 and tblpatgenshare.fldactive=&3 and tblpatgenshare.fldtime>=&4 and tblpatgenshare.fldtime<=&5 and tblpatgenshare.fldsave=&6"
+        Endif
+        res2 = $con.Exec(sql2, True, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), False, 0)
+        ' res2 = $con.Exec(sql2, True, "%", sMode, sPackage, xcateg, xregval, xuser, "Active", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), UsrType, xgroupbool, 0)
+        If res2.Available = True Then
+          For Each res2
+            origshare = 0
+            ushare = 0
+            utax = 0
+            netot = 0
+            uextr = 0
+            origshare = res2["xqty"] * modSharingGroup.GetUserPayAmountGroup("Locked", $con, res2["tblpatgenshare.fldid"])
+            ushare = origshare * (1 - (res2["flddiscper"] / 100))
+
+            uextr = res2["fldchange"]
+            utax = (ushare + uextr) * modSharingGroup.GetUserPayTaxGroup("Locked", $con, res2["tblpatgenshare.fldid"]) / 100
+            netot = (ushare + uextr) - utax
+
+            xshare = xshare + ushare
+            xextr = xextr + uextr
+            xtax = xtax + utax
+            tot = tot + netot
+          Next
+        Endif
+
+      Endif
+
+      ashare = ashare + xshare
+      aextr = aextr + xextr
+      atax = atax + xtax
+      antot = antot + tot
+      ''total for each user
+      With asx
+        .Add(CStr(i + 1))
+        .Add(xuser)
+        .Add(modGeneral.GetUserFullName(xuser))
+        .Add(modGeneral.GetStaffPanIdent(xuser))
+        .Add(modGeneral.GetStaffAccountRelig(xuser))
+        .Add(modReportVar.GetLocaleNumberFormat(xshare, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xextr, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+        .Add(xformat)
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / xuserList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+    .Add("***")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(ashare, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(aextr, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(antot, gb.Currency))
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End

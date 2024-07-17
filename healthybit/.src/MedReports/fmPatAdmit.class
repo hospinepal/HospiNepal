@@ -1,0 +1,1396 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $SSQLFields As String[]
+Private $ProgressBar1 As ProgressBar
+
+Private $newColumn As String[]
+Private $ColCount As Integer
+Private $RepoStr As String
+
+Public Sub Form_Open()
+
+  Dim xhospfld As String
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  btnmnuqty.Menu = "mnuchart"
+  btnmnuexpen.Menu = "mnufreq"
+  If MMain.$WebReport = "Multiple" Then
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      pnlocat.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+    mnuhospsumm.Visible = True
+    If MMain.$RepoReportMode = True Then
+      mnusearname.Visible = False
+    Endif
+
+  Else
+    pnlocat.Visible = False
+  Endif
+
+  cmbcolumn.List = ["Surname", "District", "Municipality", "Ethnic Group", "Package", "Visit Type", "Visit Mode", "Regd Department"]
+  If MMain.$IsPolice = True Then
+    mnuservice.Visible = True
+  Else
+    mnuservice.Visible = False
+  Endif
+
+  cmbstatus.List = ["Recorded", "Registered", "Follow Up", "Refer(OPD)", "Death(OPD)", "Admitted", "Exits(All)", "Discharged", "LAMA", "Refer", "Death", "Absconder", "%"]
+  cmbstatus.Text = "%"
+  cmbbillmode.List = modNonMedical.FillCashModeCombo()
+  cmbbillmode.Add("%")
+  cmbbillmode.Text = "%"
+  cmbpackage.List = modNonMedical.FillDiscountCombo()
+  cmbpackage.Text = "%"
+  cmbgender.List = ["Male", "Female", "Other", "%"]
+  cmbgender.Text = "%"
+  cmbdepart.List = modGeneral.GetDepartmentAllList("%")
+  cmbdepart.Add("%")
+  cmbdepart.Text = "%"
+
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+
+  xhospfld = modDataRepo.HospitalField()
+  $SSQLFields = ["fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldpatientval", "fldregdate", "fldadmission", "fldadmitlocat", "flddisctype"]
+  If xhospfld Then
+    $SSQLFields.Add(xhospfld)
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Private Sub SetRepoString()
+
+  If MMain.$WebReport = "Multiple" Then
+  Else
+    cmbcolumn.Text = ""
+    txtoption.Text = ""
+  Endif
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub cmbstatus_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbstatus)
+
+End
+
+Public Sub mnuquery_Click()
+
+  If mnuquery.Checked = True Then
+    txtquery.Text = ""
+    txtquery.Visible = False
+    pnlquery.Visible = True
+    mnuquery.Checked = False
+  Else If mnuquery.Checked = False Then
+    txtquery.Text = ""
+    txtquery.Visible = True
+    pnlquery.Visible = False
+    mnuquery.Checked = True
+  Endif
+
+End
+
+Public Sub txtquery_KeyRelease()
+
+  If Key.Code = Key.Down Then
+    txtquery.Text = txtquery.Text & CDBTableField()
+  Endif
+
+End
+
+Private Sub SetRepoStr()
+
+  If MMain.$WebReport = "Multiple" Then
+    $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  Else
+    $RepoStr = ""
+  Endif
+
+End
+
+Public Sub mnusearch_Click()
+
+  Dim encid As String
+  Dim sql As String
+  Dim xFldList As String[]
+
+  encid = GetEncid()
+  SetRepoStr()
+  If encid Then
+    xFldList = GetSQLColumns()
+    sql = "select " & xFldList.Join(",") & " from tblencounter where fldencounterval=&1" & $RepoStr
+    $rData = modDatabase.$syConn.Exec(sql, encid)
+    FillPatientGrid()
+  Endif
+
+End
+
+Public Sub mnusearname_Click()
+
+  Dim xname As String[]
+  Dim sql As String
+  Dim xFldList As String[]
+
+  xname = InputDoubleText(("Search Patient Name"), ["First Name", "SurName"], ["%", "%"], modBasic.$SurNameList)
+  SetRepoStr()
+  If xname Then
+    xFldList = GetSQLColumns()
+    sql = "select " & xFldList.Join(",") & " from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where lower(fldptnamefir) like &1 and lower(fldptnamelast) like &2)" & $RepoStr
+    $rData = modDatabase.$syConn.Exec(sql, LCase(xname[0]), LCase(xname[1]))
+    Inc Application.Busy
+    FillPatientGrid()
+    Dec Application.Busy
+  Endif
+
+End
+
+Private Function ExecuteQuery(xFldList As String[], sCon As Connection, Optional sGroup As String) As Result
+
+  Dim sql As String
+  Dim xstr As String
+  Dim xfld As String
+  Dim xdtstr As String
+  Dim agestr As String
+  Dim coltime As String
+  Dim status As String
+  Dim xquery As String
+
+  Dim res As Result
+  Dim xgroup As String
+
+  Select cmbstatus.Text
+    Case "Admitted"
+      coltime = "flddoa"
+      status = "%"
+    Case "Exits(All)"
+      coltime = "flddod"
+      status = ["Discharged", "LAMA", "Refer", "Death", "Absconder"].Join("','")
+    Case "Discharged", "LAMA", "Refer", "Death", "Absconder"
+      coltime = "flddod"
+      status = cmbstatus.Text
+    Case Else
+      coltime = "fldregdate"
+      status = "%"
+  End Select
+
+  If sGroup And If chkdstpat.Value = True Then
+    xgroup = " GROUP BY fldpatientval," & sGroup
+  Else
+    If sGroup And If chkdstpat.Value = False Then
+      xgroup = " GROUP BY " & sGroup
+    Else If Not sGroup And If chkdstpat.Value = True Then
+      xgroup = " GROUP BY fldpatientval"
+    Else
+      xgroup = ""
+    Endif
+  Endif
+
+  SetRepoStr()
+  If mnuquery.Checked = True Then
+    If txtquery.Text Then
+      If modMisc.CheckRestrictedKeyStrict(txtquery.Text) = 0 Then
+        xquery = " and " & Trim(txtquery.Text)
+      Endif
+    Else
+      xquery = ""
+    Endif
+    sql = "select " & xFldList.Join(",") & " from tblencounter where " & coltime & ">=&1 and " & coltime & "<=&2" & xquery & $RepoStr & xgroup
+    res = sCon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value))
+
+  Else
+    If txtval2.Value Then
+      xdtstr = modMedReports.GetAgeStringByTable("tblencounter", sCon)
+      agestr = " and " & xdtstr & ">=&7 and " & xdtstr & "<&8"
+    Else
+      agestr = ""
+    Endif
+    If Not cmbcolumn.Text Then
+      If cmbstatus.Text = "Exits(All)" Then
+        sql = "select " & xFldList.Join(",") & " from tblencounter where " & coltime & ">=&1 and " & coltime & "<=&2 and fldadmission in ('" & status & "') and fldbillingmode like &4 and flddisctype like &5 and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6" & agestr & ") and fldadmitlocat like &9" & $RepoStr & xgroup
+        res = sCon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), status, cmbbillmode.Text, cmbpackage.Text, cmbgender.Text, 365 * txtval1.Value, 365 * txtval2.Value, cmbdepart.Text)
+      Else
+        sql = "select " & xFldList.Join(",") & " from tblencounter where " & coltime & ">=&1 and " & coltime & "<=&2 and fldadmission like &3 and fldbillingmode like &4 and flddisctype like &5 and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6" & agestr & ") and fldadmitlocat like &9" & $RepoStr & xgroup
+        res = sCon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), status, cmbbillmode.Text, cmbpackage.Text, cmbgender.Text, 365 * txtval1.Value, 365 * txtval2.Value, cmbdepart.Text)
+      Endif
+    Else
+      xfld = modMedReports.GetColumnEncounter(cmbcolumn.Text)
+      Select cmbcolumn.Text
+        Case "Surname", "District", "Municipality"
+          xstr = " and fldpatientval in(select fldpatientval from tblpatientinfo where " & xfld & " like &{10})"
+        Case "Ethnic Group"
+          xstr = " and fldpatientval in(select fldpatientval from tblpatientinfo where fldethniccode like &{10})"
+        Case "Package", "Visit Type", "Visit Mode", "Regd Department"
+          xstr = " and " & xfld & " like &{10}"
+        Case Else
+          xstr = ""
+      End Select
+      If cmbstatus.Text = "Exits(All)" Then
+        sql = "select " & xFldList.Join(",") & " from tblencounter where " & coltime & ">=&1 and " & coltime & "<=&2 and fldadmission in ('" & status & "') and fldbillingmode like &4 and flddisctype like &5 and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6" & agestr & ") and fldadmitlocat like &9" & xstr & $RepoStr & xgroup
+        res = sCon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), status, cmbbillmode.Text, cmbpackage.Text, cmbgender.Text, 365 * txtval1.Value, 365 * txtval2.Value, cmbdepart.Text, txtoption.Text)
+      Else
+        sql = "select " & xFldList.Join(",") & " from tblencounter where " & coltime & ">=&1 and " & coltime & "<=&2 and fldadmission like &3 and fldbillingmode like &4 and flddisctype like &5 and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6" & agestr & ") and fldadmitlocat like &9" & xstr & $RepoStr & xgroup
+        res = sCon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), status, cmbbillmode.Text, cmbpackage.Text, cmbgender.Text, 365 * txtval1.Value, 365 * txtval2.Value, cmbdepart.Text, txtoption.Text)
+      Endif
+    Endif
+  Endif
+  Return res
+
+Catch
+  Message.Warning(("Database Error Code: ") & db.Error & "<br>" & Error.Text, ("OK"))
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+
+  Dim xxx As Variant
+  Dim i As Integer
+
+  If Column = 1 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
+  Else If Column = 2 Then
+    xxx = modPatient.GetPatientAgeString(xVariable, modPatient.GetRecordDate(xVariable))
+  Else If Column = 3 Then
+    xxx = modPatient.GetPatientSex(xVariable, modDatabase.$syConn)
+  Else If Column = 5 Then
+    xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+  Else If Column = 9 Then
+    xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+  Else
+    xxx = xVariable
+  Endif
+
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      If Column = $ColCount + i Then
+        xxx = modCustPatient.NewColValue(Me.Tag, $newColumn[i], xVariable)
+      Endif
+    Next
+  Endif
+
+  Return xxx
+
+End
+
+Private Function GetSQLColumns() As String[]
+
+  Dim xFldList As String[]
+  Dim i As Integer
+
+  modCustPatient.FillNewCOlumnCollection(Me.Tag)
+  $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+  xFldList = $SSQLFields.Copy()
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      xFldList.Add("fldencounterval")
+    Next
+  Endif
+  Return xFldList
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim xFldList As String[]
+
+  TabStrip1.Index = 0
+  xFldList = GetSQLColumns()
+  $rData = ExecuteQuery(xFldList, modDatabase.$syConn)
+
+  Inc Application.Busy
+
+  If chkgrid.Value = True Then
+    FillPatientGrid()
+  Endif
+
+  If chkcount.Value = True Then
+    FillChartData()
+  Endif
+
+  If chkexpense.Value = True Then
+    MakeFreqDistribution()
+  Endif
+
+  modExternal.$ExecValueColl.Clear()
+  Dec Application.Busy
+
+End
+
+Private Sub FillPatientGrid()
+
+  Dim i As Integer
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  $ColCount = $SSQLFields.Count
+  With GridView1
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "EncID"
+    .Columns[1].Text = "Name"
+    .Columns[2].Text = "Age"
+    .Columns[3].Text = "Gender"
+    .Columns[4].Text = "PatNo"
+    .Columns[5].Text = "DORec"
+    .Columns[6].Text = "Status"
+    .Columns[7].Text = "Depart"
+    .Columns[8].Text = "Package"
+
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        .Columns[$ColCount + i].Text = $newColumn[i]
+        .Columns[$ColCount + i].Width = 150 * modBasic.$AppWidthRatio
+      Next
+    Endif
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column > $SSQLFields.Count - 1 Then
+    GridView1.Data.RichText = modString.TextToHTML(GetGridViewValue(Column, $rData[$aMyFields[Column]]))
+  Else
+    GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+''------------------------------------------- Grid view reports -------------------------------------------------
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub GridView1_DblClick()
+
+  Dim xx As Integer
+  Dim yy As Integer
+
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+
+End
+
+Public Sub mnuenchart_Click()
+
+  Dim xx As String
+  Dim xField As String
+  Dim Column As Integer
+  Dim res As Result
+  Dim xval As Variant
+  Dim hFile As CUnivariate
+  Dim xFldList As String[]
+  Dim sOrder As String[]
+
+  Dim hUniv As FmAnalyzeSett
+
+  hUniv = New FmAnalyzeSett("Univariate", modGridView.GetGridViewColumns(GridView1))
+  hUniv.ShowModal
+
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  Inc Application.Busy
+  hFile = New CUnivariate
+
+  Column = modCustPatient.GetUnivariateColumn(0)
+  xField = xFldList[Column]
+  res = ExecuteQuery([xField], modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Column, res[xField])
+      If xval Then
+        hFile.Add(xval)
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modSettings.ShowSettingFromFIle("UnivariateAnalysis/DataType") = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetEncChartGridNew(hFile.GetSPSSFile(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrosstab_Click()
+
+  Dim xx As String
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hFile As CBivariate
+  Dim xFldList As String[]
+  Dim sOrder As String[]
+  Dim hBivar As FmAnalyzeSett
+
+  hBivar = New FmAnalyzeSett("Bivariate", modGridView.GetGridViewColumns(GridView1))
+  hBivar.ShowModal
+
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  Inc Application.Busy
+  hFile = New CBivariate
+  Row = modCustPatient.GetCrossVarRow(0)
+  xFieRow = xFldList[Row]
+  Column = modCustPatient.GetCrossVarColumn(0)
+  xFieColm = xFldList[Column]
+  res = ExecuteQuery([xFieRow, xFieColm], modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Row, res[xFieRow])
+      yval = GetGridViewValue(Column, res[xFieColm])
+      If xval And If yval Then
+        hFile.Add([xval, yval])
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetCrossTabStatNew(hFile.GetSPSSFile(), hFile.GetGroups(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnuregression_Click()
+
+  Dim xx As String
+  Dim res As Result
+  Dim xFieldList As String[]
+
+  Dim DepCol As Integer
+  Dim Indep1Col As Integer
+  Dim Indep2Col As Integer
+  Dim Indep3Col As Integer
+  Dim Indep4Col As Integer
+  Dim Indep5Col As Integer
+
+  Dim xDepField As String
+  Dim xIndep1Field As String
+  Dim xIndep2Field As String
+  Dim xIndep3Field As String
+  Dim xIndep4Field As String
+  Dim xIndep5Field As String
+
+  Dim Depvalue As Variant
+  Dim Indep1Val As Variant
+  Dim Indep2Val As Variant
+  Dim Indep3Val As Variant
+  Dim Indep4Val As Variant
+  Dim Indep5Val As Variant
+
+  Dim DepData As Variant[]
+  Dim Indep1Data As Variant[]
+  Dim Indep2Data As Variant[]
+  Dim Indep3Data As Variant[]
+  Dim Indep4Data As Variant[]
+  Dim Indep5Data As Variant[]
+  Dim xFldList As String[]
+
+  xFldList = GetSQLColumns()
+  Inc Application.Busy
+  xFieldList = New String[]
+  DepData = New Variant[]
+  Indep1Data = New Variant[]
+  Indep2Data = New Variant[]
+  Indep3Data = New Variant[]
+  Indep4Data = New Variant[]
+  Indep5Data = New Variant[]
+
+  DepCol = modCustPatient.GetRegressionDepVal(0)
+  xDepField = xFldList[DepCol]
+  xFieldList.Add(xDepField)
+
+  If modCustPatient.$RegVar1UseGridVal = "Yes" Or If modCustPatient.$RegVar1Variable Or If modCustPatient.$RegVar1SQLText Then
+    Indep1Col = modCustPatient.GetRegressionVar1Val(0)
+    xIndep1Field = xFldList[Indep1Col]
+    xFieldList.Add(xIndep1Field)
+  Endif
+  If modCustPatient.$RegVar2UseGridVal = "Yes" Or If modCustPatient.$RegVar2Variable Or If modCustPatient.$RegVar2SQLText Then
+    Indep2Col = modCustPatient.GetRegressionVar2Val(0)
+    xIndep2Field = xFldList[Indep2Col]
+    xFieldList.Add(xIndep2Field)
+  Endif
+  If modCustPatient.$RegVar3UseGridVal = "Yes" Or If modCustPatient.$RegVar3Variable Or If modCustPatient.$RegVar3SQLText Then
+    Indep3Col = modCustPatient.GetRegressionVar3Val(0)
+    xIndep3Field = xFldList[Indep3Col]
+    xFieldList.Add(xIndep3Field)
+  Endif
+  If modCustPatient.$RegVar4UseGridVal = "Yes" Or If modCustPatient.$RegVar4Variable Or If modCustPatient.$RegVar4SQLText Then
+    Indep4Col = modCustPatient.GetRegressionVar4Val(0)
+    xIndep4Field = xFldList[Indep4Col]
+    xFieldList.Add(xIndep4Field)
+  Endif
+  If modCustPatient.$RegVar5UseGridVal = "Yes" Or If modCustPatient.$RegVar5Variable Or If modCustPatient.$RegVar5SQLText Then
+    Indep5Col = modCustPatient.GetRegressionVar5Val(0)
+    xIndep5Field = xFldList[Indep5Col]
+    xFieldList.Add(xIndep5Field)
+  Endif
+
+  res = ExecuteQuery(xFieldList, modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      Depvalue = GetGridViewValue(DepCol, res[xDepField])
+      If xIndep1Field Then
+        Indep1Val = GetGridViewValue(Indep1Col, res[xIndep1Field])
+      Else
+        Indep1Val = "__"
+      Endif
+      If xIndep2Field Then
+        Indep2Val = GetGridViewValue(Indep2Col, res[xIndep2Field])
+      Else
+        Indep2Val = "__"
+      Endif
+      If xIndep3Field Then
+        Indep3Val = GetGridViewValue(Indep3Col, res[xIndep3Field])
+      Else
+        Indep3Val = "__"
+      Endif
+      If xIndep4Field Then
+        Indep4Val = GetGridViewValue(Indep4Col, res[xIndep4Field])
+      Else
+        Indep4Val = "__"
+      Endif
+      If xIndep5Field Then
+        Indep5Val = GetGridViewValue(Indep5Col, res[xIndep5Field])
+      Else
+        Indep5Val = "__"
+      Endif
+
+      If Depvalue And If Indep1Val And If Indep2Val And If Indep3Val And If Indep4Val And If Indep5Val Then
+        modCustPatient.AddFormatRegressionDepToList(DepData, Depvalue)
+        modCustPatient.AddFormatRegressionVar1ToList(Indep1Data, Indep1Val)
+        modCustPatient.AddFormatRegressionVar2ToList(Indep2Data, Indep2Val)
+        modCustPatient.AddFormatRegressionVar3ToList(Indep3Data, Indep3Val)
+        modCustPatient.AddFormatRegressionVar4ToList(Indep4Data, Indep4Val)
+        modCustPatient.AddFormatRegressionVar5ToList(Indep5Data, Indep5Val)
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+
+  xx = modPSPP.RegressionChartGridNew(DepData, Indep1Data, Indep2Data, Indep3Data, Indep4Data, Indep5Data)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnutimeseries_Click()
+
+  Dim xx As String
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+  Dim xData As Variant[]
+  Dim yData As Variant[]
+  Dim xFldList As String[]
+
+  xFldList = GetSQLColumns()
+  Inc Application.Busy
+  xData = New Variant[]
+  yData = New Variant[]
+  Row = modCustPatient.GetTimeVarRow(0)
+  xFieRow = xFldList[Row]
+  Column = modCustPatient.GetTimeVarColumn(0)
+  xFieColm = xFldList[Column]
+  res = ExecuteQuery([xFieRow, xFieColm], modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Row, res[xFieRow])
+      yval = GetGridViewValue(Column, res[xFieColm])
+      If xval And If yval Then
+        modCustPatient.AddFormatTimeVarRowToList(xData, xval)
+        modCustPatient.AddFormatTimeVarColumnToList(yData, yval)
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+
+  xx = modPSPP.GetTimeChartGrid(xData, yData)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrotab_Click()
+
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hForm As FmGridCrossTab
+  Dim xForm As CCrossTab
+  Dim xFldList As String[]
+  Dim hGdChr As FmAnalyzeSett
+
+  hGdChr = New FmAnalyzeSett("GridCrossTab", modGridView.GetGridViewColumns(GridView1))
+  hGdChr.ShowModal
+
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  If modCustPatient.$TabRowColumn And If modCustPatient.$TabFieldColumn Then
+    xForm = New CCrossTab
+    Inc Application.Busy
+    Row = CInt(modCustPatient.$TabRowColumn) - 1
+    xFieRow = xFldList[Row]
+    Column = CInt(modCustPatient.$TabFieldColumn) - 1
+    xFieColm = xFldList[Column]
+    res = ExecuteQuery([xFieRow, xFieColm], modDatabase.$syConn)
+
+    If res.Available Then
+      For Each res
+        xval = GetGridViewValue(Row, res[xFieRow])
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If xval And If yval Then
+          xForm.Add([xval, yval])
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    Dec Application.Busy
+
+    hForm = New FmGridCrossTab(GridView1.Columns[Row].Text, xForm.GetSPSSFile())
+    hForm.ShowModal
+    modExternal.$ExecValueColl.Clear()
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub mnugridsummary_Click()
+
+  Dim xx As String
+  Dim ChapCol As String
+  Dim GropCol As String
+  Dim xChapList As String[]
+  Dim xGropList As String[]
+
+  Dim res As Result
+  Dim valCol As String
+  Dim xFieldList As String[]
+
+  Dim xFinList As Variant[]
+  Dim xrowVar As Variant[]
+  Dim xchapval As String
+  Dim xgroup As String
+  Dim xPath As String
+  Dim xFldList As String[]
+
+  Dim hGdSum As FmAnalyzeSett
+
+  hGdSum = New FmAnalyzeSett("GridSummary", modGridView.GetGridViewColumns(GridView1))
+  hGdSum.ShowModal
+
+  xFldList = GetSQLColumns()
+  Inc Application.Busy
+  xFieldList = New String[]
+  If modCustPatient.$SumChapterColumn Then
+    ChapCol = xFldList[modCustPatient.$SumChapterColumn - 1]
+    xFieldList.Add(ChapCol)
+  Endif
+  GropCol = xFldList[modCustPatient.$SumGroupColumn - 1]
+  valCol = xFldList[modCustPatient.$SumValueColumn - 1]
+  xFieldList.Add(GropCol)
+  xFieldList.Add(valCol)
+
+  xChapList = New String[]
+  xGropList = New String[]
+  xFinList = New Variant[]
+  res = ExecuteQuery(xFieldList, modDatabase.$syConn)
+  If res.Available Then
+    For Each res
+      xrowVar = New Variant[]
+      If modCustPatient.$SumChapterColumn Then
+        xchapval = GetGridViewValue(modCustPatient.$SumChapterColumn - 1, res[ChapCol])
+        xrowVar.Add(xchapval)
+        xChapList.Add(xchapval)
+      Endif
+      xgroup = GetGridViewValue(modCustPatient.$SumGroupColumn - 1, res[GropCol])
+      xrowVar.Add(xgroup)
+      xGropList.Add(xgroup)
+
+      xrowVar.Add(GetGridViewValue(modCustPatient.$SumValueColumn - 1, res[valCol]))
+      xFinList.Add(xrowVar)
+    Next
+  Endif
+  Dec Application.Busy
+
+  xx = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  If modCustPatient.$SumGroupColumn And If modCustPatient.$SumValueColumn Then
+    If modCustPatient.$SumChapterColumn Then
+      If modCustPatient.$SummaryType = "Summation(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapterTableReport("Visit Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else If modCustPatient.$SummaryType = "Count(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapCountTableReport("Visit Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else
+        xPath = modCHTMLReport.SummaryGridChapterReport("Visit Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Endif
+    Else
+      xPath = modCHTMLReport.SummaryGridReport("Visit Summary", xx, modString.GetDistinctStringArray(xGropList), xFinList)
+    Endif
+    modControlSub.DisplayReportExport(xPath)
+  Endif
+
+End
+
+Public Sub mnucompreport_Click()
+
+  If GridView1.Rows.Count > 0 Then
+    If modPatientSub.AllowEncIDHistory(GridView1[GridView1.Row, 0].Text, modDatabase.$syConn) = True Then
+      modPatReports.GetSelectedPatientValues(GridView1[GridView1.Row, 0].Text, MMain.$defUnit)
+    Endif
+  Endif
+
+End
+
+Public Sub mnuhiderow_Click()
+
+  GridView1.Rows[GridView1.Row].Height = 0
+
+End
+
+''------------------------------------------------------ Picture 1 ---------------------------------
+Private Sub FillChartData()
+
+  Dim xLst As String[]
+  Dim sFile As String
+  Dim xchart As String
+
+  xLst = New String[]
+  $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  For Each $rData
+    If Not modBasic.$HospCode And If MMain.$WebReport = "Multiple" Then
+      xLst.Add($rData["fldhospcode"] & gb.Tab & modPatient.GetPatientSex($rData["fldencounterval"], modDatabase.$syConn))
+    Else
+      xLst.Add(Format(DateDiff(dtfir.Value, $rData["fldregdate"], modChart.GetDateIntegerFromSetting()), "0#.#") & gb.Tab & modPatient.GetPatientSex($rData["fldencounterval"], modDatabase.$syConn))
+    Endif
+    $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+    Wait
+  Next
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  sFile = Temp()
+  File.Save(sFile, xLst.Join(gb.NewLine))
+  If modBasic.$ChartExecStat = "PSPP" Then
+    xchart = modChart.ProportionChart(sFile, "Visits" & " : Patient Count")
+  Else
+    xchart = modChart.ProportionChart(sFile, "Visits" & " : Patient Count")
+  Endif
+  modImage.StretchtPictureToBox(PictureBox1, xchart)
+  mnustats.Tag = sFile
+
+End
+
+Public Sub PictureBox1_Menu()
+
+  mnuchart.Popup
+
+End
+
+Public Sub mnuexpochart_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox1.Image.Save(Dialog.Path &/ "visit.png")
+
+End
+
+Public Sub mnustats_Click()
+
+  If modBasic.$ExpoRepoUser = True Then
+    modControlSub.OpenBrowser(mnustats.Tag)
+  Endif
+
+End
+
+'''------------------------------------------- Picture 2 -------------------------------------
+Private Sub MakeFreqDistribution()
+
+  Dim xLst As String[]
+  Dim sFile As String
+  Dim xval As Float
+  Dim ximg As String
+
+  xLst = New String[]
+  $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+
+  For Each $rData
+    xval = modNonMedical.TotalExpenseAmountbyPatient(modDatabase.$syConn, $rData["fldencounterval"])
+    xLst.Add(Format(xval / modChart.GetAMTValueChart(), gb.Fixed))
+    $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+    Wait
+  Next
+
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  sFile = Temp()
+  File.Save(sFile, xLst.Join(gb.NewLine))
+
+  If modBasic.$ChartExecStat = "PSPP" Then
+    ximg = modPSPP.CreatePSPPStatFIle("frequency", sFile)
+  Else
+    ximg = modChart.FrequencyChart(sFile, "Expense : Frequency Distribution")
+  Endif
+  modImage.StretchtPictureToBox(PictureBox2, ximg)
+  mnustatsfreq.Tag = sFile
+
+End
+
+Public Sub PictureBox2_Menu()
+
+  mnufreq.Popup
+
+End
+
+Public Sub mnuexpofreq_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox2.Image.Save(Dialog.Path &/ "Expense" & ".png")
+
+End
+
+Public Sub mnustatsfreq_Click()
+
+  Dim hForm As Fmgnustat
+
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("statistics", mnustatsfreq.Tag))
+  Else
+    hForm = New Fmgnustat(mnustatsfreq.Tag)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuttest_Click()
+
+  modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("t-test", mnustatsfreq.Tag))
+
+End
+
+''----------------------------------------- Summary ----------------------------------
+Public Sub mnuagegroup_Click()
+
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  xdate = DoubleDates("Select Dates", "Registration", [dtfir.Value, dtlast.Value])
+  If xdate Then
+    Inc Application.Busy
+    xPath = modCHTMLDate.SummaryStatAgeGroup(modDatabase.$syConn, xdate[0], xdate[1], cmblocation.Text, cmbvalue.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Private Sub ShowSumReport(sType As String)
+
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  xdate = DoubleDates("Select Dates", "Registration", [dtfir.Value, dtlast.Value])
+  If xdate Then
+    Inc Application.Busy
+    xPath = modCHTMLDate.SummaryStatEncounter(modDatabase.$syConn, sType, xdate[0], xdate[1], cmblocation.Text, cmbvalue.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnudistrict_Click()
+
+  ShowSumReport("District")
+
+End
+
+Public Sub mnusurname_Click()
+
+  ShowSumReport("Surname")
+
+End
+
+Public Sub mnugender_Click()
+
+  ShowSumReport("Gender")
+
+End
+
+Public Sub mnuethnic_Click()
+
+  ShowSumReport("Ethnic Group")
+
+End
+
+Public Sub mnudepart_Click()
+
+  ShowSumReport("Regd Department")
+
+End
+
+Public Sub mnubillgrp_Click()
+
+  ShowSumReport("Rate Plan")
+
+End
+
+Public Sub mnudsccateg_Click()
+
+  ShowSumReport("Package")
+
+End
+
+Public Sub mnustatus_Click()
+
+  ShowSumReport("Last Status")
+
+End
+
+Public Sub mnulocat_Click()
+
+  ShowSumReport("Regd location")
+
+End
+
+Public Sub mnuvisittype_Click()
+
+  ShowSumReport("Visit Type")
+
+End
+
+Public Sub mnuvisitmode_Click()
+
+  ShowSumReport("Visit Mode")
+
+End
+
+Public Sub mnuhospsumm_Click()
+
+  ShowSumReport("Hospital")
+
+End
+
+Public Sub mnuservrank_Click()
+
+  ShowSumReport("Service Rank")
+
+End
+
+Public Sub mnuservunit_Click()
+
+  ShowSumReport("Service Unit")
+
+End
+
+Public Sub mnuservcateg_Click()
+
+  ShowSumReport("Service Category")
+
+End
+
+Public Sub mnudemog_Click()
+
+  Dim demog As String[]
+  Dim sType As String
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  demog = modBasic.$DemogList
+  If demog Then
+    xdate = DoubleDates("Select Dates", "Registration", [dtfir.Value, dtlast.Value])
+    If xdate Then
+      sType = InputListView("Select Clinical Demographic Parameter", "Summary Report", demog)
+      If sType Then
+        Inc Application.Busy
+        xPath = modCHTMLDate.SummaryDemographics(modDatabase.$syConn, sType, xdate[0], xdate[1], "tblexamgeneral", cmblocation.Text, cmbvalue.Text)
+        Dec Application.Busy
+        modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub mnupatdemograp_Click()
+
+  Dim demog As String[]
+  Dim sType As String
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  demog = modBasic.$DemogAccList
+  If demog Then
+    xdate = DoubleDates("Select Dates", "Registration", [dtfir.Value, dtlast.Value])
+    If xdate Then
+      sType = InputListView("Select Patient Demographic Parameter", "Summary Report", demog)
+      If sType Then
+        Inc Application.Busy
+        xPath = modCHTMLDate.SummaryDemographics(modDatabase.$syConn, sType, xdate[0], xdate[1], "tblpataccgeneral", cmblocation.Text, cmbvalue.Text)
+        Dec Application.Busy
+        modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+      Endif
+    Endif
+  Endif
+
+End
+
+''-------------------------------------- Other Menu ----------------------
+Public Sub mnuhealth_Click()
+
+  Dim hForm As FmHealthReport
+
+  SetRepoString()
+  hForm = New FmHealthReport(cmblocation.Text, cmbvalue.Text)
+  hForm.ShowModal
+
+End
+
+Public Sub mnuextcolumn_Click()
+
+  Dim hForm As FmAddNewColumn
+
+  hForm = New FmAddNewColumn(Me.Tag)
+  hForm.ShowModal
+
+End
+
+Public Sub btnfullrep_Click()
+
+  Dim xHeader As String[]
+  Dim xhide As Integer[]
+  Dim Column As Integer
+  Dim xCollRow As Collection
+  Dim xColum As Integer
+
+  Dim $hGridExportTable As CExportResult
+  Dim xparam1 As String
+  Dim xparam2 As String
+  Dim encColumn As Integer
+  Dim xFldList As String[]
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  xHeader = New String[]
+  xhide = New Integer[]
+  For Column = 0 To GridView1.Columns.Count - 1
+    xHeader.Add(GridView1.Columns[Column].Text)
+    If GridView1.Columns[Column].Width < 5 Then
+      xhide.Add(Column)
+    Endif
+  Next
+  xparam1 = "Visit Report"
+  xparam2 = "Entry Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  encColumn = 0
+  $hGridExportTable = New CExportResult(Me.Tag, xHeader, xhide, xparam1, xparam2, encColumn)
+
+  Inc Application.Busy
+  xFldList = GetSQLColumns()
+
+  For Each $rData
+    xCollRow = New Collection
+    For xColum = 0 To xFldList.Count - 1
+      xCollRow.Add(GetGridViewValue(xColum, $rData[xFldList[xColum]]), CStr(xColum))
+    Next
+    $hGridExportTable.Add($rData.Index, xCollRow)
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Endif
+  Next
+
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  modControlSub.DisplayReportExport($hGridExportTable.HTMLPath())
+
+End
+
+Private Sub ShowSummDatewiseReport(sField As String)
+
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  SetRepoString()
+  xdate = DoubleDates("Select Dates", "Registration", [dtfir.Value, dtlast.Value], 1)
+  If xdate Then
+    Inc Application.Busy
+    xPath = modCHTMLDate.SummaryStatDateWiseReport(modDatabase.$syConn, "tblencounter", "fldencounterval", sField, "fldregdate", xdate[0], xdate[1], cmblocation.Text, cmbvalue.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnudatedepart_Click()
+
+  ShowSummDatewiseReport("fldadmitlocat")
+
+End
+
+Public Sub mnudatelocat_Click()
+
+  ShowSummDatewiseReport("fldcomp")
+
+End
+
+Public Sub mnudaterateplan_Click()
+
+  ShowSummDatewiseReport("fldbillingmode")
+
+End
+
+Public Sub mnudatedisc_Click()
+
+  ShowSummDatewiseReport("flddisctype")
+
+End
+
+Public Sub mnudatevisit_Click()
+
+  ShowSummDatewiseReport("fldvisit")
+
+End
+
+Public Sub chkcount_Click()
+
+  TabStrip1.Index = 1
+
+End
+
+Public Sub chkexpense_Click()
+
+  TabStrip1.Index = 2
+
+End
+
+Public Sub mnudeptsummary_Click()
+
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  xdate = DoubleDates("Select Dates", "Registration", [dtfir.Value, dtlast.Value])
+  If xdate Then
+    Inc Application.Busy
+    xPath = modCHTMLPatSummary.ShowRegisteredNewOldAgeReport(xdate[0], xdate[1])
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mniipoutcome_Click()
+
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  xdate = DoubleDates("Select Dates", "IP Events", [dtfir.Value, dtlast.Value])
+  If xdate Then
+    Inc Application.Busy
+    xPath = modCHTMLDate.GenerStatVisitIPReport(modDatabase.$syConn, xdate[0], xdate[1], modGeneral.GetDepartmentWithBedList(), cmblocation.Text, cmbvalue.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnucountuni_Click()
+
+  Dim Column As Integer
+  Dim xFieColm As String
+  Dim res As Result
+  Dim yval As Variant
+  Dim xList As String[]
+
+  Dim xVar As Variant[]
+  Dim xFldList As String[]
+  Dim xPath As String
+
+  Column = ListIndex("Column Index", modGridView.GetGridViewColumns(GridView1))
+  If Column + 1 > 0 Then
+    xFldList = GetSQLColumns()
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+      $ProgressBar1.Visible = True
+      $ProgressBar1.Value = 0
+    Endif
+
+    Inc Application.Busy
+    xFieColm = xFldList[Column]
+    res = ExecuteQuery([xFieColm], modDatabase.$syConn)
+    xList = New String[]
+    If res.Available Then
+      For Each res
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If yval Then
+          xList.Add(yval)
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    If xList.Count Then
+      xVar = modString.GetUnivariateSummary(xList)
+      xPath = modCHTMLReport.CreateHTMLReportFromArray(["Variable", "Count"], xVar, GridView1.Columns[Column].Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+    Endif
+    Dec Application.Busy
+
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnucolumns_Click()
+
+  If Message.Question(modGridView.GetColumnsListString(GridView1), ("OK"), ("Setting")) = 2 Then
+    fmChartSetting.Close
+    fmChartSetting.ShowModal
+  Endif
+
+End
+
+Public Sub mnuexpocolumn_Click()
+
+  Dim hForm As FmCustColumnSet
+
+  hForm = New FmCustColumnSet(Me.Tag)
+  hForm.ShowModal
+
+End

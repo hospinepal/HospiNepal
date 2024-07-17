@@ -1,0 +1,509 @@
+' Gambas class file
+
+Private $encid As String
+
+Private $rDatamain As Result
+Private $aMyFieldsmain As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Private $sLedger As String
+Private $ClaimCode As String
+Private $LedAccount As String[]
+
+Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Public Sub _new()
+
+  If MMain.$AppLogCategory = "Social Security Fund" Then
+    $LedAccount = modNonMedical.GetLedgerACReference(["Accident SSF", "Medical SSF"])
+  Else If MMain.$AppLogCategory = "Health Insurance" Then
+    $LedAccount = modNonMedical.GetLedgerACReference(["Claim Code"])
+  Endif
+  $sLedger = $LedAccount[0]
+
+  cmbtype.List = ["Diagnostic Tests", "Radio Diagnostics", "General Reports"]
+  rbinvoice.Value = True
+  dtfir.Value = DateAdd(Now(), gb.Year, -1)
+  dtlast.Value = Now()
+  modBasic.$currency = "Rs "
+
+  modAccount.PasInvoiceSettingRead(cmbfiscal)
+  LoadTableNames()
+
+End
+
+Public Sub WebForm_Open()
+
+  modHelpVariable.SetApplicationGUI()
+  MMain.GetApplVersionType()
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatbilldetail = "tblpatbilldetail"
+    $tbltempbilldetail = "tbltempbilldetail"
+  Else
+    res = modDatabase.$myConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatbilldetail"] Then
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+      If res["fldtempbilldetail"] Then
+        $tbltempbilldetail = res["fldtempbilldetail"]
+      Else
+        $tbltempbilldetail = "tbltempbilldetail"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatbilldetail = "tblpatbilldetail"
+      $tbltempbilldetail = "tbltempbilldetail"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+''============================== Main Forms =======================
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnnhis_Click()
+
+  FillEncounterData()
+
+End
+
+Private Sub FillEncounterData()
+
+  Dim xList As String[] = ["fldchequeno", "fldbankname", "fldencounterval", "fldencounterval", "fldencounterval", "fldchequeno", "fldbilltype", "fldchequeno", "fldchequeno", "fldchequeno"]
+  Dim sql1 As String
+  Dim sql2 As String
+  Dim xnhis As String
+  Dim xclaim As String
+
+  If txtnhis.Text Then
+    xnhis = Trim(txtnhis.Text)
+  Else
+    xnhis = "%"
+  Endif
+  If txtclaimcode.Text Then
+    xclaim = Trim(txtclaimcode.Text)
+  Else
+    xclaim = "%"
+  Endif
+
+  sql1 = "select " & xList.Join(",") & " from " & $tblpatbilldetail & " where fldbankname like &1 and fldencounterval like &2 and fldbilltype like &3 and fldchequeno in(select fldclaimid from tblclaimcode where fldtime>=&4 and fldtime<=&5 and fldptcode like &6) and fldchequeno like &7 GROUP BY fldchequeno UNION select " & xList.Join(",") & " from " & $tbltempbilldetail & " where fldbankname like &1 and fldencounterval like &2 and fldbilltype like &3 and fldchequeno in(select fldclaimid from tblclaimcode where fldtime>=&4 and fldtime<=&5 and fldptcode like &6) and fldchequeno like &7 GROUP BY fldchequeno"
+  sql2 = "select " & xList.Join(",") & " from tblpatbilldetail where fldbankname like &1 and fldencounterval like &2 and fldbilltype like &3 and fldchequeno in(select fldclaimid from tblclaimcode where fldtime>=&4 and fldtime<=&5 and fldptcode like &6) and fldchequeno like &7 GROUP BY fldchequeno UNION select " & xList.Join(",") & " from tbltempbilldetail where fldbankname like &1 and fldencounterval like &2 and fldbilltype like &3 and fldchequeno in(select fldclaimid from tblclaimcode where fldtime>=&4 and fldtime<=&5 and fldptcode like &6) and fldchequeno like &7 GROUP BY fldchequeno"
+
+  If cmbfiscal.Text = "Current" Then
+    $rDatamain = modDatabase.$myConn.Exec(sql1, $sLedger, "%", "Credit", modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xnhis, xclaim)
+  Else
+    $rDatamain = modDatabase.$myConn.Exec(sql1 & " UNION ALL " & sql2, $sLedger, "%", "Credit", modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xnhis, xclaim)                  ''
+  Endif
+  $aMyFieldsmain = New String[]
+  modGridView.ReadSmallData(mainGridView, $rDatamain, $aMyFieldsmain)
+
+  With mainGridView
+    .Columns[0].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[1].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[2].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[3].Width = CStr(175 * modBasic.$AppWidthRatio) & "px"
+    .Columns[4].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[5].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[6].Hidden = True
+    If chksummary.Value = True Then
+      .Columns[7].Hidden = False
+      .Columns[8].Hidden = False
+      .Columns[7].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+      .Columns[8].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+    Else
+      .Columns[7].Hidden = True
+      .Columns[8].Hidden = True
+    Endif
+    .Columns[9].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+
+    .Columns[0].Text = "Reference"
+    .Columns[1].Text = "Account"
+    .Columns[2].Text = "Encounter"
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Status"
+    .Columns[5].Text = "State"
+    .Columns[7].Text = "Invoice"
+    .Columns[8].Text = "Receipt"
+    .Columns[9].Text = "Origin"
+  End With
+
+End
+
+Public Sub mainGridView_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rDatamain.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 3 Then
+    Data.Text = modPatient.GetPatientNameByEnc($rDatamain[$aMyFieldsmain[Column]], modDatabase.$myConn)
+  Else If Column = 4 Then
+    Data.Text = modPatient.CurrentAdmissionStatus($rDatamain[$aMyFieldsmain[Column]])
+  Else If Column = 5 Then
+    Data.Text = modClaim.GetHIClaimState($rDatamain[$aMyFieldsmain[Column]]) ''totalamt
+  Else If Column = 7 Then
+    If chksummary.Value = True Then
+      Data.Text = modNonMedical.GetClaimWiseTotalAmt("Invoice", $rDatamain[$aMyFieldsmain[Column]], $sLedger, "Credit")
+    Else
+      Data.Text = ""
+    Endif
+  Else If Column = 8 Then
+    If chksummary.Value = True Then
+      Data.Text = modNonMedical.GetClaimWiseTotalAmt("Receipt", $rDatamain[$aMyFieldsmain[Column]], $sLedger, "Credit")
+    Else
+      Data.Text = ""
+    Endif
+  Else If Column = 9 Then
+    Data.Text = modReportVar.GetDateTimeReport(modClaim.GetHIClaimTime($rDatamain[$aMyFieldsmain[Column]]), gb.GeneralDate)
+  Else
+    Data.Text = $rDatamain[$aMyFieldsmain[Column]]
+  Endif
+
+End
+
+Public Sub mainGridView_Select()
+
+  If mainGridView.Selection.Count Then
+    $rDatamain.MoveTo(mainGridView.Selection[0])
+    $encid = $rDatamain["fldencounterval"]
+    $ClaimCode = $rDatamain["fldchequeno"]
+  Endif
+
+End
+
+''====================== Archived REPORTS =========================
+Public Sub btnshowreport_Click()
+
+  If $encid Then
+    If cmbtype.Text Then
+      FillReportData($encid, cmbtype.Text)
+    Endif
+  Endif
+
+End
+
+Private Sub FillReportData(encid As String, sType As String)
+
+  If MMain.$WebEntry = True Then
+    $rData1 = modDatabase.$syConn.Exec("select fldrepoid,fldcateg,fldtime,fldencounterval,fldencounterval,fldtitle,fldid,flddetail,fldsave,fldlink from tblpatreport where fldencounterval like &1 and fldcateg=&2 and (flvisible=&3 or flvisible IS NULL) ORDER BY fldid DESC", encid, sType, "Visible")
+  Else
+    $rData1 = modDatabase.$syConn.Exec("select fldid,fldcateg,fldtime,fldencounterval,fldencounterval,fldtitle,fldid,flddetail,fldsave,fldlink from tblpatreport where fldencounterval like &1 and fldcateg=&2 and (flvisible=&3 or flvisible IS NULL) ORDER BY fldid DESC", encid, sType, "Visible")                                                                 ''
+  Endif
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView1, $rData1, $aMyFields1)
+
+  With GridView1
+    .Columns[0].Hidden = True
+    .Columns[1].Hidden = True
+    .Columns[2].Width = CStr(150 * modBasic.$AppWidthRatio) & "px"
+    .Columns[3].Hidden = True
+    .Columns[4].Hidden = True
+    .Columns[5].Width = CStr(200 * modBasic.$AppWidthRatio) & "px"
+    .Columns[6].Hidden = True
+    .Columns[7].Width = CStr(225 * modBasic.$AppWidthRatio) & "px"
+    .Columns[8].Hidden = True
+    .Columns[9].Hidden = True
+
+    .Columns[2].Text = "DateTime"
+    .Columns[5].Text = "Title"
+    .Columns[7].Text = "Comment"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData1.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 2 Then
+    Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.GeneralDate)
+  Else
+    Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+
+End
+
+Public Sub mnushow_Click()
+
+  Dim xLink As String
+
+  If GridView1.Selection.Count Then
+    $rData1.MoveTo(GridView1.Selection[0])
+
+    If MMain.$WebEntry = True Then
+      xLink = modImage.GetBlobFileData($rData1["fldrepoid"])
+    Else
+      xLink = modImage.GetBlobFileData($rData1["fldid"])
+    Endif
+    If xLink Then
+      WebPDFView1.Viewer = modSettings.ShowSettingFromFIle("Application/PDFViewer")
+      WebPDFView1.Tag = modPrint.GetFileWebURL(xLink)
+      WebPDFView1.Path = WebPDFView1.Tag
+    Endif
+
+  Endif
+
+End
+
+Public Sub mnuprint_Click()
+
+  Dim xLink As String
+
+  If GridView1.Selection.Count Then
+    $rData1.MoveTo(GridView1.Selection[0])
+
+    If MMain.$WebEntry = True Then
+      xLink = modImage.GetBlobFileData($rData1["fldrepoid"])
+    Else
+      xLink = modImage.GetBlobFileData($rData1["fldid"])
+    Endif
+    If xLink Then
+      Me.Exec("printJS('" & modPrint.GetFileWebURL(xLink) & "')")
+    Endif
+
+  Endif
+
+End
+
+''============================== Invoices ================
+Public Sub btnbillrefresh_Click()
+
+  If $encid Then
+    SHowPatientInvoices($ClaimCode)
+  Endif
+
+End
+
+Private Sub SHowPatientInvoices(xClaimCode As String)
+
+  Dim xFldList As String[]
+  Dim xcash As Float
+  Dim xcred As Float
+
+  xFldList = ["fldtime", "fldtime", "fldbillno", "fldencounterval", "fldencounterval", "fldbilltype", "fldbankname", "fldchequeno", "flditemamt", "flddiscountamt", "fldtaxamt", "fldchargedamt", "fldreceivedamt", "fldcurdeposit", "flduserid", "fldbilltype", "fldtaxamt", "flddiscountamt", "fldbillno", "flddiscountgroup", "fldcomp"]
+  If rbinvoice.Value = True Then
+    $rData2 = modDatabase.$myConn.Exec("select " & xFldList.Join(",") & " from " & $tblpatbilldetail & " where fldbankname=&1 and fldchequeno=&2 ORDER BY fldid DESC", $sLedger, xClaimCode)
+  Else If rbreceipt.Value = True Then
+    $rData2 = modDatabase.$myConn.Exec("select " & xFldList.Join(",") & " from " & $tbltempbilldetail & " where fldbankname=&1 and fldchequeno=&2 ORDER BY fldid DESC", $sLedger, xClaimCode)
+  Endif
+
+  xcash = 0
+  xcred = 0
+  For Each $rData2
+    If $rData2["fldbilltype"] = "Cash" Then
+      xcash = xcash + $rData2["fldreceivedamt"]
+    Else If $rData2["fldbilltype"] = "Credit" Then
+      xcash = xcash + $rData2["fldreceivedamt"]
+      xcred = xcred + ($rData2["fldchargedamt"] - $rData2["fldreceivedamt"])
+    Endif
+  Next
+
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData2, $aMyFields2)
+
+  With GridView2
+    .Columns[0].Width = CStr(150 * modBasic.$AppWidthRatio) & "px"
+    .Columns[1].Hidden = True
+    .Columns[2].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[3].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[4].Width = CStr(300 * modBasic.$AppWidthRatio) & "px"
+    .Columns[5].Width = CStr(50 * modBasic.$AppWidthRatio) & "px"
+    .Columns[6].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[7].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[8].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[9].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[10].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[11].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[12].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[13].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[14].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+    .Columns[15].Hidden = True
+    .Columns[16].Hidden = True
+    .Columns[17].Hidden = True
+    .Columns[18].Hidden = True
+    .Columns[19].Hidden = True
+    .Columns[20].Hidden = True
+
+    .Columns[0].Text = "Date"
+    .Columns[2].Text = "Invoice"
+    .Columns[3].Text = "EncID"
+    .Columns[4].Text = "Name"
+    .Columns[5].Text = "Type"
+    .Columns[6].Text = "Account"
+    .Columns[7].Text = "Reference"
+    .Columns[8].Text = "SubTotal"
+    .Columns[9].Text = "DiscAmt"
+    .Columns[10].Text = "TaxAmt"
+    .Columns[11].Text = "NetTotal"
+    .Columns[12].Text = "Received"
+    .Columns[13].Text = "Deposit"
+    .Columns[14].Text = "User"
+  End With
+
+  txtcash.Value = Format(xcash, gb.Fixed)
+  txtcredit.Value = Format(xcred, gb.Fixed)
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData2.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  Data.Text = GetGridViewValue(Column, $rData2[$aMyFields2[Column]])
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+
+  Dim xxx As Variant
+
+  If Column = 0 Then
+    xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+  Else If Column = 4 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
+  Else If Column = 8 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 9 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 10 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 11 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 12 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 13 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 18 Then
+    xxx = modNonMedical.GetReturnInvoices(xVariable).Join("; ")
+  Else
+    xxx = xVariable
+  Endif
+
+  Return xxx
+
+End
+
+' Public Sub mnuprintinv_Click()
+'
+'   Dim ShowTax As Boolean
+'   Dim ShowDisc As Boolean
+'
+'   If GridView2.Selection.Count Then
+'     $rData2.MoveTo(GridView2.Selection[0])
+'
+'     If rbinvoice.Value = True Then
+'       If $rData2["fldtaxamt"] = 0 Then
+'         ShowTax = False
+'       Else
+'         ShowTax = True
+'       Endif
+'       If $rData2["flddiscountamt"] = 0 Then
+'         ShowDisc = False
+'       Else
+'         ShowDisc = True
+'       Endif
+'       modBILLFormat.BillingInvoice($rData2["fldencounterval"], $rData2["fldbillno"], modBillLock.GetCopyBillTypeFromBillNo($rData2["fldbillno"]), ShowTax, ShowDisc)
+'     Else If rbreceipt.Value = True Then
+'       If $rData2["fldbillno"] Like "TDA" & "*" Then
+'         modBILLFormat.DischargeReceipt($rData2["fldencounterval"], $rData2["fldbillno"], "DISCHARGE SLIP (COPY)")
+'       Else
+'         modBILLFormat.BillingReceipt($rData2["fldencounterval"], $rData2["fldbillno"], "RECEIPT (COPY)")
+'       Endif
+'     Endif
+'   Endif
+'
+' End
+
+Public Sub mnushowinv_Click()
+
+  Dim xLink As String
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+  Dim xfile As String
+
+  If GridView2.Selection.Count Then
+    $rData2.MoveTo(GridView2.Selection[0])
+
+    modNonMedical.$tblpatbilling = $tblpatbilling
+    modNonMedical.$tblpatbilldetail = $tblpatbilldetail
+    modNonMedical.$tbltempbilldetail = $tbltempbilldetail
+    If rbinvoice.Value = True Then
+      If $rData2["fldtaxamt"] = 0 Then
+        ShowTax = False
+      Else
+        ShowTax = True
+      Endif
+      If $rData2["flddiscountamt"] = 0 Then
+        ShowDisc = False
+      Else
+        ShowDisc = True
+      Endif
+      xLink = modBILLFormat.GetBillingInvoicePath($rData2["fldbillno"], modBillLock.GetCopyBillTypeFromBillNo($rData2["fldbillno"]), ShowTax, ShowDisc)
+    Else If rbreceipt.Value = True Then
+      If $rData2["fldbillno"] Like "TDA" & "*" Then
+        xLink = modBILLFormat.GetDischargeReceiptPath($rData2["fldencounterval"], $rData2["fldbillno"], "DISCHARGE SLIP (COPY)")
+      Else
+        xLink = modBILLFormat.GetBillingReceiptPath($rData2["fldbillno"], "RECEIPT (COPY)")
+      Endif
+    Endif
+
+    If xLink Then
+      xfile = File.Load(xLink)
+      If InStr(xfile, modReportVar.$HTMLStart) > 0 Then
+        WebHtml1.Html = modString.GetSelectedText(xfile, modReportVar.$HTMLStart, modReportVar.$HTMLEnd)
+      Else
+        WebHtml1.Html = xfile
+      Endif
+    Endif
+
+    modNonMedical.$tblpatbilling = ""
+    modNonMedical.$tblpatbilldetail = ""
+    modNonMedical.$tbltempbilldetail = ""
+  Endif
+
+End

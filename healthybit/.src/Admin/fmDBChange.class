@@ -1,0 +1,276 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $TableList As String[]
+Private $prikey As String
+Private $pricol As Integer
+Private $BlobFields As String[]
+
+Public Sub Form_Open()
+
+  Me.Center
+  modHelpVariable.CalenderConnection()
+  $TableList = modDBApp.FillDBTables(modDatabase.$myConn, True)
+  cmbrelation.List = ["=", "<", "<=", ">", ">=", "LIKE", "NOT LIKE", "IS NULL", "IS NOT NULL"]
+  ListBox1.List = $TableList
+
+End
+
+Public Sub txtsort_Change()
+
+  ListBox1.List = modString.SelectStringArrayToText(txtsort.Text, $TableList)
+
+End
+
+Private Function GetPriKeyString(sTable As String) As String
+
+  Dim hTable As Table
+  Dim bb As String
+
+  For Each hTable In modDatabase.$myConn.Tables
+    If hTable.Name = sTable Then
+      bb = hTable.PrimaryKey[0]
+    Endif
+  Next
+  Return bb
+
+End
+
+Private Sub GetFieldDataType(cmb As ComboBox, txtbox As TextBox, vlubox As ValueBox)
+
+  Dim ref As Field
+  Dim hTable As Table
+  Dim xx As Integer
+
+  For Each hTable In modDatabase.$syConn.Tables
+    If hTable.Name = ListBox1.Text Then
+      For Each ref In hTable.Fields
+        If ref.Name = cmb.Text Then
+          xx = ref.Type
+        Endif
+      Next
+    Endif
+  Next
+
+  Select xx
+    Case db.Float, db.Long, db.Integer, db.Serial
+      cmb.Tag = "Value"
+      txtbox.Visible = False
+      vlubox.Visible = True
+      vlubox.Type = ValueBox.Number
+    Case db.Date
+      cmb.Tag = "Value"
+      txtbox.Visible = False
+      vlubox.Visible = True
+      vlubox.Type = ValueBox.DateTime
+    Case db.String
+      cmb.Tag = "String"
+      txtbox.Visible = True
+      vlubox.Visible = False
+    Case db.Boolean
+      cmb.Tag = "Value"
+      txtbox.Visible = False
+      vlubox.Visible = True
+      vlubox.Type = ValueBox.Number
+  End Select
+
+End
+
+Public Sub cmbfield_Click()
+
+  GetFieldDataType(cmbfield, txtstring, txtvalue)
+
+End
+
+Public Sub ListBox1_Click()
+
+  $prikey = ""
+  $pricol = -1
+  $prikey = GetPriKeyString(ListBox1.Text)
+
+  GridView1.Clear()
+  Inc Application.Busy
+  SHowTableGrid()
+  Dec Application.Busy
+
+End
+
+Public Sub ListBox1_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    $prikey = ""
+    $pricol = -1
+    $prikey = GetPriKeyString(ListBox1.Text)
+
+    GridView1.Clear()
+    Inc Application.Busy
+    SHowTableGrid()
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub btnexec_Click()
+
+  ShowGridAll()
+
+End
+
+Private Sub SHowTableGrid()
+
+  Dim xfiledList As String[]
+  Dim hTable As Table
+  Dim refield As Field
+  Dim res As Result
+
+  xfiledList = New String[]
+  $BlobFields = New String[]
+  For Each hTable In modDatabase.$myConn.Tables
+    If hTable.Name = ListBox1.Text Then
+      For Each refield In hTable.Fields
+
+        If refield.Type = db.Blob Then
+          If chkblob.Value = True Then
+            xfiledList.Add(refield.Name)
+            $BlobFields.Add(refield.Name)
+          Endif
+        Else
+          xfiledList.Add(refield.Name)
+        Endif
+
+      Next
+    Endif
+  Next
+  cmbfield.List = xfiledList
+
+  res = modDatabase.$myConn.Exec(Subst("select count(*) as cnt from &1", ListBox1.Text))
+  If res!cnt Then
+    Slider1.MaxValue = CInt(Floor(res!cnt / 100))
+  Else
+    Slider1.MaxValue = 0
+  Endif
+
+End
+
+Private Sub ShowGridAll()
+
+  Dim j As Integer
+  Dim ref As ResultField
+  Dim xx1 As Variant
+  Dim xrelation As String
+
+  Dim xfiledList As String[]
+  Dim hTable As Table
+  Dim refield As Field
+
+  xfiledList = New String[]
+  $BlobFields = New String[]
+  For Each hTable In modDatabase.$myConn.Tables
+    If hTable.Name = ListBox1.Text Then
+      For Each refield In hTable.Fields
+
+        If refield.Type = db.Blob Then
+          If chkblob.Value = True Then
+            xfiledList.Add(refield.Name)
+            $BlobFields.Add(refield.Name)
+          Endif
+        Else
+          If refield.Name = "fldpass" Then
+          Else If refield.Name = "fldpassword" Then
+          Else
+            xfiledList.Add(refield.Name)
+          Endif
+        Endif
+
+      Next
+    Endif
+  Next
+
+  If cmbfield.Text And If cmbrelation.Text Then
+    If cmbrelation.Text = "IS NULL" Or If cmbrelation.Text = "IS NOT NULL" Then
+      xrelation = cmbrelation.Text
+    Else
+      xrelation = cmbrelation.Text & " &1"
+    Endif
+
+    If cmbfield.Tag = "Value" Then
+      xx1 = txtvalue.Value
+    Else If cmbfield.Tag = "String" Then
+      xx1 = txtstring.Text
+    Endif
+    $rData = modDatabase.$myConn.Exec(Subst("select &1 from &2 where &3", xfiledList.Join(","), ListBox1.Text, cmbfield.Text) & Space(1) & xrelation & "  LIMIT 100 OFFSET &2", xx1, Slider1.Value * 100)                               ''
+    $aMyFields = New String[]
+    modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  Else
+    $rData = modDatabase.$myConn.Exec(Subst("select &1 from &2 LIMIT 100 OFFSET &3", xfiledList.Join(","), ListBox1.Text, Slider1.Value * 100))
+    $aMyFields = New String[]
+    modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  Endif
+
+  j = 0
+  For Each ref In $rData.Fields
+    GridView1.Columns[j].Text = ref.Name
+    If GridView1.Columns[j].Text = $prikey Then
+      $pricol = j
+    Endif
+    j = j + 1
+  Next
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If $BlobFields And If $BlobFields.Exist($aMyFields[Column]) Then
+    GridView1.Data.Text = "Blob Data"
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnufile.Popup
+
+End
+
+Public Sub mnuedit_Click()
+
+  Dim hForm As FmArrayForm
+  Dim Row As Integer
+
+  If GridView1.Rows.Selection.Count Then
+    Row = GridView1.Row
+    If $prikey Then
+      hForm = New FmArrayForm(ListBox1.Text, $prikey, GridView1[GridView1.Row, $pricol].Text)
+      hForm.ShowModal
+      ShowGridAll()
+    Endif
+    GridView1.Row = Row
+  Endif
+
+End
+
+Public Sub mnudelete_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    If Message.Question(("Do you want to DELETE selected information?"), ("No"), ("Yes")) = 2 Then
+      If $prikey Then
+        modDatabase.$myConn.Delete(ListBox1.Text, $prikey & "=&1", GridView1[GridView1.Row, $pricol].Text)
+        ShowGridAll()
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub txtsort_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End

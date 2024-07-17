@@ -1,0 +1,110 @@
+' Gambas class file
+
+Private $CBMSUser As String
+Private $CBMSPass As String
+Private $CMBSURL As String
+Private $CBMSMessage As String
+
+Private $sellerPan As String
+Private $buyerPan As String
+Private $buyername As String
+Private $fiscalyear As String
+Private $invoicenumber As String
+Private $invoicedate As String
+Private $totalsales As Float
+Private $taxableamt As Float
+Private $taxamt As Float
+Private $currdate As String
+Private $SalesInvoice As String
+Private $reason As String
+
+Public Sub _new(sBillno As String)
+
+  Dim res As Result
+  Dim res1 As Result
+
+  $CBMSUser = Trim(UnBase64(modSettings.ShowSettingFromFIle("CBMSAPI/UserName")))
+  $CBMSPass = Trim(UnBase64(modSettings.ShowSettingFromFIle("CBMSAPI/Password")))
+  $CMBSURL = Trim(modSettings.ShowSettingFromFIle("CBMSAPI/ReturnURL"))
+
+  res = modDatabase.$myConn.Exec("select fldfiscal,fldbillno,fldpatname,fldpan,flddate,flditemamt,fldtaxable,fldtaxamt,flddiscountamt from tblfiscal where fldbillno=&1", sBillno)                ''
+  If res.Available Then
+    res1 = modDatabase.$myConn.Exec("select fldretbill,fldreason from tblpatbilling where fldbillno=&1", sBillno)
+    If res1.Available Then
+      res1.MoveLast
+      $SalesInvoice = res1["fldretbill"]
+      $reason = Trim(res1["fldreason"])
+    Endif
+    $sellerPan = modHelpVariable.$Department
+    If res["fldpan"] Then
+      $buyerPan = res["fldpan"]
+    Else
+      $buyerPan = ""
+    Endif
+    $buyername = res["fldpatname"]
+    $fiscalyear = Replace(res["fldfiscal"], "/", ".")
+    $invoicenumber = res["fldbillno"]
+    $invoicedate = Replace(modDate.ConvertToLocaldate(res["flddate"]), "/", ".")
+    $totalsales = res["flditemamt"] - res["flddiscountamt"]
+    $taxableamt = res["fldtaxable"]
+    $taxamt = res["fldtaxamt"]
+    $currdate = Format(Now(), "yyyy-mm-ddThh:nn:ss")
+    ' If res["flditemamt"] > 0 Then
+    UploadSalesCBMSData()
+    ' Endif
+  Endif
+
+End
+
+Private Sub UploadSalesCBMSData()
+
+  Dim data As Collection
+  Dim xurl As String
+  Dim xauth As String
+  Dim xcontent As String
+  Dim xcmd As String
+
+  data = New Collection
+  data.Add($CBMSUser, "username")
+  data.Add($CBMSPass, "password")
+  data.Add($sellerPan, "seller_pan")
+  If $buyerPan Then
+    data.Add($buyerPan, "buyer_pan")
+  Endif
+  data.Add($buyername, "buyer_name")
+  data.Add($fiscalyear, "fiscal_year")
+  data.Add($SalesInvoice, "ref_invoice_number")
+  data.Add($invoicenumber, "credit_note_number")
+  data.Add($invoicedate, "credit_note_date")
+  data.Add($reason, "reason_for_return")
+  data.Add(0 - $totalsales, "total_sales")
+  data.Add($taxableamt, "taxable_sales_vat")
+  data.Add($taxamt, "vat")
+  data.Add(0, "excisable_amount")
+  data.Add(0, "excise")
+  data.Add(0, "taxable_sales_hst")
+  data.Add(0, "hst")
+  data.Add(0, "amount_for_esf")
+  data.Add(0, "esf")
+  data.Add(0, "export_sales")
+  data.Add(0, "tax_exempted_sales")
+  data.Add(False, "isrealtime")
+  data.Add($currdate, "datetimeClient")
+
+  xurl = Trim($CMBSURL)  ''"http://103.1.92.174:9050/api/bill"
+  xauth = $CBMSUser & ":" & $CBMSPass    ''"Test_CBMS:test@321"
+  xcontent = "Content-Type: application/json"
+
+  ' xcmd = "curl -u " & xauth & " -d '" & JSON.Encode(data) & "' -H " & Quote(xcontent) & "  -X POST " & xurl
+  xcmd = "curl -d '" & JSON.Encode(data) & "' -H " & Quote(xcontent) & "  -X POST " & xurl
+  modBasic.DebugAPIString("Execute " & Replace(xcmd, $CBMSPass, "***"))
+  Shell xcmd To $CBMSMessage
+  modBasic.DebugAPIString("Response: " & $CBMSMessage)
+
+End
+
+Public Function CBMSOutput() As String
+
+  Return $CBMSMessage
+
+End

@@ -1,0 +1,452 @@
+' Gambas module file
+
+''-----------------------------------convert Mysqldump output file to CSV format
+Public Function ConvertDumpToCSV(sDump As String) As String
+
+  Dim xx As String
+  Dim sPath As String
+
+  sPath = Temp() & ".csv"
+  xx = "python " & modHelpVariable.$scriptDirectory &/ "mysqldump_to_csv.py " & sDump & " > " & sPath
+  modBasic.DebugString("Execute " & xx)
+  Shell xx Wait
+
+  Return sPath
+
+End
+
+''----------------------------------Import any CSV file to Sqlite3
+Public Sub LoadCSVToSQLite(sCSV As String, delim As String, sPath As String, sTable As String)
+
+  Dim xx As String
+  Dim hCSV As CsvFile
+  Dim fldcount As Integer
+  Dim qlit As Connection
+  Dim hTable As Table
+  Dim i As Integer
+
+  hCSV = New CsvFile(sCSV, delim)
+  fldcount = hCSV.Fields.Count
+
+  If Not Exist(sPath) Then
+    modDBApp.CreateSQliteDB(sPath)
+  Endif
+  qlit = modDBApp.OpenConnection("sqlite3", File.Dir(sPath), File.Name(sPath), "", "")
+  If Not qlit.Tables.Exist(sTable) Then
+    hTable = qlit.Tables.Add(sTable)
+    For i = 0 To fldcount - 1
+      hTable.Fields.Add("col" & CStr(i), gb.String, 255)
+    Next
+    hTable.Update
+  Endif
+  Try qlit.Close()
+
+  If System.Exist("sqlite3") Then
+    xx = "echo " & Quote(".separator " & Quote(delim) & "\n.import " & sCSV & Space(1) & sTable) & " | sqlite3 " & sPath
+    modBasic.DebugString("Execute " & xx)
+    Shell xx Wait
+  Else
+    modApplSub.InstallSelectedApplication(["sqlite3"])
+  Endif
+
+End
+
+''--------------------------convert mysqldump file to importable format and import to sqlite3
+'' for local database
+Public Function GetImportCSVtoSQLite(sTable As String[]) As Connection
+
+  Dim qlit As Connection
+  Dim sTab As String
+  Dim sCSV As String
+  Dim xx As String
+  Dim xtmp As String
+  Dim yy As String
+  Dim delim As String
+  Dim sPath As String
+
+  delim = ","
+  sPath = Temp() & ".db"
+  modDBApp.CreateSQliteDB(sPath)
+  qlit = modDBApp.OpenConnection("sqlite3", File.Dir(sPath), File.Name(sPath), "", "")
+
+  For Each sTab In sTable
+    'get dump file
+    sCSV = modDatabase.GetBackUpSelTable(sTab)
+    'create table in sqlite3
+    modDBGroup.CreateRequiredTable(qlit, sTab)
+    'update dump file
+    xtmp = Temp()
+    xx = "sh " & modHelpVariable.$scriptDirectory &/ "mysql2sqlite.sh " & sCSV & " > " & xtmp
+    modBasic.DebugString("Execute " & xx)
+    Shell xx Wait
+    'restore update dump file into sqlite3
+    If System.Exist("sqlite3") Then
+      yy = "cat " & xtmp & " | sqlite3 " & sPath
+      modBasic.DebugString("Execute " & yy)
+      Shell yy Wait
+    Else
+      modApplSub.InstallSelectedApplication(["sqlite3"])
+    Endif
+  Next
+  Return qlit
+
+End
+
+'' for remote medical database
+Public Function GetImportMedCSVtoSQLite(sTable As String[], Optional sFile As String) As Connection
+
+  Dim qlit As Connection
+  Dim sTab As String
+  Dim sCSV As String
+  Dim xx As String
+  Dim xtmp As String
+  Dim yy As String
+  Dim delim As String
+  Dim sPath As String
+
+  delim = ","
+  If sFile Then
+    sPath = sFile
+  Else
+    sPath = Temp() & ".db"
+  Endif
+
+  modDBApp.CreateSQliteDB(sPath)
+  qlit = modDBApp.OpenConnection("sqlite3", File.Dir(sPath), File.Name(sPath), "", "")
+
+  For Each sTab In sTable
+    'get dump file
+    sCSV = modDatabase.GetBackupRemoteTable(sTab)
+    'create table in sqlite3
+    modDBGroup.CreateRequiredTable(qlit, sTab)
+    'update dump file
+    xtmp = Temp()
+    xx = "sh " & modHelpVariable.$scriptDirectory &/ "mysql2sqlite.sh " & sCSV & " > " & xtmp
+    modBasic.DebugString("Execute " & xx)
+    Shell xx Wait
+    'restore update dump file into sqlite3
+    If System.Exist("sqlite3") Then
+      yy = "cat " & xtmp & " | sqlite3 " & sPath
+      modBasic.DebugString("Execute " & yy)
+      Shell yy Wait
+    Else
+      modApplSub.InstallSelectedApplication(["sqlite3"])
+    Endif
+  Next
+  Return qlit
+
+End
+
+Public Sub ImportCSVToCurrentDB(sCon As Connection, sTable As String, sCSV As String, sDelim As String, Optional fixField As String, Optional fixValue As Variant)                                      ''
+
+  Dim hCSV As CsvFile
+  Dim xcoll As Collection
+  Dim ref As Field
+  Dim hTable As Table
+  Dim res As Result
+
+  If Exist(sCSV) And If sTable And If sDelim Then
+
+    Inc Application.Busy
+    hCSV = New CsvFile(sCSV, sDelim)
+    While hCSV.Eof = False
+      xcoll = hCSV.Read()
+
+      For Each hTable In sCon.Tables
+        If hTable.Name = sTable Then
+          res = sCon.Create(sTable)
+
+          For Each ref In hTable.Fields
+            If Trim(xcoll[ref.Name]) Then
+
+              If fixField Then
+                If ref.Name = fixField Then
+                  res[ref.Name] = fixValue
+                Else
+                  Select ref.Type
+                    Case db.Integer, db.Long, db.Float, db.Serial, db.Date
+                      res[ref.Name] = Val(Trim(xcoll[ref.Name]))
+                    Case db.Boolean
+                      res[ref.Name] = CBoolean(Trim(xcoll[ref.Name]))
+                    Case db.String
+                      res[ref.Name] = Trim(xcoll[ref.Name])
+                  End Select
+                Endif
+
+              Else
+                Select ref.Type
+                  Case db.Integer, db.Long, db.Float, db.Serial, db.Date
+                    res[ref.Name] = Val(Trim(xcoll[ref.Name]))
+                  Case db.Boolean
+                    res[ref.Name] = CBoolean(Trim(xcoll[ref.Name]))
+                  Case db.String
+                    res[ref.Name] = Trim(xcoll[ref.Name])
+                End Select
+              Endif
+
+            Endif
+          Next
+          Try res.Update()
+
+        Endif
+      Next
+
+    Wend
+    hCSV.Close()
+    Dec Application.Busy
+
+  Endif
+
+End
+
+Public Sub InsertJsonToSQLiteTable(sCon As Connection, sTable As String, sJson As String)
+
+  Dim rowVar As Variant[]
+  Dim xvar As Variant
+  Dim res As Result
+  Dim fld As ResultField
+
+  Dim xcoll As New Collection
+  Dim xkey As Variant
+
+  Try rowVar = JSON.Decode(sJson)
+  If rowVar Then
+    For Each xvar In rowVar
+      If xvar Then
+        xcoll = xvar
+
+        res = sCon.Create(sTable)
+        For Each xkey In xcoll
+          For Each fld In res.Fields
+            If fld.Name = xcoll.Key Then
+              Select fld.Type
+                Case db.Date
+                  If xkey Then
+                    res[fld.Name] = modDate.GetDateFromJSON(xkey)
+                  Else
+                    res[fld.Name] = ""
+                  Endif
+                Case db.Integer, db.Long, db.Serial
+                  res[fld.Name] = CLong(xkey)
+                Case db.Float
+                  res[fld.Name] = CFloat(xkey)
+                Case db.Boolean
+                  res[fld.Name] = CBool(xkey)
+                Case Else
+                  If TypeOf(xkey) = gb.String Then
+                    res[fld.Name] = CStr(xkey)
+                  Else
+                    res[fld.Name] = ""
+                  Endif
+              End Select
+            Endif
+          Next
+        Next
+        res.Update
+
+      Endif
+    Next
+  Endif
+
+End
+
+Public Sub InsertCollToSQLiteTable(sCon As Connection, sTable As String, xcoll As Collection)
+
+  Dim res As Result
+  Dim fld As ResultField
+  Dim xkey As Variant
+
+  res = sCon.Create(sTable)
+  For Each xkey In xcoll
+    For Each fld In res.Fields
+      If fld.Name = xcoll.Key Then
+        Select fld.Type
+          Case db.Date
+            If xkey Then
+              res[fld.Name] = modDate.GetDateFromJSON(xkey)
+            Else
+              res[fld.Name] = ""
+            Endif
+          Case db.Integer, db.Long, db.Serial
+            res[fld.Name] = CLong(xkey)
+          Case db.Float
+            res[fld.Name] = CFloat(xkey)
+          Case db.Boolean
+            res[fld.Name] = CBool(xkey)
+          Case Else
+            If TypeOf(xkey) = gb.String Then
+              res[fld.Name] = CStr(xkey)
+            Else
+              res[fld.Name] = ""
+            Endif
+        End Select
+      Endif
+    Next
+  Next
+  res.Update
+
+End
+
+''--------------------- Convert Query Result to CSV & other Format
+Public Function ConvertResultToSQL(res As Result, sTable As String) As String
+
+  Dim acol As String[]
+  Dim xxx As String[]
+  Dim xhead As String[]
+  Dim xval As String
+  Dim ref As ResultField
+  Dim sqlPath As String
+
+  sqlPath = Temp() & ".sql"
+  If res.Available Then
+    xhead = New String[]
+    For Each ref In res.Fields
+      xhead.Add(db.Quote(ref.Name, True))
+    Next
+
+    xxx = New String[]
+    For Each res
+      acol = New String[]
+      For Each ref In res.Fields
+        If ref.Type = gb.String Then
+          If res[ref.Name] Then
+            acol.Add("'" & res[ref.Name] & "'")
+          Else
+            acol.Add("NULL")
+          Endif
+        Else If ref.Type = gb.Integer Then
+          If res[ref.Name] Then
+            acol.Add(CStr(res[ref.Name]))
+          Else
+            acol.Add("0")
+          Endif
+        Else If ref.Type = gb.Long Then
+          If res[ref.Name] Then
+            acol.Add(CStr(res[ref.Name]))
+          Else
+            acol.Add("0")
+          Endif
+        Else If ref.Type = gb.Float Then
+          If res[ref.Name] Then
+            acol.Add(CStr(res[ref.Name]))
+          Else
+            acol.Add("0")
+          Endif
+        Else If ref.Type = gb.Date Then
+          If res[ref.Name] Then
+            acol.Add("'" & Format(res[ref.Name], "yyyy-mm-dd hh:nn:ss") & "'")
+          Else
+            acol.Add("'0000-00-00 00:00:00'")
+          Endif
+        Else If ref.Type = gb.Boolean Then
+          If res[ref.Name] = True Then
+            acol.Add("1")
+          Else
+            acol.Add("0")
+          Endif
+        Else
+          acol.Add(res[ref.Name])
+        Endif
+      Next
+      xxx.Add("(" & acol.Join(",") & ")")
+    Next
+    xval = "INSERT INTO " & sTable & " (" & xhead.Join(",") & ") VALUES " & xxx.Join(",")
+    File.Save(sqlPath, xval)
+  Endif
+
+  Return sqlPath
+
+End
+
+Public Function ConvertResultToCSV(res As Result, delim As String, sHeader As Boolean) As String
+
+  Dim csvPath As String
+  Dim ref As ResultField
+  Dim refary As String[]
+  Dim resary As String[]
+  Dim xxx As String[]
+
+  csvPath = Temp() & ".csv"
+  xxx = New String[]
+
+  If res.Available Then
+    If sHeader = True Then
+      refary = New String[]
+      For Each ref In res.Fields
+        refary.Add(ref.Name)
+      Next
+      xxx.Add(refary.Join(delim))
+    Endif
+
+    For Each res
+      resary = New String[]
+      For Each ref In res.Fields
+        resary.Add(res[ref.Name])
+      Next
+      xxx.Add(resary.Join(delim))
+    Next
+
+    File.Save(csvPath, xxx.Join(gb.NewLine))
+  Endif
+
+  Return csvPath
+
+End
+
+Public Function COnvertResultToVariant(res As Result) As Variant[]
+
+  Dim ref As ResultField
+  Dim resary As Collection
+  Dim xxx As Variant[]
+
+  xxx = New Variant[]
+
+  If res.Available Then
+    For Each res
+      resary = New Collection
+      For Each ref In res.Fields
+        resary.Add(res[ref.Name], ref.Name)
+      Next
+      xxx.Add(resary)
+    Next
+  Endif
+
+  Return xxx
+
+End
+
+Public Function ConvertResultToJSON(res As Result) As String
+
+  Dim jsonPath As String
+  Dim xxx As Variant[]
+
+  jsonPath = Temp() & ".json"
+  If res.Available Then
+    xxx = COnvertResultToVariant(res)
+    If xxx Then
+      File.Save(jsonPath, JSON.Encode(xxx))
+    Endif
+  Endif
+
+  Return jsonPath
+
+End
+
+''----------------- Import json ------------------
+Public Sub ImportJSONToCurrentDB(sCon As Connection, sTable As String, sJSON As String)                                      ''
+
+  Dim xVar As Variant[]
+  Dim xcoll As Collection
+  Dim res As Result
+  Dim xxx As Variant
+
+  Try xVar = JSON.Decode(File.Load(sJSON))
+  For Each xcoll In xVar
+    res = sCon.Create(sTable)
+    For Each xxx In xcoll
+      res[xcoll.Key] = xxx
+    Next
+    Try res.Update
+  Next
+
+End

@@ -1,0 +1,145 @@
+' Gambas class file
+
+Private $xAuthString As String
+Private $HeadString As String
+
+Private $PatCode As String
+Private $CreditAmt As Float
+Private $ExpiryDate As Date
+Private $PolicyNo As String
+Private $PayValue As Float
+Private $PayType As String
+
+Private Sub SetAuthentication()
+
+  If modBasic.$IMISQuote = "Yes" Then
+    $xAuthString = "'" & modBasic.$IMISUser & ":" & modBasic.$IMISPass & "'"
+  Else
+    $xAuthString = modBasic.$IMISUser & ":" & modBasic.$IMISPass
+  Endif
+  $HeadString = "remote-user:" & modBasic.$IMISRemoUser
+
+End
+
+Public Sub _new(sPatcode As String)
+
+  $PatCode = sPatcode
+  ShowFinancialParams()
+
+End
+
+Private Function GetFinancialDetails(sPatCode As String) As Variant[]
+
+  Dim acmd As String
+  Dim xurl As String
+  Dim xcont As String
+  Dim xcolVar As Collection
+  Dim xcoll As Collection
+  Dim xpatout As String
+  Dim xResColl As Collection
+  Dim xVarPat As Variant[]
+  Dim xhead As String
+
+  SetAuthentication()
+  xurl = modBasic.$IMISEligibleURL
+  xcont = "Content-Type: application/json"
+
+  xcolVar = New Collection
+  xcolVar.Add("EligibilityRequest", "resourceType")
+  xcoll = New Collection
+  xcoll.Add("Patient/" & sPatCode, "reference")
+  xcolVar.Add(xcoll, "patient")
+
+  xhead = Space(1)
+  If modBasic.$IMISCACert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If modBasic.$IMISAgent Then
+    xhead = xhead & "-A " & modBasic.$IMISAgent & Space(1)
+  Endif
+
+  acmd = "curl" & xhead & "-u " & $xAuthString & " -H " & Quote(xcont) & " -H " & Quote($HeadString) & " -d '" & JSON.Encode(xcolVar) & "' -X POST " & xurl
+  modBasic.DebugAPIString(Replace("Execute " & acmd, $xAuthString, "****"))
+  Shell acmd To xpatout
+  modBasic.DebugAPIString("Response: " & xpatout)
+
+  If xpatout Then
+    Try xResColl = JSON.Decode(xpatout)
+    If xResColl Then
+      xVarPat = xResColl["insurance"]
+      Return xVarPat
+    Else
+      Message.Warning("Error in getting data", "OK")
+    Endif
+  Else
+    Message.Warning("No Response from server", "OK")
+  Endif
+
+End
+
+Private Sub ShowFinancialParams()
+
+  Dim xVarPat As Variant[]
+  Dim xamt As String
+  Dim xdate As String
+  Dim asx As String[]
+  Dim xextVar As Variant[]
+  Dim xexColl As Collection
+
+  xVarPat = GetFinancialDetails($PatCode)
+  If xVarPat Then
+    xamt = xVarPat[0]["benefitBalance"][0]["financial"][0]["allowedMoney"]["value"]
+    If xamt Then
+      $CreditAmt = CFloat(xamt)
+    Endif
+
+    xdate = xVarPat[0]["contract"]["reference"]
+    asx = Split(xdate, "/")
+    If asx Then
+      $PolicyNo = asx[1]
+      $ExpiryDate = modDate.GetDateFromJSON(asx[2])
+    Endif
+
+    xextVar = xVarPat[0]["extension"]
+    For Each xexColl In xextVar
+      If xexColl["url"] = "https://hib.gov.np/fhir/FHIE+extension+Copayment" Then
+        $PayValue = xexColl["valueDecimal"]
+        $PayType = xexColl["valueString"]
+      Endif
+    Next
+
+  Else
+    Message.Warning("Error in Decoding data", "OK")
+  Endif
+
+End
+
+Public Function GetPolicyNo() As String
+
+  Return $PolicyNo
+
+End
+
+Public Function GetexpiryDaye() As Date
+
+  Return $ExpiryDate
+
+End
+
+Public Function GetAllowedAmt() As Float
+
+  Return $CreditAmt
+
+End
+
+Public Function GetCopayValue() As Float
+
+  Return $PayValue
+
+End
+
+Public Function PatientPayType() As String
+
+  Return $PayType
+
+End

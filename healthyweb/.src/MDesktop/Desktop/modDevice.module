@@ -1,0 +1,251 @@
+' Gambas module file
+
+'NOTE: ------------------------------ Webcam Procedures -----------------------------------------------
+Public Function WebCamDevice() As String
+
+  Dim xx As String
+  Dim xdevice As String
+
+  xdevice = modSettings.ShowSettingFromFIle("WebCamSettings/Device")
+  If xdevice Then
+    xx = xdevice
+  Else
+    xx = "/dev/video0"
+  Endif
+  Return xx
+
+End
+
+Public Sub CamOnStart()
+
+  Dim stpath As String
+
+  If modGlobalSetting.ShowSettingFromDB("WebcamShot/Start") = "Yes" Then
+    stpath = Temp() & ".jpeg"
+    modDevAll.GetWebCamSnapShot(stpath, modDevice.WebCamDevice())
+    modImage.AddUserImageToDB("Start", stpath)
+  Else
+    modImage.AddUserImageToDB("Start", "")
+  Endif
+
+End
+
+Public Sub CamOnError()
+
+  Dim stpath As String
+
+  If modGlobalSetting.ShowSettingFromDB("WebcamShot/Error") = "Yes" Then
+    stpath = Temp() & ".jpeg"
+    modDevAll.GetWebCamSnapShot(stpath, modDevice.WebCamDevice())
+    modImage.AddUserImageToDB("Error", stpath)
+  Else
+    modImage.AddUserImageToDB("Error", "")
+  Endif
+
+End
+
+Public Sub CamOnClose()
+
+  Dim stpath As String
+
+  If modGlobalSetting.ShowSettingFromDB("WebcamShot/Close") = "Yes" Then
+    stpath = Temp() & ".jpeg"
+    modDevAll.GetWebCamSnapShot(stpath, modDevice.WebCamDevice())
+    modImage.AddUserImageToDB("Close", stpath)
+  Else
+    modImage.AddUserImageToDB("Close", "")
+  Endif
+
+End
+
+'NOTE: ------------------------- KDE Connect ------------------------------
+Public Function KDEConnDeviceList() As String[]
+
+  Dim xx As String
+  Dim yy As String
+  Dim sLine As String[]
+  Dim modPath As String[]
+  Dim arcmd As String[]
+
+  modPath = New String[]
+  If System.Exist("kdeconnect-cli") = True Then
+    arcmd = ["kdeconnect-cli", "--list-available", "--id-only"]
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd To xx
+    sLine = Split(xx, gb.NewLine)
+    For Each yy In sLine
+      If Trim(yy) Then
+        modPath.Add(Trim(yy))
+      Endif
+    Next
+  Else
+    modApplSub.InstallSelectedApplication(["kdeconnect", "qml-module-org-kde-people"])
+  Endif
+  Return modPath
+
+End
+
+''------------------------------ Customized SMS ---------------------------
+Public Function SendCustomSMSToAny(sphno As String, sInfo As String) As String
+
+  Dim xval As String
+
+  If sphno Then
+    If sInfo Then
+      If modBasic.$SMSQueDisable = "No" Then
+        modAppSupport.SaveSMSEntry(sphno, sInfo, "Waiting", "")
+        xval = "SMS Qued"
+      Else
+        modAppSupport.SendSMSSingle(sphno, sInfo)
+        xval = "SMS Sent"
+      Endif
+    Endif
+  Endif
+  Return xval
+
+End
+
+Public Function SendSMSToInpatDoc(encid As String, sphno As String) As String
+
+  Dim sText As String
+  Dim xval As String
+
+  If sphno Then
+    sText = modSettings.ShowSettingFromFIle("InpatientSMS/PhysicianSMSText")
+    sText = modReportVar.GetDoctorSMSVAr(encid, sText)
+    xval = SendCustomSMSToAny(sphno, GetTextArea(sphno, sText))
+  Endif
+  Return xval
+
+End
+
+Public Function SendSMSLabPatient($encid As String, sTest As String, sValue As String) As String
+
+  Dim sText As String
+  Dim phno As String
+  Dim xmsg As String
+
+  sText = modSettings.ShowSettingFromFIle("Laboratory/PatientSMS_SMSText")
+  phno = modPatient.GetPatientContactByEnc($encid)
+  If phno Then
+
+    If sText Then
+      sText = Replace(sText, "{TestName}", sTest)
+      sText = Replace(sText, "{TestResultValue}", sValue)
+      sText = modReportVar.GetPatientSMSVAr($encid, sText)
+    Else
+      sText = sTest & " : " & sValue
+    Endif
+    xmsg = SendCustomSMSToAny(phno, sText)
+
+  Endif
+  Return xmsg
+
+End
+
+Public Sub SendEMailLabPatient($encid As String, sPath As String)
+
+  Dim xemail As String
+  Dim xblank As String[]
+  Dim sText As String
+  Dim hForm As FmRemoteMail
+
+  sText = modSettings.ShowSettingFromFIle("Laboratory/PatientSMS_SMSText")
+  If sText Then
+    sText = modReportVar.GetPatientSMSVAr($encid, sText)
+  Endif
+  xemail = modPatient.GetPatientEmail($encid)
+  If xemail Then
+    xblank = New String[]
+    modDevAll.SendSMTPEmail([xemail], xblank, xblank, "Diagnostic Alert", sText, sPath)
+  Else
+    hForm = New FmRemoteMail([xemail], sPath, "Diagnostic Alert", sText)
+    hForm.ShowModal()
+  Endif
+
+End
+
+''----------------------- Registration --------------------
+Public Sub SendMessageToRegistPhysician(encid As String, userid As String)
+
+  Dim sMode As String
+  Dim sText As String
+  Dim sphno As String
+  ' Dim xemail As String
+  ' Dim xblank As String[]
+
+  sText = modSettings.ShowSettingFromFIle("Registration/PhysicianMessage")
+  If sText Then
+    sText = modReportVar.GetDoctorSMSVAr(encid, sText)
+
+    sMode = modSettings.ShowSettingFromFIle("Registration/PhysicianMessageMode")
+    If sMode = "SMS" Then
+      sphno = modGeneral.GetUserContact(userid)
+      If sphno Then
+        If modBasic.$SMSQueDisable = "No" Then
+          modAppSupport.SaveSMSEntry(sphno, sText, "Waiting", "")
+        Else
+          modAppSupport.SendSMSSingle(sphno, sText)
+        Endif
+      Endif
+
+    Else If sMode = "E-Mail" Then
+      ' xemail = modPatient.GetPatientEmail(encid)
+      ' If xemail Then
+      '   xblank = New String[]
+      '   modDevAll.SendSMTPEmail([xemail], xblank, xblank, "Registration", sText, "")
+      ' Endif
+
+    Else If sMode = "Telegram" Then
+      sphno = modGeneral.GetUserContact(userid)
+      If sphno Then
+
+      Endif
+
+    Endif
+
+  Endif
+
+End
+
+Public Sub SendMessageToRegistPatient(encid As String)
+
+  Dim sMode As String
+  Dim sText As String
+  Dim sphno As String
+  Dim xemail As String
+  Dim xblank As String[]
+
+  sText = modSettings.ShowSettingFromFIle("Registration/PatientMessage")
+  If sText Then
+    sText = modReportVar.GetPatientSMSVAr(encid, sText)
+
+    sMode = modSettings.ShowSettingFromFIle("Registration/PatientMessageMode")
+    If sMode = "SMS" Then
+      sphno = modPatient.GetPatientContactByEnc(encid)
+      If sphno Then
+        If modBasic.$SMSQueDisable = "No" Then
+          modAppSupport.SaveSMSEntry(sphno, sText, "Waiting", "")
+        Else
+          modAppSupport.SendSMSSingle(sphno, sText)
+        Endif
+      Endif
+
+    Else If sMode = "E-Mail" Then
+      xemail = modPatient.GetPatientEmail(encid)
+      If xemail Then
+        xblank = New String[]
+        modDevAll.SendSMTPEmail([xemail], xblank, xblank, "Registration", sText, "")
+      Endif
+
+    Else If sMode = "Telegram" Then
+      sphno = modPatient.GetPatientContactByEnc(encid)
+      If sphno Then
+
+      Endif
+
+    Endif
+
+  Endif
+
+End

@@ -1,0 +1,340 @@
+' Gambas class file
+
+Private $URL As String
+Private $AppName As String
+
+Public Sub _new()
+
+  Me.AddHeader("<meta name='viewport' content='width=device-width, initial-scale=1'>")
+  Me.AddJavascriptFile("js/toastify.js")
+  WebImage1.Image = modHelpVariable.$headerImage
+  WebForm.Debug = True
+  modBasic.$DebugMode = True
+
+  cmbsex.List = ["Female", "Male", "Other"]
+  cmbdistrict.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(flddistrict) as col from tblmunicipals ORDER BY flddistrict"))
+
+  $URL = modSettings.ShowSettingFromFIle("Application/VerifyURL")
+  $AppName = modSettings.ShowSettingFromFIle("Application/VerifyApp")
+  modBasic.LoadSMTPEmailSetting()
+  dtdobmain.Value = DateAdd(Now(), gb.Year, -20)
+
+End
+
+Public Sub cmbdistrict_Click()
+
+  txtaddfir.Clear()
+  If cmbdistrict.Text Then
+    txtaddfir.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldpality as col from tblmunicipals where flddistrict=&1 ORDER BY fldpality", cmbdistrict.Text))
+  Endif
+
+End
+
+Public Sub btnnepdate_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtdobmain.Value))
+  If xx Then
+    dtdobmain.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim xmail As String[]
+  Dim ymail As String[]
+  Dim xcontent As String
+  Dim sPass As String
+  Dim res As Result
+
+  If chkagree.Value = True Then
+    If txtpassword.Text = txtrepassword.Text Then
+      If AllowDataSave() = True Then
+        If txtemail.Text Then
+          res = modDatabase.$myConn.Exec("select fldemail from tblremoteusers where fldusrcode=&1", Trim(txtemail.Text))
+          If res.Available Then
+            Me.Exec("Toastify({text: 'E-Mail already used', duration: 3000}).showToast()")
+          Else
+            sPass = modPassword.GetRandomPassword()
+
+            If modRemote.$RemoteUserFormat = "email" Then
+              ymail = New String[]
+              ymail.Add(Trim(txtemail.Text))
+              xmail = New String[]
+              xcontent = GetVerifyLink(sPass)
+              modDevAll.SendSMTPEmail(ymail, xmail, xmail, "E-Mail Verification", xcontent, "")                               ''
+              Wait
+              SaveVerifyData(sPass)
+              Me.Exec("Toastify({text: 'E-Mail Sent to you.', duration: 3000}).showToast()")
+
+            Else If modRemote.$RemoteUserFormat = "phone" Then
+
+            Endif
+
+          Endif
+        Else
+          Me.Exec("Toastify({text: 'E-Mail not provided', duration: 3000}).showToast()")
+        Endif
+      Else
+        Me.Exec("Toastify({text: 'Incomplete data', duration: 3000}).showToast()")
+      Endif
+    Else
+      Me.Exec("Toastify({text: 'Passwords do not match', duration: 3000}).showToast()")
+    Endif
+  Else
+    Me.Exec("Toastify({text: 'You are required to agree to terms and conditions', duration: 3000}).showToast()")
+  Endif
+
+End
+
+Private Sub GetVerifyLink(sPass As String) As String
+
+  Dim xurl As String
+  Dim xx As String
+
+  xurl = $URL & "?user=" & Trim(txtemail.Text) & "&pass=" & sPass & "&app=" & modPassword.EncryptSimple($AppName) & "&type=verify"
+  xx = "Dear " & txtnamefir.Text & gb.NewLine & gb.NewLine
+  xx = xx & "Please click following link to verify your e-mail." & gb.NewLine
+  xx = xx & xurl
+
+  Return xx
+
+End
+
+Public Sub btnresend_Click()
+
+  Dim res As Result
+  Dim xmail As String[]
+  Dim ymail As String[]
+  Dim xcontent As String
+  Dim xresp As String
+
+  If modRemote.$RemoteUserFormat = "email" Then
+    If txtemail.Text Then
+      res = modDatabase.$myConn.Exec("select fldhashcode,fldstatus from tblremoteusers where fldusrcode=&1", Trim(txtemail.Text))
+      If res.Available Then
+        If res["fldstatus"] = "Active" Then
+          Me.Exec("Toastify({text: 'Account already active', duration: 3000}).showToast()")
+        Else
+          ymail = New String[]
+          ymail.Add(Trim(txtemail.Text))
+          xmail = New String[]
+          xcontent = GetVerifyLink(res["fldhashcode"])
+          modDevAll.SendSMTPEmail(ymail, xmail, xmail, "E-Mail Verification", xcontent, "")
+          Me.Exec("Toastify({text: 'E-Mail Sent to you.', duration: 3000}).showToast()")
+        Endif
+      Else
+        Me.Exec("Toastify({text: 'Please create account', duration: 3000}).showToast()")
+      Endif
+    Endif
+
+  Else If modRemote.$RemoteUserFormat = "phone" Then
+    If txtcontact.Text Then
+      res = modDatabase.$myConn.Exec("select fldhashcode,fldstatus from tblremoteusers where fldusrcode=&1", Trim(txtcontact.Text))
+      If res.Available Then
+        If res["fldstatus"] = "Active" Then
+          Me.Exec("Toastify({text: 'Account already active', duration: 3000}).showToast()")
+        Else
+          xcontent = Left(res["fldhashcode"], 4)
+          modAppSupport.SendSMSSingle(Trim(txtcontact.Text), "Your code is : " & xcontent)
+          xresp = InputBox("Provide code sent to your phone", "")
+          If xresp = xcontent Then
+            VerifyAccountLocal(Trim(txtcontact.Text), res["fldhashcode"])
+          Else
+            Me.Exec("Toastify({text: 'Wrong code', duration: 3000}).showToast()")
+          Endif
+        Endif
+      Else
+        Me.Exec("Toastify({text: 'Please create account', duration: 3000}).showToast()")
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Private Sub VerifyAccountLocal(xuser As String, xpass As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblremoteusers", "fldusrcode=&1 and fldhashcode=&2", xuser, xpass)
+  If res.Available Then
+    res["fldvertime"] = Now()
+    res["fldstatus"] = "Active"
+    res["fldhashcode"] = ""
+    res.Update
+    Me.Exec("Toastify({text: 'Account acivated', duration: 3000}).showToast()")
+  Else
+    Me.Exec("Toastify({text: 'Error in activation', duration: 3000}).showToast()")
+  Endif
+
+End
+
+Private Sub SaveVerifyData(sPass As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Create("tblremoteusers")
+  If modRemote.$RemoteUserFormat = "email" Then
+    res["fldusrcode"] = Trim(txtemail.Text)
+  Else If modRemote.$RemoteUserFormat = "phone" Then
+    res["fldusrcode"] = Trim(txtcontact.Text)
+  Endif
+  res["fldptnamefir"] = String.UCaseFirst(Trim(txtnamefir.text))
+  res["fldptnamelast"] = String.UCaseFirst(Trim(txtnamelast.text))
+  res["fldethniccode"] = Trim(txtethcode.Text)
+  res["fldptcontact"] = Trim(txtcontact.Text)
+  res["fldemail"] = Trim(txtemail.Text)
+  res["fldptaddvill"] = String.UCaseFirst(Trim(txtaddfir.Text))
+  res["fldptaddward"] = Trim(txtward.Text)
+  res["fldptadddist"] = String.UCaseFirst(Trim(cmbdistrict.Text))
+  res["fldptsex"] = String.UCaseFirst(cmbsex.text)
+  res["fldptbirday"] = dtdobmain.Value
+  res["fldptguardian"] = Trim(txtguardian.Text)
+  res["fldrelation"] = Trim(cmbrelation.Text)
+
+  res["flddiscount"] = ""
+  res["fldptcode"] = ""
+  res["fldadmitfile"] = ""
+  res["fldcomment"] = ""
+  res["fldencrypt"] = False
+  res["fldpassword"] = modPassword.EncryptSimple(txtpassword.Text)
+
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldhashcode"] = sPass
+  res["fldvertime"] = ""
+  res["fldhostuser"] = CGI["HTTP_USER_AGENT"]
+  res["fldhostip"] = CGI["REMOTE_ADDR"] & ":" & CGI["REMOTE_PORT"]
+  res["fldhostname"] = CGI["SERVER_SOFTWARE"] & ":" & Application.Name & "-" & Application.Version
+  res["fldstatus"] = "Inactive"
+
+  Try res.Update()
+
+End
+
+Public Sub btntopright_Click()
+
+  Session.Abandon()
+  WebForm.Current = fmRemoteLogin
+  Me.Close()
+
+End
+
+Public Sub btntopleft_Click()
+
+  WebForm.Current = fmRemoteLogin
+
+End
+
+Public Sub chkshowpass_Click()
+
+  If chkshowpass.Value = True Then
+    txtpassword.Password = False
+  Else If chkshowpass.Value = False Then
+    txtpassword.Password = True
+  Endif
+
+End
+
+Public Sub chkshowrepas_Click()
+
+  If txtrepassword.Password = True Then
+    txtrepassword.Password = False
+  Else If txtrepassword.Password = False Then
+    txtrepassword.Password = True
+  Endif
+
+End
+
+Private Function AllowDataSave() As Boolean
+
+  Dim xx As Boolean
+
+  xx = True
+
+  If Not txtaddfir.Text Then
+    xx = False
+  Endif
+
+  If Not txtward.Text Then
+    xx = False
+  Endif
+
+  If Not cmbdistrict.Text Then
+    xx = False
+  Endif
+
+  If Not dtdobmain.Value Then
+    xx = False
+
+  Endif
+
+  If Not txtcontact.Text Then
+    xx = False
+  Endif
+
+  If Not txtemail.Text Then
+    xx = False
+  Endif
+
+  If Not txtguardian.Text Then
+    xx = False
+  Endif
+
+  If Not cmbrelation.Text Then
+    xx = False
+  Endif
+
+  Return xx
+
+End
+
+' Public Sub btnshow_Click()
+'
+'   Dim sql As String
+'   Dim res As Result
+'   Dim xaddr As String[]
+'
+'   sql = "select fldptnamefir,fldptnamelast,fldethniccode,fldptaddvill,fldptadddist,fldptsex,fldptcontact,fldptguardian,fldptbirday,fldptadmindate,fldemail,fldptcode,fldrelation,fldencrypt from tblpatientinfo where fldpatientval=&1"
+'   res = modDatabase.$myConn.Exec(sql, Trim(txtpatno.Text))
+'   If res.Available Then
+'     WebContainer4.Enabled = False
+'
+'     cmbdistrict.Text = res["fldptadddist"]
+'     If res["fldptaddvill"] Then
+'       xaddr = Split(res["fldptaddvill"], "-")
+'       If xaddr.Count > 1 Then
+'         If IsInteger(xaddr[xaddr.Count - 1]) Then
+'           txtward.Text = xaddr[xaddr.Count - 1]
+'           txtaddfir.Text = xaddr.Copy(0, xaddr.Count - 1).Join("-")
+'         Else
+'           txtward.Text = ""
+'           txtaddfir.Text = xaddr.Join("-")
+'         Endif
+'       Else
+'         txtward.Text = ""
+'         txtaddfir.Text = xaddr.Join("-")
+'       Endif
+'     Endif
+'
+'     cmbsex.Text = res["fldptsex"]
+'     txtguardian.Text = res["fldptguardian"]
+'     cmbrelation.Text = res["fldrelation"]
+'     If modBasic.$SuperUser = True Then
+'       txtnamefir.Text = modPassword.DecryptPatData(res["fldptnamefir"], res["fldencrypt"])
+'       txtnamelast.Text = modPassword.DecryptPatData(res["fldptnamelast"], res["fldencrypt"])
+'       txtemail.Text = modPassword.DecryptPatData(res["fldemail"], res["fldencrypt"])
+'       txtcontact.Text = modPassword.DecryptPatData(res["fldptcontact"], res["fldencrypt"])
+'     Else
+'       txtnamefir.Text = res["fldptnamefir"]
+'       txtnamelast.Text = res["fldptnamelast"]
+'       txtemail.Text = res["fldemail"]
+'       txtcontact.Text = res["fldptcontact"]
+'     Endif
+'
+'   Endif
+'
+' End

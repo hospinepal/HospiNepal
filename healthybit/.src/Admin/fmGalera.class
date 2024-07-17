@@ -1,0 +1,367 @@
+' Gambas class file
+
+Private $conMain As Connection
+Private $conRead As Connection
+Private $conFall As Connection
+
+Private SysDataBase As String
+Private SysUseSSL As Boolean
+
+Private SysMainService As String
+Private SysMainHost As String
+Private SysMainUser As String
+Private SysMainPassword As String
+Private SysMainPort As String
+
+Private SysExtService As String
+Private SysExtHost As String
+Private SysExtUser As String
+Private SysExtPass As String
+Private SysExtPort As String
+
+Private SysFallService As String
+Private SysFallHost As String
+Private SysFallUser As String
+Private SysFallPass As String
+Private SysFallPort As String
+
+Public Sub Form_Open()
+
+  Me.Center
+  cmbcommand.List = ["wsrep_%", "--Cluster Integrity--", "wsrep_cluster_state_uuid", "wsrep_cluster_conf_id", "wsrep_cluster_size", "wsrep_cluster_status", "--Node Status--", "wsrep_ready", "wsrep_connected", "wsrep_local_state_comment", "--Replication Health--", "wsrep_local_recv_queue_avg", "wsrep_flow_control_paused", "wsrep_cert_deps_distance", "--Network Issues--", "wsrep_local_send_queue_avg", "Status Report", "Process List", "Ping Server", "mysqltuner"]                                                                      ''
+  ReadGaleraConfigFile()
+  txtservermain.Text = SysMainHost
+  txtreadserver.Text = SysExtHost
+  txtfallserver.Text = SysFallHost
+
+End
+
+Private Sub ReadGaleraConfigFile()
+
+  Dim xssl As String
+  Dim xfile As String
+
+  xfile = modHelpVariable.GetConfigSettingFIle()
+  SysDataBase = modControlSub.ShowSettingValue(xfile, "System/Database")
+  xssl = modControlSub.ShowSettingValue(xfile, "System/UseOpenSSL")
+  If xssl = "Yes" Then
+    SysUseSSL = True
+  Else
+    SysUseSSL = False
+  Endif
+
+  SysMainService = modControlSub.ShowSettingValue(xfile, "System/Service")
+  SysMainHost = modControlSub.ShowSettingValue(xfile, "System/Host")
+  SysMainUser = modControlSub.ShowSettingValue(xfile, "System/User")
+  SysMainPassword = modPassword.DecryptDBPass(modControlSub.ShowSettingValue(xfile, "System/Password"), SysUseSSL)
+  SysMainPort = modControlSub.ShowSettingValue(xfile, "System/Port")
+
+  SysExtService = modControlSub.ShowSettingValue(xfile, "SystemExtra/Service")
+  SysExtHost = modControlSub.ShowSettingValue(xfile, "SystemExtra/Host")
+  SysExtUser = modControlSub.ShowSettingValue(xfile, "SystemExtra/User")
+  SysExtPass = modPassword.DecryptDBPass(modControlSub.ShowSettingValue(xfile, "SystemExtra/Password"), SysUseSSL)
+  SysExtPort = modControlSub.ShowSettingValue(xfile, "SystemExtra/Port")
+
+  SysFallService = modControlSub.ShowSettingValue(xfile, "SystemFallback/Service")
+  SysFallHost = modControlSub.ShowSettingValue(xfile, "SystemFallback/Host")
+  SysFallUser = modControlSub.ShowSettingValue(xfile, "SystemFallback/User")
+  SysFallPass = modPassword.DecryptDBPass(modControlSub.ShowSettingValue(xfile, "SystemFallback/Password"), SysUseSSL)
+  SysFallPort = modControlSub.ShowSettingValue(xfile, "SystemFallback/Port")
+
+  Try Kill xfile
+
+End
+
+Public Sub btnmain_Click()
+
+  If SysMainService = "mysql" Then
+    $conMain = modDBApp.OpenConnection(SysMainService, SysMainHost, SysDataBase, SysMainUser, SysMainPassword, SysMainPort)     ''
+    If $conMain.Opened = True Then
+      chkmain.Value = True
+    Endif
+  Endif
+
+End
+
+Public Sub btnread_Click()
+
+  If SysExtService = "mysql" Then
+    $conRead = modDBApp.OpenConnection(SysExtService, SysExtHost, SysDataBase, SysExtUser, SysExtPass, SysExtPort)     ''
+    If $conRead.Opened = True Then
+      chkread.Value = True
+    Endif
+  Endif
+
+End
+
+Public Sub btnfall_Click()
+
+  If SysFallService = "mysql" Then
+    $conFall = modDBApp.OpenConnection(SysFallService, SysFallHost, SysDataBase, SysFallUser, SysFallPass, SysFallPort)     ''
+    If $conFall.Opened = True Then
+      chkfall.Value = True
+    Endif
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  Try $conMain.Close()
+  Try $conRead.Close()
+  Try $conFall.Close()
+  Message.Info("Application will quit", "OK")
+
+End
+
+''==================================== General Tab =====================================
+Public Sub btnexec_Click()
+
+  If chkmain.Value = True Then
+    txtdatamain.Text = GetQueryReport($conMain)
+  Endif
+  If chkread.Value = True Then
+    txtdataread.Text = GetQueryReport($conRead)
+  Endif
+  If chkfall.Value = True Then
+    txtdatafall.Text = GetQueryReport($conFall)
+  Endif
+
+End
+
+Private Function GetQueryReport(scon As Connection) As String
+
+  Dim xquery As String
+  Dim xcmd As String
+  Dim xx As String
+
+  If cmbcommand.Text Then
+    If Left(cmbcommand.Text, 2) = "--" Then
+    Else
+      If cmbcommand.Text = "Status Report" Then
+        xx = modDBApp.MySQLDatabaseReport(scon.Type, scon.Host, scon.User, scon.Password)
+      Else If cmbcommand.Text = "Process List" Then
+        xx = modDBApp.MysqlAdminValue(scon.Type, scon.Host, scon.User, scon.Password, scon.Port, "processlist")
+      Else If cmbcommand.Text = "Ping Server" Then
+        xx = modDBApp.MysqlAdminValue(scon.Type, scon.Host, scon.User, scon.Password, scon.Port, "ping")
+      Else If cmbcommand.Text = "mysqltuner" Then
+        xx = modDBApp.MySQLTunerReport(scon.Type, scon.Host, scon.User, scon.Password, scon.Port, txtrammain.Value, txtswapmain.Value)
+      Else
+        xquery = "SHOW STATUS LIKE '" & cmbcommand.Text & "'"
+        xcmd = "mysql -h " & scon.Host & " -D " & scon.Name & " -u " & scon.User & " -p" & scon.Password & " -e " & Quote(xquery)
+        Shell xcmd To xx
+      Endif
+    Endif
+  Else
+    xquery = "SHOW STATUS LIKE '" & txtcommand.Text & "'"
+    xcmd = "mysql -h " & scon.Host & " -D " & scon.Name & " -u " & scon.User & " -p" & scon.Password & " -e " & Quote(xquery)
+    Shell xcmd To xx
+  Endif
+
+  xx = Trim(xx)
+  Return xx
+
+End
+
+Public Sub btncopymain_Click()
+
+  Clipboard.Copy(txtdatamain.Text)
+
+End
+
+Public Sub btncopyread_Click()
+
+  Clipboard.Copy(txtdataread.Text)
+
+End
+
+Public Sub btncopyfall_Click()
+
+  Clipboard.Copy(txtdatafall.Text)
+
+End
+
+''================================ Galera ==============================
+Private Function GetwsrepReport(scon As Connection, xparam As String) As Collection
+
+  Dim xquery As String
+  Dim xcmd As String
+  Dim xx As String
+  Dim astr As String[]
+  Dim xline As String
+  Dim asvar As String[]
+  Dim sColl As Collection
+
+  sColl = New Collection
+  If scon And If scon.Opened Then
+    xquery = "SHOW STATUS LIKE '" & xparam & "'"
+    xcmd = "mysql -h " & scon.Host & " -D " & scon.Name & " -u " & scon.User & " -p" & scon.Password & " -e " & Quote(xquery)
+    Shell xcmd To xx
+    xx = Trim(xx)
+    astr = Split(xx, gb.NewLine)
+    For Each xline In astr
+      If xline Then
+        asvar = Split(xline, gb.Tab)
+        If asvar.Count = 2 Then
+          If asvar[0] = "Variable_name" Then
+          Else
+            sColl.Add(asvar[1], asvar[0])
+          Endif
+        Endif
+      Endif
+    Next
+  Endif
+
+  Return sColl
+
+End
+
+Private Sub ShowSelectedGaleraTable()
+
+  Dim xList As String[] = ["wsrep_cluster_state_uuid", "wsrep_cluster_conf_id", "wsrep_cluster_size", "wsrep_cluster_status", "wsrep_ready", "wsrep_connected", "wsrep_local_state_comment", "wsrep_local_recv_queue_avg", "wsrep_flow_control_paused", "wsrep_cert_deps_distance", "wsrep_local_send_queue_avg"]
+  Dim xparam As String
+  Dim aColl As Collection
+  Dim bColl As Collection
+  Dim cColl As Collection
+  Dim Row As Integer
+
+  aColl = GetwsrepReport($conMain, "wsrep_%")
+  bColl = GetwsrepReport($conRead, "wsrep_%")
+  cColl = GetwsrepReport($conFall, "wsrep_%")
+
+  GridView1.Clear
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = xList.Count
+
+  Row = 0
+  For Each xparam In xList
+    GridView1[Row, 0].Text = xparam
+    If aColl[xparam] Then
+      GridView1[Row, 1].Text = aColl[xparam]
+    Else
+      GridView1[Row, 1].Text = ""
+    Endif
+    If bColl[xparam] Then
+      GridView1[Row, 2].Text = bColl[xparam]
+    Else
+      GridView1[Row, 2].Text = ""
+    Endif
+    If cColl[xparam] Then
+      GridView1[Row, 3].Text = cColl[xparam]
+    Else
+      GridView1[Row, 3].Text = ""
+    Endif
+
+    Row = Row + 1
+  Next
+
+  SetGaleraTable()
+
+End
+
+Private Sub ShowCompleteGaleraTable()
+
+  Dim xparam As String
+  Dim aColl As Collection
+  Dim bColl As Collection
+  Dim cColl As Collection
+  Dim Row As Integer
+
+  aColl = GetwsrepReport($conMain, "wsrep_%")
+  bColl = GetwsrepReport($conRead, "wsrep_%")
+  cColl = GetwsrepReport($conFall, "wsrep_%")
+
+  GridView1.Clear
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = aColl.Count
+
+  Row = 0
+  For Each xparam In aColl
+    GridView1[Row, 0].Text = aColl.Key
+    If aColl[aColl.Key] Then
+      GridView1[Row, 1].Text = aColl[aColl.Key]
+    Else
+      GridView1[Row, 1].Text = ""
+    Endif
+    If bColl[aColl.Key] Then
+      GridView1[Row, 2].Text = bColl[aColl.Key]
+    Else
+      GridView1[Row, 2].Text = ""
+    Endif
+    If cColl[aColl.Key] Then
+      GridView1[Row, 3].Text = cColl[aColl.Key]
+    Else
+      GridView1[Row, 3].Text = ""
+    Endif
+
+    Row = Row + 1
+  Next
+
+  SetGaleraTable()
+
+End
+
+Private Sub SetGaleraTable()
+
+  With GridView1
+    .Rows.Height = 30
+    .Columns[0].Width = 250
+    .Columns[1].Width = 250
+    .Columns[2].Width = 250
+    .Columns[3].Width = 250
+
+    .Columns[0].Text = "Category"
+    .Columns[1].Text = txtservermain.Text
+    .Columns[2].Text = txtreadserver.Text
+    .Columns[3].Text = txtfallserver.Text
+  End With
+
+End
+
+Public Sub btngalera_Click()
+
+  If rbselected.Value = True Then
+    AutoConnect()
+    ShowSelectedGaleraTable()
+  Else If rball.Value = True Then
+    AutoConnect()
+    ShowCompleteGaleraTable()
+  Endif
+
+End
+
+Public Sub Timer1_Timer()
+
+  If rbselected.Value = True Then
+    AutoConnect()
+    ShowSelectedGaleraTable()
+    ValueBox1.Value = ValueBox1.Value + 1
+  Else If rball.Value = True Then
+    AutoConnect()
+    ShowCompleteGaleraTable()
+    ValueBox1.Value = ValueBox1.Value + 1
+  Endif
+
+End
+
+Private Sub AutoConnect()
+
+  If chkmain.Value = False Then
+    btnmain_Click()
+  Endif
+  If chkread.Value = False Then
+    btnread_Click()
+  Endif
+  If chkfall.Value = False Then
+    btnfall_Click()
+  Endif
+
+End
+
+Public Sub chkrefresh_Click()
+
+  Timer1.Enabled = chkrefresh.Value
+  ValueBox1.Visible = True
+  ValueBox1.Value = 0
+
+End

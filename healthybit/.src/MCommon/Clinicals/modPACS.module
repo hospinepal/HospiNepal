@@ -1,0 +1,576 @@
+' Gambas module file
+
+Public $sHost As String
+Public $sAET As String
+Public $sPPort As String
+Public $sHttPort As String
+Public $sHTTPUser As String
+Public $sHTTPPass As String
+Public $sSSL As String
+
+Public Sub GetRemotePacsSetting()
+
+  $sHost = modRepository.$RepoPACSHost
+  $sAET = modRepository.$RepolPACSAETtitle
+  $sPPort = modRepository.$RepoPACSPort
+  $sHTTPUser = modRepository.$RepoPACSUser
+  $sHTTPPass = modRepository.$RepoPACSPassword
+
+  $sSSL = "Disable"
+  $sHttPort = "8042"
+
+End
+
+Public Sub GetPacsSetting(sHost As String)
+
+  Dim xhttp As String
+  Dim xuser As String
+  Dim xpass As String
+
+  $sHost = modSettings.ShowSettingFromFIle(sHost & "/" & "HostName")
+  $sAET = modSettings.ShowSettingFromFIle(sHost & "/" & "AETitle")
+  $sPPort = modSettings.ShowSettingFromFIle(sHost & "/" & "Port")
+  $sSSL = modSettings.ShowSettingFromFIle(sHost & "/" & "UseSSL")
+  xhttp = modSettings.ShowSettingFromFIle(sHost & "/" & "HTTPPort")
+  If xhttp Then
+    $sHttPort = xhttp
+  Else
+    $sHttPort = "8042"
+  Endif
+  xuser = modSettings.ShowSettingFromFIle(sHost & "/" & "HTTPUser")
+  If xuser Then
+    $sHTTPUser = UnBase64(xuser)
+  Endif
+  xpass = modSettings.ShowSettingFromFIle(sHost & "/" & "HTTPPass")
+  If xpass Then
+    $sHTTPPass = UnBase64(xpass)
+  Endif
+
+End
+
+Public Function OrthancWebURL() As String
+
+  Dim xURL As String
+
+  If $sSSL = "Enable" Then
+    If $sHTTPUser And If $sHTTPPass Then
+      xURL = "https://" & $sHTTPUser & ":" & $sHTTPPass & "@" & $sHost & ":" & $sHttPort
+    Else
+      xURL = "https://" & $sHost & ":" & $sHttPort
+    Endif
+  Else
+    If $sHTTPUser And If $sHTTPPass Then
+      xURL = "http://" & $sHTTPUser & ":" & $sHTTPPass & "@" & $sHost & ":" & $sHttPort
+    Else
+      xURL = "http://" & $sHost & ":" & $sHttPort
+    Endif
+  Endif
+  Return xURL
+
+End
+
+Private Function OrthancGetURL() As String
+
+  Dim xURL As String
+
+  If $sSSL = "Enable" Then
+    xURL = "https://" & $sHost & ":" & $sHttPort
+  Else
+    xURL = "http://" & $sHost & ":" & $sHttPort
+  Endif
+  Return xURL
+
+End
+
+Private Function GetTextBreakString(sText As String) As String
+
+  Dim i As Integer
+  Dim k As Integer
+  Dim xx As String[]
+
+  i = CInt(Len(sText) / 8)
+  xx = New String[]
+  For k = 0 To (i - 1)
+    xx.Add(Mid(sText, (k * 8) + 1, 8))
+  Next
+  Return xx.Join("-")
+
+End
+
+Public Function GetOrthancString(sText As String) As String
+
+  Dim xx As String
+
+  xx = GetTextBreakString(modApplication.GetSha1SumValue(sText))
+  Return xx
+
+End
+
+''=========================== dcmtk =================================
+Public Function GetCFindStudyValue(encid As String) As Variant[]
+
+  Dim xPath As String
+  Dim aList As Variant[]
+
+  xPath = modDevAll.GetCFindPACSStudy($sHost, $sAET, $sPPort, encid)
+  If xPath Then
+    aList = FormatCFindFileTo(xPath)
+  Endif
+  Return aList
+
+End
+
+Public Function GetCFindSeriesValue(encid As String, studyID As String) As Variant[]
+
+  Dim xPath As String
+  Dim aList As Variant[]
+
+  xPath = modDevAll.GetCFindPACSSeries($sHost, $sAET, $sPPort, encid, studyID)
+  If xPath Then
+    aList = FormatCFindFileTo(xPath)
+  Endif
+  Return aList
+
+End
+
+Public Function GetCFindInstanceValue(encid As String, studyID As String, sSeries As String) As Variant[]
+
+  Dim xPath As String
+  Dim aList As Variant[]
+
+  xPath = modDevAll.GetCFindPACSSOP($sHost, $sAET, $sPPort, encid, studyID, sSeries)
+  If xPath Then
+    aList = FormatCFindFileTo(xPath)
+  Endif
+  Return aList
+
+End
+
+Private Function FormatCFindFileTo(sFile As String) As Variant[]
+
+  Dim ainfo As String[]
+  Dim achunk As String
+
+  Dim asx As String[]
+  Dim sLine As String
+
+  Dim xval As Collection
+  Dim aLst As Variant[]
+
+  aLst = New Variant[]
+  ainfo = modString.GetSplitTextMulti(File.Load(sFile), "I: ---------------------------")
+  For Each achunk In ainfo
+    If Trim(achunk) Then
+      If InStr(achunk, "I: # Dicom-Data-Set") > 0 Then
+        asx = Split(achunk, gb.NewLine)
+
+        xval = New Collection
+        For Each sLine In asx
+          If InStr(sLine, "(0008,0020)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "StudyDate")
+          Else If InStr(sLine, "(0010,0020)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "PatientID")
+          Else If InStr(sLine, "(0020,000d)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "StudyInstanceUID")
+          Else If InStr(sLine, "(0010,0010)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "PatientName")
+          Else If InStr(sLine, "(0010,0040)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "PatientSex")
+          Else If InStr(sLine, "(0008,0060)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "Modality")
+          Else If InStr(sLine, "(0020,000e)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "SeriesInstanceUID")
+          Else If InStr(sLine, "(0028,0008)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "NumberOfFrames")
+          Else If InStr(sLine, "(0008,0018)") > 0 Then
+            xval.Add(Trim(modString.GetSelectedTextBetween(sLine, "[", "]")), "SOPInstanceUID")
+          Endif
+        Next
+        aLst.Add(xval)
+
+      Endif
+    Endif
+  Next
+
+  Return aLst
+
+End
+
+''========================== ORTHANC API =================================
+Public Function GetOrthancValueJSON(sType As String, sInput As String) As Collection
+
+  Dim xPath As String
+  Dim xJson As String
+  Dim xxx As Collection
+
+  xPath = OrthancGetURL() &/ sType &/ sInput
+  If xPath Then
+    xJson = modDevAll.GetCurlDownload(xPath, $sHTTPUser, $sHTTPPass)
+    If xJson Then
+      xxx = JSON.Decode(xJson)
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Private Sub GetOrthancValueDownload(sType As String, sInput As String, sFormat As String, sPath As String)                       ''
+
+  Dim sLink As String
+
+  sLink = OrthancGetURL() &/ sType &/ sInput &/ sFormat
+  If sLink Then
+    modDevAll.GetWgetDownload(sLink, sPath, $sHTTPUser, $sHTTPPass)
+  Endif
+
+End
+
+Public Function GetOrthancQueryJSON(sLevel As String, xOption As Collection) As Variant[]
+
+  Dim xJson As String
+  Dim xLink As String
+
+  Dim yyy As JSONCollection
+  Dim xval As Variant[]
+
+  yyy = New JSONCollection
+  yyy.Add(sLevel, "Level")
+  yyy.Add(True, "Expand")
+  yyy.Add(xOption, "Query")
+
+  xLink = OrthancGetURL() &/ "tools/find"
+  xJson = modDevAll.HTTPPOSTCollectionVal(xLink, $sHTTPUser, $sHTTPPass, yyy)
+
+  If xJson Then
+    xval = JSON.Decode(xJson)
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetOrthancDelete(sLevel As String, sIndex As String) As String
+
+  Dim arcmd As String
+  Dim xJson As String
+
+  arcmd = "curl -X DELETE -u " & $sHTTPUser & ":" & $sHTTPPass & " " & OrthancGetURL() &/ sLevel &/ sIndex
+  modBasic.DebugAPIString("Execute " & arcmd)
+  Shell arcmd To xJson
+
+  Return xJson
+
+End
+
+''======================= DICOMWEB ========================
+Public Function GetWADOFindStudyJSON(encid As String) As Variant[]
+
+  Dim xPath As String
+  Dim xJson As String
+  Dim xxx As Variant[]
+
+  xPath = OrthancGetURL() &/ "dicom-web" &/ "studies?00100020=" & encid
+  If xPath Then
+    xJson = modDevAll.GetCurlDownload(xPath, $sHTTPUser, $sHTTPPass)
+    If xJson Then
+      xxx = JSON.Decode(xJson)
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Public Function GetWADOFindSeriesJSON(encid As String, sStudy As String) As Variant[]
+
+  Dim xPath As String
+  Dim xJson As String
+  Dim xxx As Variant[]
+
+  xPath = OrthancGetURL() &/ "dicom-web" &/ "studies" &/ sStudy &/ "series?00100020=" & encid
+  If xPath Then
+    xJson = modDevAll.GetCurlDownload(xPath, $sHTTPUser, $sHTTPPass)
+    If xJson Then
+      xxx = JSON.Decode(xJson)
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Public Function GetWADOFindInstanceJSON(encid As String, sStudy As String, sSeries As String) As Variant[]
+
+  Dim xPath As String
+  Dim xJson As String
+  Dim xxx As Variant[]
+
+  xPath = OrthancGetURL() &/ "dicom-web" &/ "studies" &/ sStudy &/ "series" &/ sSeries &/ "instances?00100020=" & encid
+  If xPath Then
+    xJson = modDevAll.GetCurlDownload(xPath, $sHTTPUser, $sHTTPPass)
+    If xJson Then
+      xxx = JSON.Decode(xJson)
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Private Function GetOrthWEBValueDownload(sInput As String, sPath As String) As String
+
+  Dim sLink As String
+
+  sLink = OrthancGetURL() &/ "wado?" & sInput
+  If sLink Then
+    modDevAll.GetWgetDownload(sLink, sPath, $sHTTPUser, $sHTTPPass)
+  Endif
+
+End
+
+Public Function GetWeasisWADOLink(sSeries As String) As String
+
+  Dim xPath As String
+
+  xpath = "$dicom:rs --url \"" & OrthancWebURL() &/ "dicom-web" & "\" -r \"seriesUID=" & sSeries & "\" --accept-ext=\";\""
+  Return URL.Encode(xpath)
+
+End
+
+''======================== Multiple =================================
+Public Sub DicomStudyDownload(xdir As String, sFind As String, sGet As String, encid As String, sStudyID As String)
+
+  If sGet = "Orthanc" Then
+    If Exist(xdir &/ sStudyID) Then
+      Kill xdir &/ sStudyID
+    Endif
+    If sFind = "Orthanc" Then
+      GetOrthancValueDownload("studies", sStudyID, "media", xdir &/ sStudyID)
+    Else
+      GetOrthancValueDownload("studies", modPACS.GetOrthancString(encid & "|" & sStudyID), "media", xdir &/ sStudyID)
+    Endif
+    ' modControlSub.OpenBrowser(xPath)
+  Endif
+
+End
+
+Public Function GetDicomDIR(sFind As String, xdir As String, encid As String, StudyUID As String, SeriesUID As String, anonym As Boolean) As Variant[]
+
+  Dim xVar As Variant[]
+  Dim xcoll As Collection
+  Dim aList As Variant[]
+
+  Dim i As Integer
+  Dim imgPath As String
+  Dim imgcode As String
+
+  If Exist(xdir) Then
+    modExternal.DeleteFolderRecursive(xdir)
+  Endif
+  Mkdir xdir
+  Mkdir xdir &/ "IMAGES"
+
+  If sFind = "Orthanc" Then
+    xcoll = modPACS.GetOrthancValueJSON("series", SeriesUID)
+    aList = xcoll["Instances"]
+  Else
+    aList = modPACS.GetCFindInstanceValue(encid, StudyUID, SeriesUID)
+  Endif
+
+  xVar = New Variant[]
+  For i = 0 To aList.Count - 1
+    imgPath = xdir &/ "IMAGES" &/ "IM" & CStr(i)
+    If sFind = "Orthanc" Then
+      imgcode = aList[i]
+    Else
+      imgcode = modPACS.GetOrthancString(encid & "|" & StudyUID & "|" & SeriesUID & "|" & aList[i]["SOPInstanceUID"])
+      xVar.Add(["IM" & CStr(i), aList[i]["SOPInstanceUID"]])
+    Endif
+    GetOrthancValueDownload("instances", imgcode, "file", imgPath)
+  Next
+
+  If anonym = True Then
+    modDevAll.GetAnonymizedDicomFolder(xdir &/ "IMAGES")
+  Endif
+  modDevAll.CreateDICOMDIR(xdir)
+
+  Return xVar
+
+End
+
+Public Sub DicomSeriesDownload(xdir As String, sFind As String, encid As String, sStudyID As String, sSeriesID As String)
+
+  Dim xval As String
+
+  If Exist(xdir &/ sSeriesID) Then
+    modExternal.DeleteFolderRecursive(xdir &/ sSeriesID)
+  Endif
+  If sFind = "Orthanc" Then
+    xval = sSeriesID
+  Else
+    xval = modPACS.GetOrthancString(encid & "|" & sStudyID & "|" & sSeriesID)
+  Endif
+  GetOrthancValueDownload("series", xval, "media", xdir &/ sSeriesID)
+
+End
+
+Public Sub DicomSeriesAppView(sFind As String, encid As String, sStudyID As String, sSeriesID As String, anonym As Boolean)
+
+  Dim xdicom As String
+  Dim arcmd As String[]
+  Dim xPath As String
+  Dim xVar As Variant[]
+
+  xPath = Temp()
+  xdicom = modSettings.ShowSettingFromFIle("DicomViewer/Default")
+  If Exist(File.Dir(xPath) &/ sSeriesID) Then
+    modExternal.DeleteFolderRecursive(File.Dir(xPath) &/ sSeriesID)
+  Endif
+  xVar = GetDicomDIR(sFind, File.Dir(xPath) &/ sSeriesID, encid, sStudyID, sSeriesID, anonym)
+  Wait
+  If xdicom Then
+    If InStr(xdicom, "Weasis") > 0 Then
+      If Exist(xdicom) Then
+        arcmd = [xdicom, File.Dir(xPath) &/ sSeriesID & "/"]
+        modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+        Exec arcmd Wait
+      Endif
+    Else If xdicom = "aeskulap" Then
+      Shell "cd " & File.Dir(xPath) &/ sSeriesID &/ "IMAGES;" & " aeskulap IM*" Wait
+    Else If xdicom = "ginkgocadx" Then
+    Endif
+  Else
+    Shell "cd " & "/tmp" &/ sSeriesID &/ "IMAGES;" & " aeskulap IM*" Wait
+  Endif
+
+End
+
+Public Function DicomSeriesWebViewURL(sFind As String, encid As String, sStudyID As String, sSeriesID As String) As String
+
+  Dim xval As String
+  Dim xdicom As String
+  Dim xLink As String
+
+  xdicom = modSettings.ShowSettingFromFIle("DicomWebViewer/Default")
+  If sFind = "Orthanc" Then
+    xval = sSeriesID
+  Else
+    xval = modPACS.GetOrthancString(encid & "|" & sStudyID & "|" & sSeriesID)                    ''
+  Endif
+
+  If xdicom = "osimis-viewer" Then
+    xLink = "/osimis-viewer/app/index.html?series=" & xval
+  Else If xdicom = "stone-webviewer" Then
+    xLink = "/stone-webviewer/index.html?study=" & sStudyID & "&series=" & sSeriesID
+  Else
+    xLink = "/web-viewer/app/viewer.html?series=" & xval
+  Endif
+
+  Return xLink
+
+End
+
+Public Function DicomSeriesWebView(sFind As String, encid As String, sStudyID As String, sSeriesID As String) As String
+
+  Dim xLink As String
+  Dim xurl As String
+
+  xurl = DicomSeriesWebViewURL(sFind, encid, sStudyID, sSeriesID)
+  xLink = OrthancWebURL() &/ xurl
+
+  Return xLink
+
+End
+
+Public Function DicomInstanceDicomDownload(sFind As String, sGet As String, encid As String, sStudyID As String, sSeriesID As String, sInstance As String, anonym As Boolean) As String                     ''
+
+  Dim xPath As String
+  Dim xval As String
+  Dim xFinal As String
+
+  If sGet = "Orthanc" Then
+    If sFind = "Orthanc" Then
+      xval = sInstance
+    Else
+      xval = modPACS.GetOrthancString(encid & "|" & sStudyID & "|" & sSeriesID & "|" & sInstance)               ''
+    Endif
+    xPath = Temp() & ".dcm"
+    GetOrthancValueDownload("instances", xval, "file", xPath)
+
+  Else If sGet = "Dicomweb" Then
+    If sFind = "Orthanc" Then
+    Else
+      xval = "studyUID=" & sStudyID & "&seriesUID=" & sSeriesID & "&objectUID=" & sInstance
+    Endif
+    xPath = Temp() & ".dcm"
+    GetOrthWEBValueDownload(xval & "&contentType=" & URL.Encode("application/dicom") & "&requestType=WADO", xPath)
+
+  Endif
+
+  If anonym = True Then
+    xFinal = modDevAll.GetAnonymizedDicom(xPath)
+  Else
+    xFinal = xPath
+  Endif
+
+  Return xFinal
+
+End
+
+Public Function DicomInstanceImageDownload(sFind As String, sGet As String, encid As String, sStudyID As String, sSeriesID As String, sInstance As String) As String                     ''
+
+  Dim xval As String
+  Dim sLink As String
+
+  If sGet = "Orthanc" Then
+    If sFind = "Orthanc" Then
+      xval = sInstance
+    Else
+      xval = modPACS.GetOrthancString(encid & "|" & sStudyID & "|" & sSeriesID & "|" & sInstance)
+    Endif
+    sLink = OrthancGetURL() &/ "instances" &/ xval &/ "preview"
+
+  Else If sGet = "Dicomweb" Then
+    If sFind = "Orthanc" Then
+    Else
+      xval = "studyUID=" & sStudyID & "&seriesUID=" & sSeriesID & "&objectUID=" & sInstance
+    Endif
+    sLink = OrthancGetURL() &/ "wado?" & xval & "&requestType=WADO"
+
+  Endif
+  Return sLink
+
+End
+
+Public Sub UploadDicomFolder(sHost As String, sHTTPPort As String, sFolder As String, sHTTPUser As String, sHTTPassword As String)
+
+  Dim arcmd As String[]
+
+  arcmd = ["python", modHelpVariable.$scriptDirectory &/ "ImportDicomFiles.py", sHost, sHTTPPort, sFolder, sHTTPUser, sHTTPassword]
+  modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+
+End
+
+Public Function UploadDicomArchive(sHost As String, sHTTPPort As String, sArchive As String, sHTTPUser As String, sHTTPassword As String, sSSL As String) As String
+
+  Dim arcmd As String
+  Dim xurl As String
+  Dim xauth As String
+  Dim xxx As String
+
+  If sSSL = "Enable" Then
+    xurl = "https://" & sHost & ":" & sHTTPPort &/ "instances"
+  Else
+    xurl = "http://" & sHost & ":" & sHTTPPort &/ "instances"
+  Endif
+  If sHTTPUser And If sHTTPassword Then
+    xauth = " -u " & sHTTPUser & ":" & sHTTPassword
+  Else
+    xauth = ""
+  Endif
+
+  arcmd = "curl" & xauth & " -H " & Quote("Expect:") & " -X POST " & xurl & " --data-binary " & "@" & sArchive
+  modBasic.DebugAPIString("Execute " & Replace(arcmd, sHTTPassword, "***"))
+  Shell arcmd To xxx
+
+  Return xxx
+
+End

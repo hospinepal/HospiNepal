@@ -1,0 +1,493 @@
+' Gambas class file
+
+Private $sType As String
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+
+Public Sub _new(sType As String)
+
+  $sType = sType
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  Me.Title = $sType
+  Me.Tag = $sType
+  dtplan.Value = Now()
+  lbldate.Value = Date()
+
+  If $sType = "Major Procedures" Then
+    cmbselect.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select flditemname as col from tblservicecost where flditemtype=&1 and fldtarget like &2", "Procedures", "Major"))
+    mnuprocalter.Visible = True
+  Else If $sType = "Extra Procedures" Then
+    cmbselect.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldprocname) as col from tblgroupproc"))
+    mnuprocalter.Visible = True
+  Else If $sType = "FollowUp List" Then
+    cmbselect.List = modGeneral.GetDepartmentsForOPDBoth()
+    Panel6.Visible = False
+    mnuprocalter.Visible = False
+  Else If $sType = "Radiology List" Then
+    cmbselect.List = modMedicine.FillRadioTestCombo("%")
+    mnuprocalter.Visible = False
+  Endif
+  cmbselect.Text = "%"
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+''====================================== REQUEST GRID =========================
+Public Sub btnrefrreq_Click()
+
+  FillRequestGrid()
+
+End
+
+Private Sub FillRequestGrid()
+
+  Dim sql As String
+
+  If $sType = "Major Procedures" Then
+    sql = "select fldid,fldencounterval,flditemname,fldsample,fldbillingmode,flditemqty,fldretqty,fldbillno,fldreason,fldrefer from tblpatbilling where flditemtype=&1 and fldsave=&2 and fldsample=&3 and fldparent=&4 and flditemqty>fldretqty and flditemname in(select flditemname from tblservicecost where fldtarget=&5) ORDER BY fldid DESC"
+    $rData1 = modDatabase.$myConn.Exec(sql, "Procedures", True, "Waiting", 0, "Major")
+  Else If $sType = "Extra Procedures" Then
+    sql = "select fldid,fldencounterval,flditemname,fldsample,fldbillingmode,flditemqty,fldretqty,fldbillno,fldreason,fldrefer from tblpatbilling where flditemtype=&1 and fldsave=&2 and fldsample=&3 and fldparent=&4 and flditemqty>fldretqty and flditemname in(select flditemname from tblservicecost where fldtarget=&5) ORDER BY fldid DESC"
+    $rData1 = modDatabase.$myConn.Exec(sql, "Procedures", True, "Waiting", 0, "Extra")
+  Else If $sType = "Radiology List" Then
+    sql = "select fldid,fldencounterval,flditemname,fldsample,fldbillingmode,flditemqty,fldretqty,fldbillno,fldreason,fldrefer from tblpatbilling where flditemtype=&1 and fldsave=&2 and fldsample=&3 and fldparent=&4 and flditemqty>fldretqty ORDER BY fldid DESC"
+    $rData1 = modDatabase.$myConn.Exec(sql, "Radio Diagnostics", True, "Waiting", 0)
+  Endif
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData1, $aMyFields1)
+  RequestGrid()
+
+End
+
+Private Sub RequestGrid()
+
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 1
+    .Columns[4].Width = 1
+    .Columns[5].Width = 1
+    .Columns[6].Width = 1
+    .Columns[7].Width = 1
+    .Columns[8].Width = 1
+    .Columns[9].Width = 1
+
+    .Columns[1].Text = "EncID"
+    .Columns[2].Text = "Particulars"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  GridView2.Data.Text = $rData1[$aMyFields1[Column]]
+  GridView2.Rows[Row].Height = Max(GridView2.Rows[Row].Height, GridView2.Data.Font.RichTextHeight(GridView2.Data.Text, GridView2.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView2.Rows.Height - GridView2.Font.Height))
+  GridView2.Data.WordWrap = True
+
+End
+
+Public Sub GridView2_Menu()
+
+  mnurequest.Popup
+
+End
+
+Public Sub mnuaddrequest_Click()
+
+  Dim xdat As Date
+  Dim res As Result
+  Dim xx As String
+  Dim xList As String[]
+  Dim i As Integer
+  '   Dim res1 As Result
+
+  xdat = dtplan.Value
+  If GridView2.Rows.Selection.Count > 0 Then
+    If $sType = "Major Procedures" Then
+      If GridView2[GridView2.Row, 3].Text = "Waiting" Then
+        If xdat Then
+
+          modDatabase.$myConn.Begin
+          For i = 1 To (GridView2[GridView2.Row, 5].Text - GridView2[GridView2.Row, 6].Text)
+            modPatientGeneral.AddProcedureData(GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 0].Text, "Procedures", GridView2[GridView2.Row, 2].Text, "Planned", GridView2[GridView2.Row, 4].Text, xdat, "Cleared", "")
+          Next
+          res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", GridView2[GridView2.Row, 0].Text)
+          res["fldsample"] = "Sampled"
+          res["xyz"] = False
+          res.Update
+          modDatabase.$myConn.Commit
+          FillRequestGrid()
+
+        Endif
+      Endif
+
+    Else If $sType = "Extra Procedures" Then
+      If GridView2[GridView2.Row, 3].Text = "Waiting" Then
+        If xdat Then
+
+          xList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldprocname as col from tblgroupproc where fldgroupname=&1", GridView2[GridView2.Row, 2].Text))
+          modDatabase.$myConn.Begin
+          For Each xx In xList
+            For i = 1 To (GridView2[GridView2.Row, 5].Text - GridView2[GridView2.Row, 6].Text)
+              modPatientGeneral.AddProcedureData(GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 0].Text, "Extra Procedures", xx, "Planned", GridView2[GridView2.Row, 4].Text, xdat, "Cleared", "")
+            Next
+          Next
+          res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", GridView2[GridView2.Row, 0].Text)
+          res["fldsample"] = "Sampled"
+          res["xyz"] = False
+          res.Update
+          modDatabase.$myConn.Commit
+          FillRequestGrid()
+
+        Endif
+      Endif
+
+    Else If $sType = "Radiology List" Then
+      ''DO NOT ADD FROM HERE. THIS COMP ID WILL BE SAVED FOR WORKING AND NOT SHOWN IN RADIO DEPT
+      ' If GridView2[GridView2.Row, 3].Text = "Waiting" Then
+      '   If xdat Then
+      '
+      '     res1 = modDatabase.$myConn.Exec("select fldtestid,fldtesttype,fldactive from tblgroupradio where fldgroupname=&1 and (fldptsex=&2 or fldptsex=&3)", GridView2[GridView2.Row, 2].Text, modPatient.GetPatientSex(GridView2[GridView2.Row, 1].Text), "Both Sex")
+      '     modDatabase.$myConn.Begin
+      '     For Each res1
+      '       For i = 1 To (GridView2[GridView2.Row, 5].Text - GridView2[GridView2.Row, 6].Text)
+      '         modRadioSub.InsertRadioTestOrder(GridView2[GridView2.Row, 1].Text, res1!fldtestid, res1!fldtesttype, res1!fldactive, GridView2[GridView2.Row, 0].Text, GridView2[GridView2.Row, 9].Text, GridView2[GridView2.Row, 7].Text, GridView2[GridView2.Row, 8].Text, xdat,"")
+      '       Next
+      '     Next
+      '     res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", GridView2[GridView2.Row, 0].Text)
+      '     res["fldsample"] = "Sampled"
+      '     res["xyz"] = False
+      '     res.Update
+      '     modDatabase.$myConn.Commit
+      '     FillRequestGrid()
+      '
+      '   Endif
+      ' Endif
+
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  modHelpVariable.CreateErrorReport()
+
+End
+
+''======================================== ADDED GRID =======================
+Private Sub FillPatDateGrid()
+
+  Dim sql As String
+
+  If $sType = "Major Procedures" Then
+    sql = "select fldencounterval,fldnewdate,fldnewdate,flditem,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldid,fldnewdate,fldid,flduserid,fldencounterval from tblpatgeneral where fldnewdate>=&1 and fldnewdate<=&2 and fldinput=&3 and flditem like &4 and fldreportquali<>&5"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(lbldate.Value), modDate.EndSqlDate(lbldate.Value), "Procedures", cmbselect.Text, "Done")
+
+  Else If $sType = "Extra Procedures" Then
+    sql = "select fldencounterval,fldnewdate,fldnewdate,flditem,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldid,fldnewdate,fldid,flduserid,fldencounterval from tblpatgeneral where fldnewdate>=&1 and fldnewdate<=&2 and fldinput=&3 and flditem like &4 and fldreportquali<>&5"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(lbldate.Value), modDate.EndSqlDate(lbldate.Value), "Extra Procedures", cmbselect.Text, "Done")
+
+  Else If $sType = "Radiology List" Then
+    sql = "select fldencounterval,fldnewdate,fldnewdate,fldtestid,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldid,fldnewdate,fldid,flduserid_report,fldencounterval from tblpatradiotest where fldnewdate>=&1 and fldnewdate<=&2 and fldtestid like &3 and fldstatus=&4 and fldsave_report=&5"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(lbldate.Value), modDate.EndSqlDate(lbldate.Value), cmbselect.Text, "Sampled", False)
+
+  Else If $sType = "FollowUp List" Then
+    sql = "select fldencounterval,fldfollowdate,fldfollowdate,fldcurrlocat,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldfollowdate,fldpatientval,flduserid,fldencounterval from tblencounter where fldfollowdate>=&1 and fldfollowdate<=&2 and fldcurrlocat like &3"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(lbldate.Value), modDate.EndSqlDate(lbldate.Value), cmbselect.Text)
+  Endif
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  ResizeGrid()
+
+End
+
+Private Sub ResizeGrid()
+
+  With GridView1
+    .Columns[0].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 1
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 1
+    .Columns[9].Width = 1
+    .Columns[10].Width = 1
+    .Columns[11].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "Time"
+    .Columns[3].Text = "Particulars"
+    .Columns[4].Text = "EncID"
+    .Columns[5].Text = "Name"
+    .Columns[6].Text = "Age/Sex"
+    .Columns[7].Text = "Contact"
+    .Columns[11].Text = "Consultant"
+    .Columns[12].Text = "FileNo"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 0 Then
+    GridView1.Data.Picture = Picture["icons/unchecked.png"]
+  Else If Column = 2 Then
+    GridView1.Data.Text = Time($rData[$aMyFields[Column]])
+  Else If Column = 5 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]])
+  Else If Column = 6 Then
+    GridView1.Data.Text = modPatient.GetPatientAgeString($rData[$aMyFields[Column]], Now()) & "/" & modPatient.GetPatientSex($rData[$aMyFields[Column]])
+  Else If Column = 7 Then
+    GridView1.Data.Text = modPatient.GetPatientContactByEnc($rData[$aMyFields[Column]])
+  Else If Column = 11 Then
+    If $sType = "FollowUp List" Then
+      GridView1.Data.Text = modGeneral.GetUserFullName($rData[$aMyFields[Column]])
+    Else
+      GridView1.Data.Text = ""
+    Endif
+  Else If Column = 12 Then
+    GridView1.Data.Text = modPatient.GetPatientFileByEnc($rData[$aMyFields[Column]])
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim row As Integer
+  Dim col As Integer
+  Dim xdate As Date
+  Dim res As Result
+
+  row = GridView1.Row
+  col = GridView1.Column
+  If GridView1.Column = 0 Then
+    modGridView.CheckUncheckGridNoDB(GridView1, 0)
+
+  Else If GridView1.Column = 1 Or If GridView1.Column = 2 Then
+    xdate = GetDateValue(("Select New Date Time"), GridView1[GridView1.Row, 5].Text, GridView1[GridView1.Row, 9].Text)
+    If xdate Then
+      If $sType = "Major Procedures" Then
+        res = modDatabase.$myConn.Edit("tblpatgeneral", "fldid=&1", GridView1[GridView1.Row, 8].Text)
+        res["fldnewdate"] = xdate
+        res["xyz"] = False
+        res.Update
+      Else If $sType = "Extra Procedures" Then
+        res = modDatabase.$myConn.Edit("tblpatgeneral", "fldid=&1", GridView1[GridView1.Row, 8].Text)
+        res["fldnewdate"] = xdate
+        res["xyz"] = False
+        res.Update
+      Else If $sType = "Radiology List" Then
+        res = modDatabase.$myConn.Edit("tblpatradiotest", "fldid=&1", GridView1[GridView1.Row, 8].Text)
+        res["fldnewdate"] = xdate
+        res["xyz"] = False
+        res.Update
+      Else If $sType = "FollowUp List" Then
+        res = modDatabase.$myConn.Edit("tblencounter", "fldencounterval=&1", GridView1[GridView1.Row, 8].Text)
+        res["fldfollowdate"] = xdate
+        res["xyz"] = False
+        res.Update
+      Endif
+      FillPatDateGrid()
+    Endif
+
+  Endif
+  GridView1.Row = row
+  GridView1.Column = col
+
+End
+
+''-----------------------------  button and menu ------------------------------------------------
+Public Sub btnrefresh_Click()
+
+  FillPatDateGrid()
+  GridView1.SetFocus
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, $sType & " Report", modReportVar.GetDateTimeReport(lbldate.Value, gb.MediumDate))
+
+End
+
+Public Sub mnuselall_Click()
+
+  Dim i As Integer
+
+  For i = 0 To GridView1.Rows.Count - 1
+    GridView1[i, 0].Picture = Picture["icons/checked.png"]
+  Next
+
+End
+
+Public Sub mnudesel_Click()
+
+  Dim i As Integer
+
+  For i = 0 To GridView1.Rows.Count - 1
+    GridView1[i, 0].Picture = Picture["icons/unchecked.png"]
+  Next
+
+End
+
+''------------------------------------ change procedure status
+Public Sub mnuprocalter_Click()
+
+  Dim xx As String
+  Dim status As String[] = ["Planned", "Referred", "On Hold", "Cancelled"]
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xx = InputCombo(("Select Action for selected Procedure"), ("Procedures"), status, "Planned", True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatgeneral", "fldid=&1 and fldstatus=&2", GridView1[GridView1.Row, 8].Text, "Waiting")
+      res["fldreportquali"] = xx
+      res["flduptime"] = Now()
+      res["xyz"] = False
+      res.Update
+    Endif
+    FillPatDateGrid()
+  Endif
+
+End
+
+''----------------------------------- extra activities -------------------------------------------------
+Public Sub btnsearch_Click()
+
+  Dim xx As String
+
+  If modBasic.$AutoEncPrefix Then
+    xx = InputBox(("Enter Encounter ID"), $sType, modBasic.$EncIdPrefix)
+  Else
+    xx = InputBox(("Enter Encounter ID"), $sType, "")
+  Endif
+  If xx Then
+    FillPatSearchGrid(xx)
+    GridView1.SetFocus
+  Endif
+
+End
+
+Private Sub FillPatSearchGrid(encid As String)
+
+  Dim sql As String
+
+  If $sType = "Major Procedures" Then
+    sql = "select fldencounterval,fldnewdate,fldnewdate,flditem,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldid,fldnewdate,fldid,flduserid,fldencounterval from tblpatgeneral where fldencounterval=&1 and fldinput=&2"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, encid, "Procedures")
+  Else If $sType = "Extra Procedures" Then
+    sql = "select fldencounterval,fldnewdate,fldnewdate,flditem,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldid,fldnewdate,fldid,flduserid,fldencounterval from tblpatgeneral where fldencounterval=&1 and fldinput=&2"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, encid, "Extra Procedures")
+  Else If $sType = "Radiology List" Then
+    sql = "select fldencounterval,fldnewdate,fldnewdate,fldtestid,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldid,fldnewdate,fldid,flduserid_report,fldencounterval from tblpatradiotest where fldencounterval=&1"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, encid)
+  Else If $sType = "FollowUp List" Then
+    sql = "select fldencounterval,fldfollowdate,fldfollowdate,fldcurrlocat,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldpatientval,fldfollowdate,fldpatientval,flduserid,fldencounterval from tblencounter where fldencounterval=&1"                                                                              ''
+    $rData = modDatabase.$myConn.Exec(sql, encid)
+  Endif
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  ResizeGrid()
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["R"] And If Key.Control Then
+    btnrefresh_Click()
+  Endif
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(lbldate.Value))
+  If xx Then
+    lbldate.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub mnuemail_Click()
+
+  Dim i As Integer
+  Dim xx As String[]
+  Dim hForm As FmRemoteMail
+
+  If Desktop.NetworkAvailable = True Then
+    xx = New String[]
+    For i = 0 To GridView1.Rows.Count - 1
+      If GridView1[i, 0].Picture = Picture["icons/checked.png"] Then
+        xx.Add(modPatient.GetPatientEmail(GridView1[i, 4].Text))
+      Endif
+    Next
+    hForm = New FmRemoteMail(xx, "", $sType, "")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnusmspat_Click()
+
+  Dim i As Integer
+  Dim sText As String
+  Dim sphno As String
+
+  For i = 0 To GridView1.Rows.Count - 1
+    If GridView1[i, 0].Picture = Picture["icons/checked.png"] Then
+      sphno = modPatient.GetPatientContactByEnc(GridView1[i, 4].Text)
+      If sphno Then
+        sText = modSettings.ShowSettingFromFIle("Registration/PatientMessage")
+        If sText Then
+          sText = modReportVar.GetPatientSMSVAr(GridView1[i, 4].Text, sText)
+          sText = modReportVar.GetReportLastConsult(GridView1[i, 4].Text, sText)
+          If modBasic.$SMSQueDisable = "No" Then
+            modAppSupport.SaveSMSEntry(sphno, sText, "Waiting", "")
+          Else
+            modAppSupport.SendSMSSingle(sphno, sText)
+          Endif
+        Endif
+      Endif
+
+      GridView1[i, 0].Picture = Picture["icons/unchecked.png"]
+    Endif
+  Next
+
+End

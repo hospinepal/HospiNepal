@@ -1,0 +1,157 @@
+' Gambas module file
+
+''------------ Get Value from Remote Server ----------
+Public $webMedHost As String
+Public $webMedDB As String
+Public $webMedUser As String
+Public $webMedPass As String
+
+Public $webKeyHost As String
+Public $webKeyDB As String
+Public $webKeyUser As String
+Public $webKeyPass As String
+
+Public $webFTPHost As String
+Public $webFTPDir As String
+Public $webFTPUser As String
+Public $webFTPPass As String
+
+Public $webLogHost As String
+Public $webLogDB As String
+Public $webLogUser As String
+Public $webLogPass As String
+''----------------- END ---------------------
+Private swebUpFile As String
+Public $webMedConn As Connection
+Public $webLogCon As Connection
+
+Public Sub DownloadRemoteWebConfig()
+
+  If Not Exist(modHelpVariable.AppDirectory &/ "weblink.conf.7z") Then
+    modDevAll.GetWgetFileToSelFolder(modControlSub.ShowSettingValue(modHelpVariable.$appWebconfFile, "Remote/WebLink"), modHelpVariable.AppDirectory)
+  Endif
+
+End
+
+Public Function GetWebConfigFile() As String
+
+  Dim xfile As String
+
+  If Exist(modHelpVariable.AppDirectory &/ "weblink.conf.7z") Then
+    xfile = Temp() & ".conf"
+    modDevAll.Get7ZExtraction(modHelpVariable.AppDirectory &/ "weblink.conf.7z", modHelpVariable.$CryptZip, xfile)
+  Endif
+  Return xfile
+
+End
+
+''connect to Medical data server
+Public Sub ConnectRemoteMedServer()
+
+  Dim xpath As String
+
+  xpath = GetWebConfigFile()
+  $webMedHost = modControlSub.ShowSettingValue(xpath, "MedData/Host")
+  $webMedDB = modControlSub.ShowSettingValue(xpath, "MedData/Database")
+  $webMedUser = modPassword.DecryptSimple(modControlSub.ShowSettingValue(xpath, "MedData/User"))
+  $webMedPass = modPassword.DecryptSimple(modControlSub.ShowSettingValue(xpath, "MedData/Password"))
+
+  $webMedConn = modDBApp.OpenConnection("mysql", $webMedHost, $webMedDB, $webMedUser, $webMedPass)
+  If $webMedConn.Opened = True Then
+    modBasic.DebugString("App connected to Medical Data Server")
+  Endif
+  Try Kill xpath
+
+End
+
+''Det Remote FTP values
+Public Sub GetRemoteFTPValues()
+
+  Dim xpath As String
+
+  If Not $webFTPHost Then
+    xpath = GetWebConfigFile()
+    $webFTPHost = modControlSub.ShowSettingValue(xpath, "RemoteFTP/Host")
+    $webFTPDir = modControlSub.ShowSettingValue(xpath, "RemoteFTP/FTPFolder")
+    $webFTPUser = UnBase64(modControlSub.ShowSettingValue(xpath, "RemoteFTP/User"))
+    $webFTPPass = UnBase64(modControlSub.ShowSettingValue(xpath, "RemoteFTP/Password"))
+    Try Kill xpath
+  Endif
+
+End
+
+''------------------------------- Fixed Help Pages ------------------------------
+'Help page for all categories
+Public Sub ExecGeneralSub()
+
+  Dim xfile As String
+
+  If modBasic.$HelpMode = "Offline" Then
+    If Exist(modHelpVariable.AppDirectory &/ "help") = False Then
+      If Exist(modHelpVariable.AppDirectory &/ "help.tar") Then
+        modDevAll.GetTarExtraction(modHelpVariable.AppDirectory &/ "help.tar", modHelpVariable.AppDirectory)
+      Endif
+    Endif
+
+    xfile = modHelpVariable.AppDirectory &/ "help" &/ modHelpVariable.$LogInCategory &/ "index.html"
+    If Exist(xfile) Then
+      modControlSub.OpenBrowser(xfile)
+    Else
+      Message.Warning(("Help Pages does not exist"), ("OK"))
+    Endif
+  Else
+    modControlSub.OpenBrowser(modControlSub.ShowSettingValue(modHelpVariable.$appWebconfFile, "Remote/HelpFolder") &/ modHelpVariable.$LogInCategory)
+  Endif
+
+End
+
+''get latest vesrion file
+Public Function GetLatestUpdateFile() As String
+
+  Dim xx As String
+  Dim webVersion As String
+  Dim webFilename As String
+
+  swebUpFile = Temp() & ".conf"
+  modDevAll.GetWgetDownload(modControlSub.ShowSettingValue(modHelpVariable.$appWebconfFile, "Remote/Update"), swebUpFile)
+
+  webVersion = modControlSub.ShowSettingValue(swebUpFile, modApplication.DistributionVendor() &/ "Version")
+  xx = modControlSub.ShowSettingValue(swebUpFile, modApplication.DistributionVendor() &/ "Filename")
+  webFilename = modControlSub.ShowSettingValue(modHelpVariable.$appWebconfFile, "Remote/PackagePath") &/ modApplication.DistributionVendor() &/ xx
+
+  Return webFilename
+
+End
+
+''connect to App log server and schedule download advertise
+Public Sub InsertLogToRemoteServer()
+
+  Dim xpath As String
+  Dim res As Result
+
+  xpath = GetWebConfigFile()
+  $webLogHost = modControlSub.ShowSettingValue(xpath, "AppLog/Host")
+  $webLogDB = modControlSub.ShowSettingValue(xpath, "AppLog/Database")
+  $webLogUser = modPassword.DecryptSimple(modControlSub.ShowSettingValue(xpath, "AppLog/User"))
+  $webLogPass = modPassword.DecryptSimple(modControlSub.ShowSettingValue(xpath, "AppLog/Password"))
+
+  $webLogCon = modDBApp.OpenConnection("mysql", $webLogHost, $webLogDB, $webLogUser, $webLogPass)
+  If $webLogCon.Opened = True Then
+    modHelpVariable.ReadConfigFile()
+    res = modWeb.$webLogCon.Create("tblconlog")
+    res["fldtime"] = Now()
+    res["fldhostmac"] = CGI["REMOTE_ADDR"] & ":" & CGI["REMOTE_PORT"]
+    res["fldhostip"] = modApplication.GetMACAddress()
+    res["fldhostname"] = CGI["SERVER_SOFTWARE"] & ":" & Application.Name & "-" & Application.Version
+    res["fldhostuser"] = CGI["HTTP_USER_AGENT"]   ''User.Name
+    res["fldhospname"] = modHelpVariable.$HospitalName
+    res["fldhospadd"] = modHelpVariable.$HospitalAddress
+    res["flddepartment"] = modSettings.ShowLogValues("LogIn/Default")
+    res["fldappuser"] = modSettings.ShowLogValues("LogIn/User")
+    res["fldcategory"] = modSettings.ShowSettingFromFIle("TermsOfUse/Package") & "/" & modHelpVariable.$GeoCoordinate
+    res.Update
+    Try modWeb.$webLogCon.Close()
+  Endif
+  Try Kill xpath
+
+End

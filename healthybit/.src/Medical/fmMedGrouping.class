@@ -1,0 +1,327 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $sType As String
+
+Public Sub _new(sType As String)
+
+  $sType = sType
+  Me.Title = $sType
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  If $sType = "Ethnic Groups" Then
+    cmbgroup.List = ["01", "02", "03", "04", "05", "06"]
+
+  Else
+    cmbgroup.List = modHMISRep.GetHMISDiseaseGroups($sType)
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub cmbgroup_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbgroup)
+  ' modFillContainer.RestrictComboToContent(cmbgroup)
+
+End
+
+Private Sub ShowGridData()
+
+  If cmbgroup.Text Then
+    If $sType = "Ethnic Groups" Then
+      ShowEthnicGrid()
+    Else '' all disease group formats
+      ShowDiagnoGrid()
+    Endif
+  Endif
+
+End
+
+Private Sub ShowEthnicGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldgroupname,flditemname from tblethnicgroup where fldgroupname=&1 ORDER BY flditemname ASC"
+  $rData = modDatabase.$medConn.Exec(sql, cmbgroup.Text)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 350 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Code"
+    .Columns[2].Text = "Particulars"
+  End With
+
+End
+
+Private Sub ShowDiagnoGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldcodeid,fldcodenew,flditemname from tbldiagnogroup where fldgroupname=&1 and fldformat=&2"
+  $rData = modDatabase.$medConn.Exec(sql, cmbgroup.Text, $sType)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 350 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Code"
+    .Columns[2].Text = "Code"
+    .Columns[3].Text = "Particulars"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  GridView1.Data.Text = $rData[$aMyFields[Column]]
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Public Sub btnrefresh_Click()
+
+  ShowGridData()
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      If $sType = "Ethnic Groups" Then
+        modDatabase.$medConn.Delete("tblethnicgroup", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+
+      Else '' all disease group formats
+        modDatabase.$medConn.Delete("tbldiagnogroup", "fldid=&1 and fldformat=&2", GridView1[GridView1.Row, 0].Text, $sType)
+
+      Endif
+      ShowGridData()
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub btnduplicate_Click()
+
+  Dim hForm As FRequest
+  Dim res As Result
+
+  If $sType = "Ethnic Groups" Then
+    res = modDatabase.$syConn.Exec("select flditemname,count(flditemname) FROM tblethnicgroup GROUP BY flditemname HAVING COUNT(flditemname)>&1", 1)                          ''
+    hForm = New FRequest(res, "Items Duplicate in Grouping List", "Ethnic Groups:Duplicates", False)
+    hForm.ShowModal
+
+  Else '' all disease group formats
+    res = modDatabase.$syConn.Exec("select flditemname,count(flditemname) FROM tbldiagnogroup where fldformat=&1 GROUP BY flditemname HAVING COUNT(flditemname)>&2", $sType, 1)                          ''
+    hForm = New FRequest(res, "Items Duplicate in Grouping List", "Diagnosis Groups:Duplicates", False)
+    hForm.ShowModal
+
+  Endif
+
+End
+
+Public Sub btnmissed_Click()
+
+  Dim hForm As FRequest
+  Dim res As Result
+
+  If $sType = "Ethnic Groups" Then
+    res = modDatabase.$syConn.Exec("select distinct(fldptnamelast) as SurName FROM tblpatientinfo where fldptnamelast NOT IN(select flditemname from tblethnicgroup) ORDER BY fldptnamelast ASC")                          ''
+    hForm = New FRequest(res, "Items Missing from Grouping List", "Ethnic Groups:Missing", False)
+    hForm.ShowModal
+  Else If $sType = "Diagnosis Groups" Then
+  Endif
+
+End
+
+Public Sub btnreport_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modMedicalReport.MakeGroupingReport($sType)
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+Public Sub btnaddethn_Click()
+
+  Dim xxx As String[]
+  Dim xList As String[]
+  Dim xval As String
+  Dim res As Result
+
+  If $sType = "Ethnic Groups" Then
+    xList = modControlSub.GetDirectFillresult(modDatabase.$medConn.Exec("select distinct(flditem) as col from tblsurname where lower(flditem) not in(select lower(flditemname) from tblethnicgroup)"))
+    xxx = GridListView("Select SurNames", xList)
+    If xxx And If xxx.Count Then
+      For Each xval In xxx
+        res = modDatabase.$medConn.Create("tblethnicgroup")
+        res["fldgroupname"] = cmbgroup.Text
+        res["flditemname"] = xval
+        res.Update
+      Next
+    Endif
+  Endif
+  ShowGridData()
+
+End
+
+Public Sub btnaddpat_Click()
+
+  Dim xxx As String[]
+  Dim xList As String[]
+  Dim xval As String
+  Dim res As Result
+
+  If $sType = "Ethnic Groups" Then
+    xList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldptnamelast) as col from tblpatientinfo where lower(fldptnamelast) not in(select lower(flditemname) from tblethnicgroup)"))
+    xxx = GridListView("Select SurNames", xList)
+    If xxx And If xxx.Count Then
+      For Each xval In xxx
+        res = modDatabase.$medConn.Create("tblethnicgroup")
+        res["fldgroupname"] = cmbgroup.Text
+        res["flditemname"] = xval
+        res.Update
+      Next
+    Endif
+  Endif
+  ShowGridData()
+
+End
+
+Public Sub btndiagno_Click()
+
+  Dim xx As String[]
+  Dim xVar As Variant[]
+  Dim res As Result
+  Dim res1 As Result
+
+  txtitemname.Text = ""
+  txtitemcode.Text = ""
+  txtnewcode.Text = ""
+  Select $sType
+    Case "Diagnosis Groups", "Emergency Groups"
+      xx = ICDGridView("Select Disease")
+      If xx Then
+        txtitemname.Text = xx[0]
+        txtnewcode.Text = xx[1]
+        txtitemcode.Text = xx[2]
+      Endif
+
+    Case Else
+      xVar = ICDMultiGrid("Select Disease")
+      If xVar Then
+        For Each xx In xVar
+          If cmbgroup.Text Then
+            res1 = modDatabase.$medConn.Exec("select fldcodenew from tbldiagnogroup where fldgroupname=&1 and fldformat=&2 and fldcodenew=&3", cmbgroup.Text, $sType, xx[1])
+            If res1.Available = False Then
+              res = modDatabase.$medConn.Create("tbldiagnogroup")
+              res["fldgroupname"] = cmbgroup.Text
+              res["fldformat"] = $sType
+              res["flditemname"] = xx[0]
+              res["fldcodeid"] = xx[2]
+              res["fldcodenew"] = xx[1]
+              res.Update
+            Endif
+          Endif
+        Next
+        ShowGridData()
+      Endif
+
+  End Select
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim res As Result
+
+  If cmbgroup.Text Then
+    If txtitemname.Text And If txtitemcode.Text Then
+      res = modDatabase.$medConn.Create("tbldiagnogroup")
+      res["fldgroupname"] = cmbgroup.Text
+      res["fldformat"] = $sType
+      res["flditemname"] = Trim(txtitemname.Text)
+      res["fldcodeid"] = Trim(txtitemcode.Text)
+      res["fldcodenew"] = Trim(txtnewcode.Text)
+      res.Update
+      ShowGridData()
+      txtitemname.Text = ""
+      txtitemcode.Text = ""
+      txtnewcode.Text = ""
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  If $sType = "Ethnic Groups" Then
+  Else
+    txtid.Value = GridView1[GridView1.Row, 0].Text
+    txtitemcode.Text = GridView1[GridView1.Row, 1].Text
+    txtnewcode.Text = GridView1[GridView1.Row, 2].Text
+    txtitemname.Text = GridView1[GridView1.Row, 3].Text
+    btnedit.Enabled = True
+  Endif
+
+End
+
+Public Sub btnedit_Click()
+
+  Dim res As Result
+
+  If $sType = "Ethnic Groups" Then
+  Else
+    If cmbgroup.Text Then
+      res = modDatabase.$myConn.Edit("tbldiagnogroup", "fldformat=&1 and fldid=&2", $sType, txtid.Value)
+      res["fldgroupname"] = cmbgroup.Text
+      res["flditemname"] = Trim(txtitemname.Text)
+      res["fldcodeid"] = Trim(txtitemcode.Text)
+      res["fldcodenew"] = Trim(txtnewcode.Text)
+      res.Update
+      ShowGridData()
+    Endif
+  Endif
+
+End

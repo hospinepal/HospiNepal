@@ -1,0 +1,242 @@
+' Gambas module file
+
+''Opening QTY
+Public Function ShowSpecStockReportItemQTY($con As Connection, sType As String, dt As Date, sComp As String, sItem As String, sLocaType As String, sLocation As String) As Float
+
+  Dim dtx As Date
+  Dim rs1 As Result
+  Dim rs2 As Result
+  Dim rs3 As Result
+  Dim rs4 As Result
+  Dim rs5 As Result
+  Dim rs6 As Result
+  Dim rs7 As Result
+
+  Dim bulqty As Float
+  Dim purqty As Float
+  Dim salqty As Float
+  Dim sentqty As Float
+  Dim recvqty As Float
+  Dim adjqty As Float
+  Dim curqty As Float
+  Dim xval As Float
+  Dim RepoStr As String
+
+  Dim xpast As Float
+  Dim rex As Result
+  Dim rss3 As Result
+
+  dtx = Now()
+  xval = 0
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+
+  curqty = 0
+  xpast = 0
+  rs6 = $con.Exec("select SUM(fldqty) as col,sum(fldpast) as fldpast from tblentry where fldstockid=&1 and fldcategory=&2 and fldcomp like &3" & RepoStr, sItem, sType, sComp)
+  If rs6.Available = True Then
+    If rs6["col"] Then
+      curqty = rs6["col"]
+    Endif
+    If rs6["fldpast"] Then
+      xpast = rs6["fldpast"]
+    Else
+      xpast = 0
+    Endif
+  Endif
+
+  purqty = 0
+  rs1 = $con.Exec("select SUM(fldtotalqty-fldreturnqty) as qty from tblpurchase where fldtime>&1 and fldtime<=&2 and fldstockid=&3 and fldcategory=&4 and fldcomp like &5 and fldsav=&6" & RepoStr, modDate.EndSqlDate(dt), dtx, sItem, sType, sComp, False)
+  If rs1.Available = True Then
+    If rs1["qty"] Then
+      purqty = rs1["qty"]
+    Endif
+  Endif
+
+  bulqty = 0
+  rs2 = $con.Exec("select SUM(fldqtydisp-fldqtyret) as qty from tblbulksale where fldtime>&1 and fldtime<=&2 and fldstockid=&3 and fldcategory=&4 and fldsave=&5 and fldcomp like &6" & RepoStr, modDate.EndSqlDate(dt), dtx, sItem, sType, True, sComp)
+  If rs2.Available = True Then
+    If rs2["qty"] Then
+      bulqty = rs2["qty"]
+    Endif
+  Endif
+
+  salqty = 0
+  rs3 = $con.Exec("select SUM(flditemqty) as qty from tblpatbilling where fldtime>&1 and fldtime<=&2 and flditemno in(select fldstockno from tblentry where fldstockid=&3) and flditemtype=&4 and fldcomp like &5 and fldsave=&6" & RepoStr, modDate.EndSqlDate(dt), dtx, sItem, sType, sComp, True)
+  If rs3.Available = True Then
+    If rs3["qty"] Then
+      salqty = rs3["qty"]
+    Endif
+  Endif
+
+  rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+  If rex.Available Then
+    For Each rex
+      If rex["fldpatbilling"] = "tblpatbilling" Then
+      Else
+        rss3 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>&1 and fldtime<=&2 and flditemno in(select fldstockno from tblentry where fldstockid=&3) and flditemtype=&4 and fldcomp like &5 and fldsave=&6" & RepoStr, modDate.EndSqlDate(dt), dtx, sItem, sType, sComp, True)
+        If rss3.Available = True Then
+          If rss3["qty"] Then
+            salqty = salqty + rss3["qty"]
+          Endif
+        Endif
+      Endif
+    Next
+  Endif
+
+  sentqty = 0
+  rs4 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldstockid=&1 and fldtoentrytime>&2 and fldtoentrytime<=&3 and fldcategory=&4 and fldtosav=&5 and fldfromcomp like &6" & RepoStr, sItem, modDate.EndSqlDate(dt), dtx, sType, True, sComp)
+  If rs4.Available Then
+    If rs4["qty"] Then
+      sentqty = rs4["qty"]
+    Endif
+  Endif
+
+  recvqty = 0
+  rs5 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldstockid=&1 and fldtoentrytime>&2 and fldtoentrytime<=&3 and fldcategory=&4 and fldtosav=&5 and fldtocomp like &6" & RepoStr, sItem, modDate.EndSqlDate(dt), dtx, sType, True, sComp)
+  If rs5.Available Then
+    If rs5["qty"] Then
+      recvqty = rs5["qty"]
+    Endif
+  Endif
+
+  adjqty = 0
+  rs7 = $con.Exec("select sum(fldcompqty-fldcurrqty) as qty from tbladjustment where fldstockid=&1 and fldtime>&2 and fldtime<=&3 and fldcategory=&4 and fldsav=&5 and fldcomp like &6" & RepoStr, sItem, modDate.EndSqlDate(dt), dtx, sType, True, sComp)
+  If rs7.Available Then
+    If rs7["qty"] Then
+      adjqty = rs7["qty"]
+    Endif
+  Endif
+
+  xval = curqty - (purqty + recvqty) + (xpast + salqty + bulqty + sentqty + adjqty)
+  Return xval
+
+End
+
+''================= Transaction ==================
+Public Function GetTransactionPurchase($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sItem As String, sLocaType As String, sLocation As String) As Float
+
+  Dim rs1 As Result
+  Dim purqty As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs1 = $con.Exec("select SUM(fldtotalqty-fldreturnqty) as qty from tblpurchase where fldtime>=&1 and fldtime<=&2 and fldstockid=&3 and fldcategory=&4 and fldcomp like &5 and fldsav=&6" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItem, sType, sComp, False)
+  purqty = 0
+  If rs1.Available = True Then
+    If rs1!qty Then
+      purqty = rs1!qty
+    Endif
+  Endif
+  Return purqty
+
+End
+
+Public Function GetTransactionBulkSale($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sItem As String, sLocaType As String, sLocation As String) As Float
+
+  Dim rs2 As Result
+  Dim bulqty As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs2 = $con.Exec("select SUM(fldqtydisp-fldqtyret) as qty from tblbulksale where fldtime>=&1 and fldtime<=&2 and fldstockid=&3 and fldcategory=&4 and fldsave=&5 and fldcomp like &6" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItem, sType, True, sComp)
+  bulqty = 0
+  If rs2.Available = True Then
+    If rs2!qty Then
+      bulqty = rs2!qty
+    Endif
+  Endif
+  Return bulqty
+
+End
+
+Public Function GetTransactionBilling($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sItem As String, sLocaType As String, sLocation As String) As Float
+
+  Dim rex As Result
+  Dim rs2 As Result
+  Dim rs3 As Result
+  Dim salqty As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  salqty = 0
+
+  rs3 = $con.Exec("select SUM(flditemqty) as qty from tblpatbilling where fldtime>=&1 and fldtime<=&2 and flditemno in(select fldstockno from tblentry where fldstockid=&3) and flditemtype=&4 and fldcomp like &5 and fldsave=&6" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItem, sType, sComp, True)
+  If rs3.Available = True Then
+    If rs3["qty"] Then
+      salqty = salqty + rs3["qty"]
+    Endif
+  Endif
+
+  rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+  If rex.Available Then
+    For Each rex
+      If rex["fldpatbilling"] = "tblpatbilling" Then
+      Else
+
+        rs2 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>=&1 and fldtime<=&2 and flditemno in(select fldstockno from tblentry where fldstockid=&3) and flditemtype=&4 and fldcomp like &5 and fldsave=&6" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItem, sType, sComp, True)
+        If rs2.Available = True Then
+          If rs2["qty"] Then
+            salqty = salqty + rs2["qty"]
+          Endif
+        Endif
+
+      Endif
+    Next
+  Endif
+  Return salqty
+
+End
+
+Public Function GetTransactionTransferFrom($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sItem As String, sLocaType As String, sLocation As String) As Float
+
+  Dim rs4 As Result
+  Dim sentqty As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs4 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldstockid=&1 and fldtoentrytime>=&2 and fldtoentrytime<=&3 and fldcategory=&4 and fldtosav=&5 and fldfromcomp like &6" & RepoStr, sItem, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  sentqty = 0
+  If rs4.Available Then
+    If rs4!qty Then
+      sentqty = rs4!qty
+    Endif
+  Endif
+  Return sentqty
+
+End
+
+Public Function GetTransactionTransferTo($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sItem As String, sLocaType As String, sLocation As String) As Float
+
+  Dim rs5 As Result
+  Dim recvqty As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs5 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldstockid=&1 and fldtoentrytime>=&2 and fldtoentrytime<=&3 and fldcategory=&4 and fldtosav=&5 and fldtocomp like &6" & RepoStr, sItem, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  recvqty = 0
+  If rs5.Available Then
+    If rs5!qty Then
+      recvqty = rs5!qty
+    Endif
+  Endif
+  Return recvqty
+
+End
+
+Public Function GetTransactionAdjustment($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sItem As String, sLocaType As String, sLocation As String) As Float
+
+  Dim rs7 As Result
+  Dim adjqty As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs7 = $con.Exec("select sum(fldcompqty-fldcurrqty) as qty from tbladjustment where fldstockid=&1 and fldtime>=&2 and fldtime<=&3 and fldcategory=&4 and fldsav=&5 and fldcomp like &6" & RepoStr, sItem, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  adjqty = 0
+  If rs7.Available Then
+    If rs7!qty Then
+      adjqty = rs7!qty
+    Endif
+  Endif
+  Return adjqty
+
+End

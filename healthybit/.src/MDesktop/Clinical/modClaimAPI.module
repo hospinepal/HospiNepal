@@ -1,0 +1,313 @@
+' Gambas module file
+
+Public Function GetBillingItemAbbvName(itemName As String) As String
+
+  Dim asx As String[]
+  Dim xxx As String
+
+  asx = Split(itemName, "|")
+  If asx.Count Then
+    xxx = modNonMedical.GetBillItemHIAbbv(asx[1], asx[0])
+  Else
+    xxx = ""
+  Endif
+  Return xxx
+
+End
+
+Public Function GetClaimOutRecording(xSNo As Variant[], xout As String, $tblpatbilling As String) As String
+
+  Dim aColl As Collection
+  Dim aVar As Variant[]
+  Dim xvar As Variant
+
+  Dim bColl As Collection
+  Dim xstate As String
+  Dim xUUId As String
+
+  Dim res As Result
+  Dim i As Integer
+  Dim xmsg As String
+
+  Dim sIndLst As String[]
+  Dim aIndex As String
+  Dim seqColl As Collection
+  Dim xnewid As Integer
+  Dim newcode As String
+
+  If xout Then
+    Try aColl = JSON.Decode(xout)
+    If aColl Then
+      xUUId = aColl["id"]
+      aVar = aColl["item"]
+      seqColl = GetSequenceColl(aColl["addItem"])
+
+      If aVar Then
+        For Each xvar In aVar
+          bColl = xvar
+          xnewid = bColl["sequenceLinkId"]
+          newcode = seqColl[CStr(xnewid)]
+
+          xstate = ""
+          Try xstate = bColl["adjudication"][0]["reason"]["text"]
+          If xUUId And If xstate Then
+            For i = 0 To xSNo.Count - 1
+              If xSNo[i]["code"] = newcode Then
+                sIndLst = Split(xSNo[i]["index"], ",")
+                For Each aIndex In sIndLst
+                  res = modDatabase.$myConn.Edit($tblpatbilling, "fldid=&1", CLong(aIndex))
+                  res["fldclaimstate"] = xstate
+                  res["fldclaimid"] = xUUId
+                  res.Update
+                Next
+                Break
+              Endif
+            Next
+          Endif
+        Next
+
+      Else
+        xmsg = xout
+      Endif
+
+    Endif
+  Endif
+
+  Return xmsg
+
+End
+
+Public Function GetSequenceColl(xVar As Variant) As Collection
+
+  Dim sVar As Variant[]
+  Dim xColl As Collection
+
+  Dim aVar As Variant
+  Dim aColl As Collection
+
+  xColl = New Collection
+  If xVar Then
+    sVar = xVar
+    If sVar And If sVar.Count Then
+      For Each aVar In sVar
+        aColl = aVar
+        If aColl Then
+          xColl.Add(aColl["service"]["coding"][0]["code"], CStr(aColl["sequenceLinkId"][0]))
+        Endif
+      Next
+    Endif
+  Endif
+
+  Return xColl
+
+End
+
+''======================= claimdoc =================================
+Public Function UploadImagesFilesClaimServerHI(xProvideClaimCode As String, xFilePath As String, ProgressBar1 As ProgressBar) As String
+
+  Dim xCheckData As JSONCollection
+  Dim xClaimStr As String
+  Dim checkColl As Collection
+  Dim xAccessCode As String
+
+  Dim xCreateData As JSONCollection
+  Dim xCheckStr As String
+  Dim crateColl As Collection
+  Dim xClaimID As Variant
+
+  Dim xUploadData As JSONCollection
+  Dim xUploadStr As String
+  Dim uploadColl As Collection
+  Dim imgData As String
+  Dim imgPath As String
+
+  Dim xcontent As String
+  Dim certPath As String
+  Dim aOutPath As String
+
+  Dim acmd As String
+  Dim bcmd As String
+  Dim ccmd As String
+  Dim xcmd As String[]
+
+  ProgressBar1.Value = 0
+  xcontent = "Content-Type: application/json"
+  certPath = modSettings.ShowSettingFromFIle("GeneralSettings/CurlCertificate")
+  If Not certPath Or If Not Exist(certPath) Then
+    certPath = modHelpVariable.$appetcFolder &/ "cacert.pem"
+  Endif
+
+  ''''generate access code
+  xCheckData = New JSONCollection
+  xCheckData.Add(modBasic.$ClaimUser, "username")
+  xCheckData.add(modBasic.$ClaimPass, "password")
+  acmd = "curl" & " -d '" & JSON.Encode(xCheckData) & "' -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimCheckURL
+  modBasic.DebugAPIString("Execute " & acmd)
+  Shell acmd To xClaimStr
+  modBasic.DebugAPIString("Response: " & xClaimStr)
+  ProgressBar1.Value = 0.25
+  Wait
+
+  If xClaimStr Then
+    Try checkColl = JSON.Decode(xClaimStr)
+    If checkColl["status"] = "success" Then
+      xAccessCode = Trim(checkColl["data"]["access_code"])
+
+      ''''save claim code provided above and get unique claim ID
+      If xAccessCode Then
+        xCreateData = New JSONCollection
+        xCreateData.Add(xProvideClaimCode, "claim_code")
+        xCreateData.Add(xAccessCode, "access_code")
+        bcmd = "curl" & " --cacert " & certPath & " -A " & xAccessCode & " -d '" & JSON.Encode(xCreateData) & "' -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimSaveURL
+        modBasic.DebugAPIString("Execute " & bcmd)
+        Shell bcmd To xCheckStr
+        modBasic.DebugAPIString("Response: " & xCheckStr)
+        ProgressBar1.Value = 0.5
+        Wait
+
+        If xCheckStr Then
+          Try crateColl = JSON.Decode(xCheckStr)
+          If crateColl["status"] = "success" Then
+            xClaimID = crateColl["data"]["id"]
+
+            '''''upload file with path provided
+            If xClaimID Then
+              If Exist(xFilePath) Then
+                xcmd = ["base64", "-w", "0", xFilePath]
+                modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+                Exec xcmd To imgData
+
+                xUploadData = New JSONCollection
+                xUploadData.Add(xClaimID, "claim_id")
+                xUploadData.Add(File.BaseName(xFilePath), "name")
+                xUploadData.Add(xAccessCode, "access_code")
+                xUploadData.Add(imgData, "file")
+                imgPath = Temp()
+                File.Save(imgPath, JSON.Encode(xUploadData))
+                ccmd = "curl" & " --cacert " & certPath & " -A " & xAccessCode & " -d @" & imgPath & " -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimLoadURL
+                modBasic.DebugAPIString("Execute " & ccmd)
+                Shell ccmd To xUploadStr
+                modBasic.DebugAPIString("Response: " & xUploadStr)
+                ProgressBar1.Value = 0.75
+                Wait
+
+                If xUploadStr Then
+                  Try uploadColl = JSON.Decode(xUploadStr)
+                  If uploadColl["status"] = "success" Then
+                    aOutPath = xFilePath
+                    ProgressBar1.Value = 1
+                    Wait
+                    ' Balloon.Info(("File Upload Completed"), btnuploadinv)
+                    ' Balloon.Delay = modBasic.$BalloonDelay
+                    modBasic.DebugString(Trim(uploadColl["data"]["message"]))
+                  Else
+                    Message.Warning("Reached to server but unsuccessful to get upload status", ("OK"))
+                  Endif  ''if upload is succcessful
+                Else
+                  Message.Warning("File Upload status not returned by server", ("OK"))
+                Endif  ''if upload string is returned
+              Endif
+
+            Else
+              Message.Warning("Unique Claim ID is null", ("OK"))
+            Endif ''if unique id is present
+
+          Else
+            Message.Warning("Reached to server but unsuccessful to get Unique Claim ID" & "<br>" & xCheckStr, ("OK"))
+          Endif  ''if create is successful
+        Else
+          Message.Warning("Unique Claim ID not returned by server", ("OK"))
+        Endif ''if create string is returned
+
+      Else
+        Message.Warning("Access Code is null" & "<br>" & xAccessCode, ("OK"))
+      Endif  ''if access code is present
+
+    Else
+      Message.Warning("Reached to server but unsuccessful to get Access code" & "<br>" & xClaimStr, ("OK"))
+    Endif ''if check is successful
+
+  Else
+
+    Message.Warning("Access Code not returned by server", "OK")
+  Endif ''if claim string is returned
+
+  Return aOutPath
+
+End
+
+Public Function GetHIInvoiceReceiptData(sInvoiceList As String[]) As String
+
+  Dim xPath As String[]
+  Dim xinvoice As String
+  Dim xpdf As String
+
+  xPath = New String[]
+  For Each xinvoice In sInvoiceList
+    If xinvoice Like "CAS" & "*" Then
+      xPath.Add(GetHIInvoiceData(xinvoice))
+    Else If xinvoice Like "CRE" & "*" Then
+      xPath.Add(GetHIInvoiceData(xinvoice))
+    Else If xinvoice Like "PHM" & "*" Then
+      xPath.Add(GetHIInvoiceData(xinvoice))
+    Else If xinvoice Like "RET" & "*" Then
+      xPath.Add(GetHIInvoiceData(xinvoice))
+
+    Else If xinvoice Like "TMP" & "*" Then
+      xPath.Add(GetHIReceiptData(xinvoice))
+    Else If xinvoice Like "TRE" & "*" Then
+      xPath.Add(GetHIReceiptData(xinvoice))
+    Else If xinvoice Like "TPM" & "*" Then
+      xPath.Add(GetHIReceiptData(xinvoice))
+    Else If xinvoice Like "TPR" & "*" Then
+      xPath.Add(GetHIReceiptData(xinvoice))
+    Endif
+  Next
+
+  If xPath.Count = 1 Then
+    xpdf = xPath[0]
+  Else
+    xpdf = modDevAll.GetPDFUnion(xPath)
+  Endif
+
+  Return xpdf
+
+End
+
+Private Function GetHIInvoiceData(sBillNo As String) As String
+
+  Dim res As Result
+  Dim xPath As String
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldbillno,fldencounterval,fldtaxamt,flddiscountamt,fldchequeno from tblpatbilldetail where fldbillno=&1", sBillNo)
+  If res.Available Then
+    If res["fldtaxamt"] = 0 Then
+      ShowTax = False
+    Else
+      ShowTax = True
+    Endif
+    If res["flddiscountamt"] = 0 Then
+      ShowDisc = False
+    Else
+      ShowDisc = True
+    Endif
+    xPath = modBILLFormat.GetInvoiceCopyPDFPath(res["fldbillno"], ShowTax, ShowDisc)
+  Endif
+
+  Return xPath
+
+End
+
+Private Function GetHIReceiptData(sBillNo As String) As String
+
+  Dim xPath As String
+
+  If sBillNo Then
+    xPath = modBILLFormat.GetReceiptCopyPDFPath(sBillNo)
+  Endif
+
+  Return xPath
+
+End

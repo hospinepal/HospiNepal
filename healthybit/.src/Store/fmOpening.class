@@ -1,0 +1,198 @@
+' Gambas class file
+
+Private $strType As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  dtpurdate.Value = Now()
+  dtexpiry.Value = Now()
+
+  cmbvendor.List = modSupplier.FillVendorNameCombo("Active")
+  cmbtype.List = ["Cash Payment", "Credit Payment"]
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Private Sub FillListViewFromArray()
+
+  Dim sArry As String[]
+
+  If $strType = "Medicines" Then
+    sArry = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldbrandid from tblmedbrand where fldactive=&1", "Active"))                                ''
+  Else If $strType = "Surgicals" Then
+    sArry = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldbrandid from tblsurgbrand where fldactive=&1", "Active"))                                ''
+  Else If $strType = "Extra Items" Then
+    sArry = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldbrandid from tblextrabrand where fldactive=&1", "Active"))                                ''
+  Endif
+  modFillContainer.FillListViewFromArray(ListView1, sArry)
+
+End
+
+Public Sub rbmed_Click()
+
+  $strType = "Medicines"
+  FillListViewFromArray()
+
+End
+
+Public Sub rbsurg_Click()
+
+  $strType = "Surgicals"
+  FillListViewFromArray()
+
+End
+
+Public Sub rbextra_Click()
+
+  $strType = "Extra Items"
+  FillListViewFromArray()
+
+End
+
+Public Sub ListView1_Click()
+
+  modFillContainer.ShowCheckedListView(ListView1)
+
+End
+
+Public Sub btnpurchase_Click()
+
+  Dim i As Integer
+
+  If txtbillno.Text And If cmbtype.Text And If cmbvendor.Text And If txtbatch.Text And If txttotqty.Value Then
+    Inc Application.Busy
+    For i = 1 To ListView1.Count
+      If ListView1[CStr(i)].Picture = Picture["icons/checked.png"] Then
+        DoOpeningSTock(ListView1[CStr(i)].Text, $strType)
+        Wait
+      Endif
+    Next
+    Dec Application.Busy
+    FillListViewFromArray()
+  Endif
+
+End
+
+Private Sub DoOpeningSTock(sItem As String, sType As String)
+
+  Dim xstock As Boolean
+  Dim StockNo As Long
+
+  xstock = modStock.NewStock(sItem, Trim(txtbatch.Text), modBasic.$compID)
+  modDatabase.$myConn.Begin
+  StockNo = modStock.GetItemStockNo(sItem, Trim(txtbatch.Text), modBasic.$compID)
+  If StockNo Then
+    If xstock = True Then
+      AddNewEntry(StockNo, sItem, sType)
+    Endif
+    AddPurchaseEntry(StockNo, sItem, sType)
+  Endif
+  modDatabase.$myConn.Commit
+
+End
+
+Private Sub AddNewEntry(StockNo As Long, sItem As String, ItemCategory As String)
+
+  Dim res As Result
+
+  If sItem And If StockNo > 0 Then
+    res = modDatabase.$myConn.Create("tblentry")
+    res["fldstockno"] = StockNo
+    res["fldstockid"] = sItem
+    res["fldbatch"] = Trim(txtbatch.Text)
+    res["fldexpiry"] = modDate.StartSqlDate(dtexpiry.Value)
+    res["fldqty"] = 0
+    res["fldstatus"] = modStock.ItemSaleStatus(sItem, modBasic.$compID)
+    res["fldsellpr"] = Round(txttotalcost.Value / txttotqty.Value, -2)
+    res["fldsav"] = False
+    res["fldcategory"] = ItemCategory
+    res["fldcomp"] = modBasic.$compID
+    res["fldcode"] = 0
+    res["xyz"] = True
+    res.Update()
+  Endif
+
+End
+
+Private Sub AddPurchaseEntry(StockNo As Long, sItem As String, ItemCategory As String)
+
+  Dim res As Result
+  Dim rs As Result
+
+  rs = modDatabase.$myConn.Exec("select fldstockid,fldbatch from tblentry where fldstockno=&1", StockNo)
+  If rs.Available = True Then
+    If rs!fldstockid = sItem And If rs!fldbatch = txtbatch.Text Then
+      res = modDatabase.$myConn.Create("tblpurchase")
+      res["fldpurtype"] = cmbtype.Text
+      res["fldbillno"] = Trim(txtbillno.Text)
+      res["fldsuppname"] = cmbvendor.Text
+      res["fldcategory"] = ItemCategory
+      res["fldstockno"] = StockNo
+      res["fldstockid"] = sItem
+      res["fldmrp"] = 0
+      res["fldtotalcost"] = txttotalcost.Value
+      res["fldtaxamt"] = 0
+      res["fldmargin"] = 0
+      res["fldtotalqty"] = txttotqty.Value
+      res["fldreturnqty"] = 0
+      res["fldcasdisc"] = 0
+      res["fldcasbonus"] = 0
+      res["fldqtybonus"] = 0
+      res["fldcarcost"] = 0
+      res["fldnetcost"] = Round(txttotalcost.Value / txttotqty.Value, -2)
+      res["flsuppcost"] = Round(txttotalcost.Value / txttotqty.Value, -2)
+      res["fldsellprice"] = Round(txttotalcost.Value / txttotqty.Value, -2)
+      res["fldpurdate"] = dtpurdate.Value
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsav"] = True
+      res["fldreference"] = ""
+      res["fldchk"] = False
+      res["xyz"] = True
+      res.Update()
+    Endif
+  Endif
+
+End
+
+Public Sub chkselall_Click()
+
+  Dim pic1 As Picture
+  Dim pic2 As Picture
+  Dim i As Integer
+
+  pic1 = Picture["icons/unchecked.png"]
+  pic2 = Picture["icons/checked.png"]
+
+  For i = 1 To ListView1.Count
+    If chkselall.Value = True Then
+      ListView1[CStr(i)].Picture = pic2
+    Else If chkselall.Value = False Then
+      ListView1[CStr(i)].Picture = pic1
+    Endif
+  Next
+
+End

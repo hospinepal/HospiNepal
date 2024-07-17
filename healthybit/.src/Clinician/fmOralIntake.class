@@ -1,0 +1,357 @@
+' Gambas class file
+
+Private $encid As String
+Private $rData As Result
+Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+
+End
+
+Public Sub Form_Open()
+
+  Dim hForm As FmQuantiEntry
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  If modBasic.$TabletModeEnable = "Yes" Then
+    hForm = New FmQuantiEntry(txtdose, Panel1)
+  Endif
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  cmbtype.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldfoodtype) as col from tblfoodtype"))
+  cmbtype.Add("Mixture")
+  cmbtype.Add("Group")
+  cmbtype.Text = ""
+  rbpackage.Value = True
+  ShowAdministerdFood()
+  FillRequestedPlan()
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else If Key.Code = Key.F1 Then
+    TabPanel1.Index = 0
+  Else If Key.Code = Key.F2 Then
+    TabPanel1.Index = 1
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Private Sub AddFoodIntakeData(encid As String, strItem As String, strReport As String, strValue As Float)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Create("tblexamgeneral")
+  res["fldencounterval"] = encid
+  res["fldinput"] = "Input Food/Fluid"
+  res["fldtype"] = "Qualitative"
+  res["flditem"] = strItem
+  res["fldreportquali"] = strReport
+  res["fldreportquanti"] = strValue
+  res["flddetail"] = ""
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = False
+  res["flduptime"] = ""
+  res["xyz"] = False
+  res.Update()
+  'don't catch error
+
+End
+
+Public Sub cmbtype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbtype)
+  modFillContainer.RestrictComboToContent(cmbtype)
+
+End
+
+Public Sub cmbtype_Click()
+
+  cmbitem.Clear
+  cmbitem.List = GetComboList()
+
+End
+
+Private Function GetComboList() As String[]
+
+  Dim xx As String[]
+
+  If cmbtype.Text = "Mixture" Then
+    xx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldgroup) as col from tblfoodgroup"))
+  Else If cmbtype.Text = "Group" Then
+    xx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldgroup) as col from tbldietgroup"))
+  Else
+    xx = modMedicine.GetFoodSelectedType(cmbtype.Text)
+  Endif
+
+  Return xx
+
+End
+
+Public Sub cmbitem_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbitem)
+  modFillContainer.RestrictComboToContent(cmbitem)
+
+End
+
+Public Sub cmbitem_GotFocus()
+
+  Dim xlist As String[]
+
+  If modBasic.$ItemListFormat = "GridView" Then
+    xlist = GetComboList()
+    If xlist.Count Then
+      cmbitem.Text = GridViewNew("Select Parameter", xlist, False, cmbitem, TabPanel1.Height - cmbitem.Top - cmbitem.Height)
+      GetItemUnit()
+      txtdose.SetFocus
+    Endif
+  Endif
+
+End
+
+Public Sub cmbitem_Click()
+
+  GetItemUnit()
+
+End
+
+Private Sub GetItemUnit()
+
+  If cmbitem.Text Then
+    If cmbtype.Text = "Group" Then
+      txtunit.Text = "Units"
+    Else If cmbtype.Text = "Mixture" Then
+      txtunit.Text = "Units"
+    Else
+      txtunit.Text = "Grams"
+    Endif
+  Endif
+
+End
+
+Public Sub btnBrOK_Click()
+
+  If cmbitem.Text And If txtdose.Value And If cmbtype.Text Then
+    AddFoodIntakeData($encid, cmbitem.Text, cmbtype.Text, txtdose.Value)
+    txtdose.Value = 0
+    txtdose.Tag = ""
+    cmbtype.Text = ""
+    Balloon.Info(("Information saved"), btnBrOK)
+    Balloon.Delay = modBasic.$BalloonDelay
+    ShowAdministerdFood()
+  Endif
+
+End
+
+Public Sub btnBrOK_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnBrOK_Click()
+  Endif
+
+End
+
+''======================== Requested Diet================================
+Private Sub FillRequestedPlan()
+
+  Dim sql As String
+  Dim xdate As Date
+
+  xdate = Date()
+  If rbpackage.Value = True Then
+    sql = "select flddosecode,flddosetime,flddosecode,flddosetime from tblextradosing where fldencounterval=&1 and fldstatus=&2 and flddosetime>=&3 and flddosetime<=&4 and fldsave=&5 and flddosecode like &6 GROUP BY flddosetime"                                   ''
+    $rData = modDatabase.$myConn.Exec(sql, $encid, "Continue", modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate), True, "%")
+  Else If rbnutrition.Value = True Then
+    sql = "select fldid,flddosetime,flditem,flddosetime from tblextradosing where fldencounterval=&1 and fldstatus=&2 and flddosetime>=&3 and flddosetime<=&4 and fldsave=&5 and flddosecode IS &6"                                   ''
+    $rData = modDatabase.$myConn.Exec(sql, $encid, "Continue", modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate), True, Null)
+  Endif
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView2, $rData, $aMyFields)
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 1
+
+    .Columns[1].Text = "Time"
+    .Columns[2].Text = "Particulars"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 1 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.MediumTime)
+  Else
+    GridView2.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  GridView2.Rows[Row].Height = Max(GridView2.Rows[Row].Height, GridView2.Data.Font.RichTextHeight(GridView2.Data.Text, GridView2.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView2.Rows.Height - GridView2.Font.Height))
+  GridView2.Data.WordWrap = True
+
+End
+
+Public Sub rbpackage_Click()
+
+  FillRequestedPlan()
+
+End
+
+Public Sub rbnutrition_Click()
+
+  FillRequestedPlan()
+
+End
+
+Public Sub btndiscont_Click()
+
+  Dim res As Result
+
+  If GridView2.Rows.Selection.Count Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      If rbpackage.Value = True Then
+        res = modDatabase.$myConn.Edit("tblextradosing", "fldencounterval=&1 and fldstatus=&2 and flddosetime=&3 and flddosecode=&4 and fldsave=&5", $encid, "Continue", CDate(GridView2[GridView2.Row, 3].Text), GridView2[GridView2.Row, 2].Text, True)
+        For Each res
+          res["fldstatus"] = "Discontinue"
+          res["xyz"] = False
+          res.Update
+        Next
+      Else If rbnutrition.Value = True Then
+        res = modDatabase.$myConn.Edit("tblextradosing", "fldid=&1", GridView2[GridView2.Row, 0].Text)
+        res["fldstatus"] = "Discontinue"
+        res["xyz"] = False
+        res.Update
+      Endif
+      FillRequestedPlan()
+    Endif
+  Endif
+
+End
+
+Public Sub btnadmin_Click()
+
+  Dim res As Result
+
+  If GridView2.Rows.Selection.Count Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      Inc Application.Busy
+      If rbpackage.Value = True Then
+        modDatabase.$myConn.Begin()
+        res = modDatabase.$myConn.Edit("tblextradosing", "fldencounterval=&1 and fldstatus=&2 and flddosetime=&3 and flddosecode=&4 and fldsave=&5", $encid, "Continue", CDate(GridView2[GridView2.Row, 3].Text), GridView2[GridView2.Row, 2].Text, True)
+        For Each res
+          AddFoodIntakeData(res["fldencounterval"], res["flditem"], res["fldcategory"], res["flddose"])
+          res["fldstatus"] = "Completed"
+          res["xyz"] = False
+          res.Update
+        Next
+        modDatabase.$myConn.Commit()
+      Else If rbnutrition.Value = True Then
+        modDatabase.$myConn.Begin()
+        res = modDatabase.$myConn.Edit("tblextradosing", "fldid=&1", GridView2[GridView2.Row, 0].Text)
+        AddFoodIntakeData(res["fldencounterval"], res["flditem"], res["fldcategory"], res["flddose"])
+        res["fldstatus"] = "Completed"
+        res["xyz"] = False
+        res.Update
+        modDatabase.$myConn.Commit()
+      Endif
+      Dec Application.Busy
+      FillRequestedPlan()
+      ShowAdministerdFood()
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback()
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+''======================= GridView ========================
+Private Sub ShowAdministerdFood()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,flditem,fldreportquanti from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldtype=&3 and fldsave=&4"
+  $rData1 = modDatabase.$myConn.Exec(sql, $encid, "Input Food/Fluid", "Qualitative", False)
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView1, $rData1, $aMyFields1)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Particulars"
+    .Columns[3].Text = "Dose"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.GeneralDate)
+  Else
+    GridView1.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+  Dim xval As Float
+
+  If GridView1.Column = 3 Then
+    xval = InputValue(("Update Administered Quantity"), "Input Food/Fluid", GridView1[GridView1.Row, 3].Text)
+    If xval Then
+      res = modDatabase.$myConn.Edit("tblexamgeneral", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldreportquanti"] = xval
+      res.Update
+      ShowAdministerdFood()
+    Endif
+  Endif
+
+End
+
+Public Sub btnsaveall_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblexamgeneral", "fldencounterval=&1 and fldinput=&2 and fldtype=&3 and fldsave=&4", $encid, "Input Food/Fluid", "Qualitative", False)
+  If res.Available Then
+    For Each res
+      res["fldsave"] = True
+      res.Update
+    Next
+    Balloon.Info(("Information saved"), btnsaveall)
+    Balloon.Delay = modBasic.$BalloonDelay
+    ShowAdministerdFood()
+  Endif
+
+End
+
+Public Sub txtdose_GotFocus()
+
+  txtdose.SelectAll
+
+End

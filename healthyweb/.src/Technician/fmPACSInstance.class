@@ -1,0 +1,299 @@
+' Gambas class file
+
+Private $PACS As String
+Private $encid As String
+Private $studyID As String
+Private $seriesID As String
+
+Private $sFind As String
+Private $sGet As String
+Private $ssL As String
+Private $sPath As String
+
+Private aList As Variant[]
+
+Public Sub _New(sPacs As String, encid As String, studyID As String, seriesID As String)
+
+  $PACS = sPacs
+  $encid = encid
+  $studyID = studyID
+  $seriesID = seriesID
+
+  rbdicom.Value = True
+  If $PACS Then
+    If $PACS = "REPO" Then
+      modRepository.ReadRepoConfig()
+      modPACS.GetRemotePacsSetting()
+      $sFind = "dcmtk"
+      $sGet = "Orthanc"
+      $ssL = "Disable"
+    Else
+      MMain.InitialAppMode()
+      modPACS.GetPacsSetting($PACS)
+      $sFind = modSettings.ShowSettingFromFIle($PACS & "/" & "FindCommand")
+      $sGet = modSettings.ShowSettingFromFIle($PACS & "/" & "GetCommand")
+      $ssL = modSettings.ShowSettingFromFIle($PACS & "/" & "UseSSL")
+    Endif
+
+    If modPACS.$sHost And If modPACS.$sAET And If modPACS.$sPPort Then
+      FillGridViewData()
+    Endif
+  Endif
+  BlockButton()
+
+End
+
+Public Sub mnuopenview_Click()
+
+  If $sPath Then
+    Me.Exec("window.open('" & $sPath & "'); ")
+  Endif
+
+End
+
+Public Sub mnuweasis_Click()
+
+  If $sPath Then
+    Me.Exec("window.open('weasis://" & URL.Encode("$dicom:get -r " & $sPath) & "'); ")
+  Endif
+
+End
+
+Private Sub BlockButton()
+
+  Dim xx As Boolean
+
+  If MMain.$SISHAppMode = "Portal" Then
+    btndowb.Visible = False
+  Else
+    xx = modPatient.EnableClinicForm(modPatient.CurrentAdmissionStatus($encid))
+    btndowb.Enabled = xx
+  Endif
+
+End
+
+Private Sub FillGridViewData()
+
+  Dim xcoll As Collection
+
+  GridView3.Clear
+  GridView3.Columns.Count = 1
+  If $sFind = "Orthanc" Then
+    xcoll = modPACS.GetOrthancValueJSON("series", $seriesID)
+    aList = xcoll["Instances"]
+    GridView3.Count = aList.Count
+  Else If $sFind = "Dicomweb" Then
+    aList = modPACS.GetWADOFindInstanceJSON($encid, $studyID, $seriesID)
+    GridView3.Count = aList.Count
+  Else
+    aList = modPACS.GetCFindInstanceValue($encid, $studyID, $seriesID)
+    GridView3.Count = aList.Count
+  Endif
+
+  SpinBox1.MinValue = 0
+  SpinBox1.MaxValue = GridView3.Count - 1
+  With GridView3
+    .Columns[0].Text = "SOPInstanceUID"
+  End With
+
+End
+
+Public Sub GridView3_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 0 Then
+    If $sFind = "Orthanc" Then
+      Data.Text = aList[Row]
+    Else If $sFind = "Dicomweb" Then
+      Data.Text = aList[Row]["00080018"]["Value"][0]
+    Else
+      Data.Text = aList[Row]["SOPInstanceUID"]    ''GetDicomValue(FileList[Row], "SOPInstanceUID")
+    Endif
+  Endif
+
+End
+
+''===================== Buttons ======================
+Private Function GetInstanceUID(sID As Integer) As String
+
+  Dim xinst As String
+
+  ''GridView3.Selection[0]
+  If $sFind = "Orthanc" Then
+    xinst = aList[sID]
+  Else If $sFind = "Dicomweb" Then
+    xinst = aList[sID]["00080018"]["Value"][0]
+  Else
+    xinst = aList[sID]["SOPInstanceUID"]    ''GetDicomValue(FileList[Row], "SOPInstanceUID")
+  Endif
+  Return xinst
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim xPath As String
+
+  If GridView3.Selection.Count Then
+    xPath = modPACS.DicomInstanceDicomDownload($sFind, $sGet, $encid, $studyID, $seriesID, GetInstanceUID(GridView3.Selection[0]), chkanony.Value)
+    $sPath = modPrint.GetFileWebURL(xPath)
+    Wait
+    mnuopenview_Click()
+  Endif
+
+End
+
+Public Sub btnweasis_Click()
+
+  Dim xPath As String
+
+  If GridView3.Selection.Count Then
+    xPath = modPACS.DicomInstanceDicomDownload($sFind, $sGet, $encid, $studyID, $seriesID, GetInstanceUID(GridView3.Selection[0]), chkanony.Value)
+    $sPath = modPrint.GetFileWebURL(xPath)
+    Wait
+    mnuweasis_Click()
+  Endif
+
+End
+
+' Public Sub btnexec_Click()
+'
+'   Dim xPath As String
+'
+'   If GridView3.Selection.Count Then
+'     If rbdicom.Value = True Then
+'       xPath = modPACS.DicomInstanceDicomDownload($sFind, $sGet, $encid, $studyID, $seriesID, GetInstanceUID(), chkanony.Value)
+'       If Exist(xPath) Then
+'         ' modDevice.ViewDicomFile(xPath)
+'       Endif
+'     Else If rbimage.Value = True Then
+'       xPath = pictimage.Tag
+'       ' If Exist(xPath) Then
+'       '   Desktop.Open(xPath)
+'       ' Endif
+'     Endif
+'   Endif
+'
+' End
+
+Public Sub btndowb_Click()
+
+  Dim xPath As String
+  Dim hForm As FmPatImage
+
+  If GridView3.Selection.Count Then
+    If rbdicom.Value = True Then
+      xPath = modPACS.DicomInstanceDicomDownload($sFind, $sGet, $encid, $studyID, $seriesID, GetInstanceUID(GridView3.Selection[0]), chkanony.Value)
+      If Exist(xPath) Then
+        hForm = New FmPatImage("DICOM", $encid, xPath)
+        hForm.ShowModal
+      Endif
+    Else If rbimage.Value = True Then
+      xPath = Temp() & ".png"
+      modDevAll.GetWgetDownload(pictimage.Tag, xPath)
+      If Exist(xPath) Then
+        hForm = New FmPatImage("IMAGE", $encid, xPath)
+        hForm.ShowModal
+      Endif
+    Endif
+  Endif
+
+End
+
+''================= Image on right ===============
+Private Sub ShowImageView(sUID As String)
+
+  Dim sLink As String
+  Dim xPath As String
+
+  ' ClearImage()
+  ' If MMain.$WebEntry = True Then
+  xPath = Temp() & ".png"
+  sLink = modPACS.DicomInstanceImageDownload($sFind, $sGet, $encid, $studyID, $seriesID, sUID)
+  If sLink Then
+    modDevAll.GetWgetDownload(sLink, xPath, modPACS.$sHTTPUser, modPACS.$sHTTPPass)
+  Endif
+  modImage.StretchtPictureToBox(pictimage, xPath)
+
+  ' Else
+  '   sLink = modPACS.DicomInstanceImageDownload($sFind, $sGet, $encid, $studyID, $seriesID, sUID)
+  '   If sLink Then
+  '     pictimage.Tag = sLink
+  '     pictimage.Image = sLink
+  '   Endif
+  ' Endif
+
+End
+
+' Private Sub ClearImage()
+'
+'   If pictimage.Tag Then
+'
+'   Endif
+'
+' End
+
+Public Sub GridView3_Select()
+
+  If GridView3.Selection.Count Then
+    SpinBox1.Value = GridView3.Selection[0]
+    TextBox1.Text = GetInstanceUID(GridView3.Selection[0])
+  Endif
+
+End
+
+Public Sub btnshowgrid_Click()
+
+  If TextBox1.Text Then
+    ShowImageView(TextBox1.Text)
+  Endif
+
+End
+
+Public Sub btnnext_Click()
+
+  Dim Row As Integer
+
+  If GridView3.Selection[0] < GridView3.Count - 1 Then
+    Row = GridView3.Selection[0]
+    GridView3.Select(Row + 1)
+    SpinBox1.Value = Row + 1
+    TextBox1.Text = GetInstanceUID(GridView3.Selection[0])
+    If TextBox1.Text Then
+      ShowImageView(TextBox1.Text)
+    Endif
+  Endif
+
+End
+
+Public Sub btnprev_Click()
+
+  Dim Row As Integer
+
+  If GridView3.Selection[0] > 0 Then
+    Row = GridView3.Selection[0]
+    GridView3.Select(Row - 1)
+    SpinBox1.Value = Row - 1
+    TextBox1.Text = GetInstanceUID(GridView3.Selection[0])
+    If TextBox1.Text Then
+      ShowImageView(TextBox1.Text)
+    Endif
+  Endif
+
+End
+
+Public Sub SpinBox1_Change()
+
+  GridView3.Select(SpinBox1.Value)
+  TextBox1.Text = GetInstanceUID(GridView3.Selection[0])
+  If TextBox1.Text Then
+    ShowImageView(TextBox1.Text)
+  Endif
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close()
+
+End

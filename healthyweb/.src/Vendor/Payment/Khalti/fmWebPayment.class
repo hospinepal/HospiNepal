@@ -1,0 +1,233 @@
+' Gambas class file
+
+Private $encid As String
+Private $sBillNo As String
+Private $ProdName As String
+Private $ProdURL As String
+Private $sAmount As Float
+Private $sValue As String
+
+Private $PubKey As String
+Private $SecKey As String
+Private $IniLink As String
+Private $ConfLink As String
+Private $VerifLink As String
+
+Public Sub Run(encid As String, sBillNo As String, ProdName As String, ProdURL As String, sAmount As Float) As String
+
+  $encid = encid
+  $sBillNo = sBillNo
+  $ProdName = ProdName
+  $ProdURL = ProdURL
+  $sAmount = sAmount
+
+  Me.Title = "Payment of " & CStr($sAmount)
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Public Sub btnkhalti_Click()
+
+  wbContMobile.Visible = True
+  WbContPin.Visible = True
+  WbContRequest.Visible = True
+
+  If modPatPortal.$PaymentClient = "Khalti" Then
+    If MMain.$WebEntry = True And If modBasic.$HospCode Then
+      $PubKey = modSettings.ShowSettingFromFIle("Khalti_" & modBasic.$HospCode & "/PublicKey")
+      $SecKey = modSettings.ShowSettingFromFIle("Khalti_" & modBasic.$HospCode & "/SecretKey")
+      $IniLink = modSettings.ShowSettingFromFIle("Khalti_" & modBasic.$HospCode & "/InitiateLink")
+      $ConfLink = modSettings.ShowSettingFromFIle("Khalti_" & modBasic.$HospCode & "/ConfirmLink")
+      $VerifLink = modSettings.ShowSettingFromFIle("Khalti_" & modBasic.$HospCode & "/VerifyLink")
+    Else
+      $PubKey = modSettings.ShowSettingFromFIle("Khalti/PublicKey")
+      $SecKey = modSettings.ShowSettingFromFIle("Khalti/SecretKey")
+      $IniLink = modSettings.ShowSettingFromFIle("Khalti/InitiateLink")
+      $ConfLink = modSettings.ShowSettingFromFIle("Khalti/ConfirmLink")
+      $VerifLink = modSettings.ShowSettingFromFIle("Khalti/VerifyLink")
+    Endif
+  Endif
+
+End
+
+Public Sub btnrequest_Click()
+
+  Dim xtoken As String
+
+  If txtmobile.Value And If txtranspin.Value Then
+    If modPatPortal.$PaymentClient = "Khalti" Then
+      xtoken = GetKhaltiToken(CStr(txtmobile.Value), CStr(txtranspin.Value), $sAmount * 100)
+      If xtoken Then
+        txtmobile.Enabled = False
+        txtranspin.Enabled = False
+        btnrequest.Tag = xtoken
+        WbContPay.Visible = True
+        WbContConfir.Visible = True
+        txtmessage.Visible = True
+        txtmessage.Text = "Khalti has sent a confirmation code to your number."
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnconfirm_Click()
+
+  Dim xresponse As String
+  Dim xitemVar As Collection
+  Dim xfinal As String
+
+  WebProgressBar1.Value = 0
+  If btnrequest.Tag Then
+    If txtmobile.Value And If txtranspin.Value And If txtpaycode.Text Then
+      xresponse = GetKhaltiConfirmation(CStr(txtranspin.Value), btnrequest.Tag, Trim(txtpaycode.Text))
+      WebProgressBar1.Value = 0.5
+      btnrequest.Enabled = False
+      txtpaycode.Enabled = False
+
+      Try xitemVar = JSON.Decode(xresponse)
+      If xitemVar Then
+        Wait 5
+
+        If xitemVar["token"] And If xitemVar["amount"] Then
+          xfinal = GetKhaltiVerification(xitemVar["token"], xitemVar["amount"])
+          WebProgressBar1.Value = 0.75
+          If xfinal Then
+            FillTransTable(xfinal)
+            WebProgressBar1.Value = 1
+          Endif
+        Else
+          Me.Exec("Toastify({text: 'Error in Confirmation Process', duration: 3000}).showToast()")
+          WebProgressBar1.Value = 0
+        Endif
+
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Sub FillTransTable(sResponse As String)
+
+  Dim res As Result
+  Dim xitemVar As Collection
+
+  Try xitemVar = JSON.Decode(sResponse)
+  If xitemVar Then
+    If modPatPortal.$PaymentClient = "Khalti" Then
+      If xitemVar["state"]["name"] = "Completed" Then
+        res = modDatabase.$myConn.Create("tblwebpayment")
+        res["fldbillno"] = $sBillNo
+        res["fldencounterval"] = $encid
+        res["flditemid"] = $ProdName
+        res["fldlink"] = $ProdURL
+
+        res["fldvendor"] = modPatPortal.$PaymentClient
+        res["fldvendormode"] = xitemVar["type"]["name"]
+        res["fldstate"] = xitemVar["state"]["name"]
+
+        res["fldtransid"] = xitemVar["idx"]
+        If xitemVar["amount"] Then
+          res["fldtransamt"] = xitemVar["amount"] / 100
+        Else
+          res["fldtransamt"] = 0
+        Endif
+        res["fldtranstoken"] = xitemVar["token"]
+        res["fldfeeamt"] = xitemVar["fee_amount"]
+        ' res["fldrefund"] = xitemVar["refunded"]
+        ' res["fldtransdate"] = xitemVar["created_on"]
+
+        res["fldpayerid"] = xitemVar["user"]["idx"]
+        res["fldpayername"] = xitemVar["user"]["name"]
+        res["fldpayermobile"] = xitemVar["user"]["mobile"]
+        res["fldpayeremail"] = xitemVar["user"]["email"]
+
+        res["fldmerchid"] = xitemVar["merchant"]["idx"]
+        res["fldmerchname"] = xitemVar["merchant"]["name"]
+        res["fldmerchmobile"] = xitemVar["merchant"]["mobile"]
+        res["fldmerchemail"] = xitemVar["merchant"]["email"]
+
+        res["flduserid"] = modBasic.$lbluser
+        res["fldtime"] = Now()
+        res["fldcomp"] = modBasic.$compID
+        res["fldsave"] = True
+        res["fldhostmac"] = CGI["REMOTE_ADDR"] & ":" & CGI["REMOTE_PORT"]
+        res["xyz"] = False
+        res.Update
+        $sValue = "Successful"
+        Me.Exec("Toastify({text: 'Transaction completed', duration: 3000}).showToast()")
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close(True)
+
+End
+
+''====================== Khalti =================
+Private Function GetKhaltiToken(sPhone As String, sTransPin As String, sAmt As Float) As String
+
+  Dim sColl As JSONCollection
+  Dim xresponse As String
+  Dim xTokenVar As Collection
+  Dim aToken As String
+
+  sColl = New JSONCollection
+  sColl.Add($PubKey, "public_key")
+  sColl.Add(sPhone, "mobile")
+  sColl.Add(sTransPin, "transaction_pin")
+  sColl.Add(sAmt, "amount")
+
+  sColl.Add($sBillNo, "product_identity")
+  sColl.Add($ProdName, "product_name")
+  sColl.Add("", "product_url")
+
+  xresponse = modDevAll.HTTPPOSTCollectionVal($IniLink, "", "", sColl)
+  If xresponse Then
+    Try xTokenVar = JSON.Decode(xresponse)
+    If xTokenVar Then
+      If xTokenVar["token"] Then
+        aToken = xTokenVar["token"]
+      Else If xTokenVar["detail"] Then
+        Message.Warning(xTokenVar["detail"], "OK")
+      Endif
+    Endif
+  Endif
+
+  Return aToken
+
+End
+
+Private Function GetKhaltiConfirmation(sTransPin As String, sToken As String, sConfirmCode As String) As String                  ''
+
+  Dim sColl As JSONCollection
+  Dim xresponse As String
+
+  sColl = New JSONCollection
+  sColl.Add($PubKey, "public_key")
+  sColl.Add(sToken, "token")
+  sColl.Add(sConfirmCode, "confirmation_code")
+  sColl.Add(sTransPin, "transaction_pin")
+
+  xresponse = modDevAll.HTTPPOSTCollectionVal($ConfLink, "", "", sColl)
+
+  Return xresponse
+
+End
+
+Private Function GetKhaltiVerification(sToken As String, sAmt As Float) As String                  ''
+
+  Dim arcmd As String
+  Dim xx As String
+
+  arcmd = "curl " & $VerifLink & " -H " & Quote("Authorization:Key " & $SecKey) & " -d amount=" & CStr(sAmt) & " -d token=" & sToken
+  modBasic.DebugAPIString("Execute " & arcmd)
+  Shell arcmd To xx
+
+  Return xx
+
+End

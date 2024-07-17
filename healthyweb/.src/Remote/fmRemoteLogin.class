@@ -1,0 +1,244 @@
+' Gambas class file
+
+Export
+
+''NEED TO DO: $ sudo mkdir /var/www/html/docs
+''NEED TO DO: $ sudo chmod -R a+rwx /var/www/html/docs
+
+Private $URL As String
+Private $AppName As String
+
+Private $sRefer As String
+Private $sHash As String
+
+Static Public Sub _init()
+
+  Env["GB_WEB_GUI_DEBUG"] = "1"
+  modHelpVariable.GetSessionParam()
+
+End
+
+Public Sub _new()
+
+  Dim xx As String
+  Dim yy As String
+  Dim asx As String[]
+  Dim xref As String
+  Dim xhash As String
+
+  Me.AddHeader("<meta name='viewport' content='width=device-width, initial-scale=1'>")
+  Me.AddJavascriptFile("js/toastify.js")
+  modPatPortal.$PaymentReferred = CGI["HTTP_REFERER"]
+  xx = CGI["REQUEST_URI"]
+  modHelpVariable.MakeWorkingDir()
+  modHelpVariable.CreateWorkingDir()
+  modHelpVariable.SetAppConfigFile()
+
+  PictureBox1.Image = modPrint.GetFixedWebURL("/etc" &/ Application.Name &/ "header-logo.png")
+
+  If InStr(xx, "?") > 0 Then
+    yy = Split(xx, "?")[1]
+    If yy Then
+      asx = Split(yy, "&")
+
+      If asx.Count > 0 Then
+        xref = asx[0]
+        If InStr(xref, "refer") > 0 Then
+          xref = Replace(xref, "refer=", "")
+        Endif
+      Else
+        xref = ""
+      Endif
+
+      If asx.Count > 1 Then
+        xhash = asx[1]
+        If InStr(xhash, "value") > 0 Then
+          xhash = Replace(xhash, "value=", "")
+        Endif
+      Else
+        xhash = ""
+      Endif
+
+    Endif
+  Endif
+
+  If xhash Then
+    $sRefer = xref
+    $sHash = xhash
+    WebContainer2.Visible = False
+    WebVBox2.Visible = False
+    WebHtml2.Text = modPatPortal.$PaymentReferred
+  Else
+    WebContainer18.Visible = False
+    WebContainer15.Visible = False
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim res2 As Result
+
+  modRemote.$UserRemote = Trim(txtuser.Text)
+  modHelpVariable.$LogInTime = Now()
+  modHelpVariable.CreateUserCacheDir()
+
+  modHelpVariable.ConnectionMain()
+  If modDatabase.$myConn.Opened = True Then
+    modHelpVariable.$localIP = CGI["REMOTE_ADDR"] & ":" & CGI["REMOTE_PORT"]
+
+    res2 = modDatabase.$myConn.Exec("select fldpatientval,fldptnamefir,fldemail from tblremoteusers where fldusrcode=&1 and fldpassword=&2 and fldstatus=&3", Trim(txtuser.text), modPassword.EncryptSimple(txtpass.Text), "Active")
+    If res2.Available = False Then
+      Me.Exec("Toastify({text: 'Incorrect User or Password', duration: 3000}).showToast()")
+    Else
+      MMain.InitialAppMode()
+      modBasic.$lbluser = res2["fldpatientval"]
+      If Not modBasic.$compID Then
+        modBasic.$compID = "Portal"
+      Endif
+      modHelpVariable.SetApplicationGUI()
+      WebForm.Current = fmRemotePage
+      ' WebForm.Current = fmRemoteStaff
+    Endif
+  Endif
+
+End
+
+Public Sub btnCreate_Click()
+
+  modHelpVariable.CreateUserCacheDir()
+  modHelpVariable.ConnectionMain()
+  modHelpVariable.CalenderConnection()
+  modBasic.EnableCollectionCache()
+  WebForm.Current = fmVerifyEmail
+  ' WebForm.Current = fmVerifyStaff
+
+End
+
+Public Sub txtpass_Activate()
+
+  btnOK_Click()
+
+End
+
+Public Sub WebHtml1_Render()
+
+  Dim xemail As String
+
+  xemail = modSettings.ShowSettingFromFIle("Application/SupportMail")
+  Print "<p>Send email to <A HREF='mailto:" & "isafiur@gmail.com" & "'>Support Team</A>.</p>";
+
+End
+
+Public Sub btnforget_Click()
+
+  Dim xemail As String
+  Dim res As Result
+  Dim xmail As String[]
+  Dim ymail As String[]
+  Dim xcontent As String
+  Dim sPass As String
+  Dim xresp As String
+
+  xemail = InputBox("What is your Identification ?", "Password Update", "")
+  If xemail Then
+    modHelpVariable.ConnectionMain()
+    If modDatabase.$myConn.Opened = True Then
+      modBasic.LoadSMTPEmailSetting()
+      res = modDatabase.$myConn.Edit("tblremoteusers", "fldusrcode=&1", Trim(xemail))
+
+      If res.Available Then
+        sPass = modPassword.GetRandomPassword()
+        res["fldhashcode"] = sPass
+        res.Update
+
+        If modRemote.$RemoteUserFormat = "email" Then
+          $URL = modSettings.ShowSettingFromFIle("Application/VerifyURL")
+          $AppName = modSettings.ShowSettingFromFIle("Application/VerifyApp")
+          ymail = New String[]
+          ymail.Add(Trim(xemail))
+          xmail = New String[]
+          xcontent = GetVerifyLink(Trim(xemail), sPass)
+          modDevAll.SendSMTPEmail(ymail, xmail, xmail, "Update your Password", xcontent, "")
+          Me.Exec("Toastify({text: 'E-Mail Sent to you.', duration: 3000}).showToast()")
+
+        Else If modRemote.$RemoteUserFormat = "phone" Then
+          xcontent = Left(sPass, 4)
+          modAppSupport.SendSMSSingle(Trim(xemail), "Your code is : " & xcontent)
+          xresp = InputBox("Provide code sent to your phone", "")
+          If xresp = xcontent Then
+            UpdateUserPassword(Trim(xemail), sPass)
+          Else
+            Me.Exec("Toastify({text: 'Wrong code', duration: 3000}).showToast()")
+          Endif
+
+        Endif
+      Else
+        Me.Exec("Toastify({text: 'E-Mail ID not registered', duration: 3000}).showToast()")
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Private Sub GetVerifyLink(sUser As String, sPass As String) As String
+
+  Dim xurl As String
+  Dim xx As String
+
+  xurl = $URL & "?user=" & sUser & "&pass=" & sPass & "&app=" & modPassword.EncryptSimple($AppName) & "&type=update"
+  xx = "Dear " & sUser & gb.NewLine & gb.NewLine
+  xx = xx & "Please click following link to update your password." & gb.NewLine
+  xx = xx & xurl
+
+  Return xx
+
+End
+
+Private Sub UpdateUserPassword(xuser As String, xpass As String)
+
+  Dim res As Result
+  Dim hForm As FmChangeText
+
+  res = modDatabase.$myConn.Edit("tblremoteusers", "fldusrcode=&1 and fldhashcode=&2", xuser, xpass)
+  If res.Available Then
+    hForm = New FmChangeText("Change Password", xuser, "", "tblremoteusers", "fldusrcode", "fldpassword")
+    hForm.ShowModal
+
+    res["fldhashcode"] = ""
+    res.Update
+  Endif
+
+End
+
+Public Sub btnshowunidoc_Click()
+
+  Dim res As Result
+
+  If WebVBox2.Children.Count Then
+    WebVBox2.DeleteChildren()
+  Endif
+
+  modHelpVariable.CreateUserCacheDir()
+  modHelpVariable.ConnectionMain()
+  If modDatabase.$myConn.Opened = True Then
+    res = modDatabase.$myConn.Exec("select fldpatientval,fldorduserid from tblonlinebook where fldbookingval=&1 and fldhashcode=&2", $sRefer, $sHash)
+    If res.Available Then
+      SaveStatusBooking()
+      modRemote.$UserRemote = res["fldorduserid"]
+      MMain.InitialAppMode()
+      modBasic.$lbluser = res["fldpatientval"]
+      If Not modBasic.$compID Then
+        modBasic.$compID = "Portal"
+      Endif
+      modHelpVariable.SetApplicationGUI()
+      WebForm.Current = fmRemotePage
+    Endif
+  Endif
+
+End
+
+Private Sub SaveStatusBooking()
+
+End

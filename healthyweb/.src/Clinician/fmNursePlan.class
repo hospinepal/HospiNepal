@@ -1,0 +1,639 @@
+' Gambas class file
+
+Private $encid As String
+Private $rMonRes As Result
+Private $aMonFields As String[]
+Private $rMexamRes As Result
+Private $aMexamFields As String[]
+Private $sDate As Date
+
+Public Sub _new(encid As String)
+
+  Dim xstatus As String
+
+  $encid = encid
+  modGeneralMain.GetOpenModalForm(Me)
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientAgeString($encid, Now()) & "/" & modPatient.GetPatientSex($encid)
+
+  xstatus = modPatient.CurrentAdmissionStatus($encid)
+  txtlocation.Text = modPatient.GetLocationSetting($encid, xstatus)
+  $sDate = Now()
+  lbldtmonitor.Text = modPatient.GetDayDiffAdmission($encid, $sDate)
+  ShowMonitoring()
+
+End
+
+''======================== NURSING PRORESS NOTES ====================
+Public Sub btnshowmonitor_Click()
+
+  If $encid Then
+    $sDate = GetDateValue("Select Date", "Nursing Plan", Now())
+    If $sDate Then
+      lbldtmonitor.Text = modPatient.GetDayDiffAdmission($encid, $sDate)
+      ShowMonitoring()
+    Endif
+  Endif
+
+End
+
+Public Sub btnmoniadd_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Create("tblpatplanning")
+  res["fldencounterval"] = $encid
+  res["fldplancategory"] = "IP Monitoring"
+  res["fldproblem"] = ""
+  res["fldsubjective"] = ""
+  res["fldobjective"] = ""
+  res["fldassess"] = ""
+  res["fldplan"] = ""
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["flduptime"] = ""
+  res["xyz"] = False
+  res.Update()
+  ShowMonitoring()
+
+End
+
+Private Sub ShowMonitoring()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,fldid,fldproblem,fldsubjective,fldobjective,fldassess,fldplan from tblpatplanning where fldencounterval=&1 and fldplancategory=&2 and fldtime>=&3 and fldtime<=&4"
+  $rMonRes = modDatabase.$myConn.Exec(sql, $encid, "IP Monitoring", modDate.StartSqlDate($sDate), modDate.EndSqlDate($sDate))
+  $aMonFields = New String[]
+  modGridView.ReadSmallData(grdmonitor, $rMonRes, $aMonFields)
+
+  With grdmonitor
+    .Columns[0].Hidden = True
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Hidden = True
+    .Columns[3].Hidden = True
+    .Columns[4].Hidden = True
+    .Columns[5].Hidden = True
+    .Columns[6].Hidden = True
+    .Columns[7].Hidden = True
+  End With
+
+End
+
+Public Sub grdmonitor_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rMonRes.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 1 Then
+    Data.Text = modReportVar.GetDateTimeReport($rMonRes[$aMonFields[Column]], gb.GeneralDate)
+  Else
+    Data.Text = $rMonRes[$aMonFields[Column]]
+  Endif
+
+End
+
+Public Sub grdmonitor_Select()
+
+  GetPlanDetail()
+
+End
+
+Private Sub GetPlanDetail()
+
+  If grdmonitor.Selection.Count Then
+    $rMonRes.MoveTo(grdmonitor.Selection[0])
+    txtmonvalue.Value = 0
+    WebTabPanel2.Enabled = True
+    txtmonvalue.Value = $rMonRes["fldid"]
+    txtmonimpression.Text = $rMonRes["fldproblem"]
+    txtmonproblem.RichText = $rMonRes["fldsubjective"]
+    txtmontreatment.RichText = $rMonRes["fldobjective"]
+    txtmoninout.RichText = $rMonRes["fldassess"]
+    txtmonplan.RichText = $rMonRes["fldplan"]
+    FillMoniExamtable(txtmonvalue.Value)
+  Endif
+
+End
+
+' Public Sub dctprogproblem_Click()
+'
+'   Dim xx As String
+'
+'   xx = GetRichTextArea("Problems", txtmonproblem.RichText)
+'   If xx Then
+'     txtmonproblem.RichText = xx
+'   Endif
+'
+' End
+'
+' Public Sub btntemplpprogproblem_Click()
+'
+'   txtmonproblem.RichText = txtmonproblem.RichText & DictionaryVIew(modBasic.$dictadvPath)
+'
+' End
+'
+' Public Sub dctprogtreat_Click()
+'
+'   Dim xx As String
+'
+'   xx = GetRichTextArea("Treatment", txtmontreatment.RichText)
+'   If xx Then
+'     txtmontreatment.RichText = xx
+'   Endif
+'
+' End
+'
+' Public Sub btntemplprogtreat_Click()
+'
+'   txtmontreatment.RichText = txtmontreatment.RichText & DictionaryVIew(modBasic.$dictadvPath)
+'
+' End
+'
+' Public Sub dctproginout_Click()
+'
+'   Dim xx As String
+'
+'   xx = GetRichTextArea("Input/Output", txtmoninout.RichText)
+'   If xx Then
+'     txtmoninout.RichText = xx
+'   Endif
+'
+' End
+'
+' Public Sub btntemplproginout_Click()
+'
+'   txtmoninout.RichText = txtmoninout.RichText & DictionaryVIew(modBasic.$dictadvPath)
+'
+' End
+'
+' Public Sub dctprogplan_Click()
+'
+'   Dim xx As String
+'
+'   xx = GetRichTextArea("Nursing Plan", txtmonplan.RichText)
+'   If xx Then
+'     txtmonplan.RichText = xx
+'   Endif
+'
+' End
+'
+' Public Sub btntemplprogplan_Click()
+'
+'   txtmonplan.RichText = txtmonplan.RichText & DictionaryVIew(modBasic.$dictadvPath)
+'
+' End
+
+''----------------- Text Areas ----------------------
+Public Sub btnmonproblem_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblpatplanning", "fldid=&1", txtmonvalue.Value)
+  If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+    res["fldsubjective"] = txtmonproblem.RichText
+    res["flduserid"] = modBasic.$lbluser
+    res["xyz"] = False
+    res.Update
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+    ' Balloon.Delay = modBasic.$BalloonDelay
+  Else
+    Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+  Endif
+
+End
+
+Public Sub btnmontreatment_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblpatplanning", "fldid=&1", txtmonvalue.Value)
+  If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+    res["fldobjective"] = txtmontreatment.RichText
+    res["flduserid"] = modBasic.$lbluser
+    res["xyz"] = False
+    res.Update
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+    ' Balloon.Delay = modBasic.$BalloonDelay
+  Else
+    Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+  Endif
+
+End
+
+Public Sub btnmoninout_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblpatplanning", "fldid=&1", txtmonvalue.Value)
+  If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+    res["fldassess"] = txtmoninout.RichText
+    res["flduserid"] = modBasic.$lbluser
+    res["xyz"] = False
+    res.Update
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+    ' Balloon.Delay = modBasic.$BalloonDelay
+  Else
+    Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+  Endif
+
+End
+
+Public Sub btnmonplan_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblpatplanning", "fldid=&1", txtmonvalue.Value)
+  If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+    res["fldplan"] = txtmonplan.RichText
+    res["flduserid"] = modBasic.$lbluser
+    res["xyz"] = False
+    res.Update
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+    ' Balloon.Delay = modBasic.$BalloonDelay
+  Else
+    Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+  Endif
+
+End
+
+Public Sub btnmonimpression_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblpatplanning", "fldid=&1", txtmonvalue.Value)
+  If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+    res["fldproblem"] = txtmonimpression.Text
+    res["flduserid"] = modBasic.$lbluser
+    res["xyz"] = False
+    res.Update
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+    ' Balloon.Delay = modBasic.$BalloonDelay
+  Else
+    Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+  Endif
+
+End
+
+Public Sub btnaddprogimpression_Click()
+
+End
+
+''---------------- IP Monitoring Exam ---------------
+Public Sub btnaddexamlist_Click()
+
+  Dim hForm As FmEnterGroupExam
+
+  If txtmonvalue.Value Then
+    hForm = New FmEnterGroupExam($encid, "IP Monitoring:" & CStr(txtmonvalue.Value), "Group")
+    hForm.ShowModal
+    FillMoniExamtable(txtmonvalue.Value)
+  Endif
+
+End
+
+Public Sub btnfindList_Click()
+
+  Dim xlist As String[]
+
+  If modSettings.ShowSettingFromFIle("ClinicForms/CategoryGridView") = "Yes" Then
+    xlist = modFixClinic.GetExamWithCategory(modBasic.$ClinNursingComp)
+    If xlist.Count Then
+      cmbmonexam.Text = GridViewGroup("Select Examination", xlist, modMisc.LockBoolean(modBasic.$LockExamList))
+      GetSelectedFindingControl()
+    Endif
+  Else
+    xlist = modBasic.$ClinNursingComp
+    If xlist.Count Then
+      cmbmonexam.Text = GridViewNew("Select Examination", xlist, modMisc.LockBoolean(modBasic.$LockExamList))
+      GetSelectedFindingControl()
+    Endif
+  Endif
+
+End
+
+Public Sub cmbmonexam_Activate()
+
+  If cmbmonexam.Text Then
+  Else
+    btnfindList_Click()
+  Endif
+
+End
+
+Private Sub GetSelectedFindingControl()
+
+  Dim sType As String
+  Dim xlimit As Float[]
+
+  txtfindmax.Value = 0
+  txtfindmin.Value = 0
+  If cmbmonexam.Text Then
+    sType = modFixClinic.GetExaminationType(cmbmonexam.Text)
+    If sType = "Quantitative" Then
+      xlimit = modClinic.GetBothQuantiExamVal(cmbmonexam.Text, $encid)
+      txtfindmin.Value = xlimit[0]
+      txtfindmax.Value = xlimit[1]
+
+      txtmonexam.Enabled = False
+      btnselquali.Enabled = False
+      txtmonval.Enabled = True
+      If modBasic.$TabletModeEnable = "Yes" Then
+      Else
+        txtmonval.SetFocus
+      Endif
+
+    Else
+      txtmonexam.Enabled = True
+      If modBasic.$DisplayExamOption = "No" Then
+      Else
+        txtmonexam.Tag = modFixClinic.GetExamtOptionType(cmbmonexam.Text)
+        If txtmonexam.Tag = "Single Selection" Or If txtmonexam.Tag = "Dichotomous" Then
+          txtmonexam.List = modAllExam.SelectExamOptionList("Exam", cmbmonexam.Text)
+        Else
+          btnselquali.Enabled = True
+        Endif
+      Endif
+      txtmonval.Enabled = False
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnselquali_Click()
+
+  Dim xscle As String[]
+  Dim yqualival As Variant[]
+
+  If cmbmonexam.Text Then
+    If modBasic.$DisplayExamOption = "No" Then
+    Else
+
+      If txtmonexam.Tag = "Clinical Scale" Then
+        xscle = modExamOption.GetClinScalePopUp("Exam", cmbmonexam.Text)
+        If xscle Then
+          txtmonval.Value = CFloat(xscle[0])
+          txtmonexam.Text = xscle[1]
+          txtmonexam.Enabled = False
+        Endif
+      Else If txtmonexam.Tag = "Left and Right" Then
+        yqualival = CLeftRight(cmbmonexam.Text, "", modFixClinic.GetLeftRightMainHeader("Exam", cmbmonexam.Text))
+        If yqualival Then
+          txtmonexam.Text = yqualival[0]
+          txtmonexam.Enabled = False
+        Endif
+      Else If txtmonexam.Tag = "Visual Input" Then
+        txtmonexam.Text = modExamOption.GetVisualDataExamVal(cmbmonexam.Text)
+      Else If txtmonexam.Tag = "Date Time" Then
+        txtmonexam.Text = modDate.DateStringForExam(GetDateValue(cmbmonexam.Text, "Date Value", Now()))
+        txtmonexam.Enabled = False
+      Else If txtmonexam.Tag = "BS Date" Then
+        txtmonexam.Text = modDate.ConvertToLocaldate(GetDateValue(cmbmonexam.Text, "Date Value", Now()))
+        txtmonexam.Enabled = False
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnmonexam_Click()
+
+  Dim sType As String
+  Dim abn As Boolean
+  Dim xsys As String
+
+  If $encid Then
+    If cmbmonexam.Text Then
+      sType = modFixClinic.GetExaminationType(cmbmonexam.Text)
+      xsys = modFixClinic.SysConstFromGetExamID(cmbmonexam.Text)
+      If sType = "Quantitative" Then
+        If txtfindmin.Value > txtmonval.Value Or If txtfindmax.Value < txtmonval.Value Then
+          abn = True
+        Else
+          abn = False
+        Endif
+        modClinSub.AddQuantiData($encid, "", cmbmonexam.Text, txtmonval.Value, abn, "IP Monitoring:" & CStr(txtmonvalue.Value), xsys)
+      Else
+        modClinSub.AddClinicExam($encid, "", cmbmonexam.Text, txtmonexam.Text, txtmonval.Value, False, "IP Monitoring:" & CStr(txtmonvalue.Value), xsys, "Regular")
+      Endif
+      FillMoniExamtable(txtmonvalue.Value)
+      cmbmonexam.Text = ""
+      txtmonexam.Enabled = True
+      txtmonval.Enabled = True
+      txtmonexam.Text = ""
+      txtmonexam.Clear()
+      txtmonval.Value = 0
+      txtmonval.Tag = ""
+    Endif
+  Endif
+
+End
+
+Public Sub FillMoniExamtable(sInt As Long)
+
+  $rMexamRes = modDatabase.$myConn.Exec("select fldid,fldtype,fldhead,fldabnormal,fldid,fldid,fldtime,fldencounterval,flduserid,fldcomp,fldrepquali from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldsave=&3", $encid, "IP Monitoring:" & CStr(sInt), True)
+  $aMexamFields = New String[]
+  modGridView.ReadSmallData(grdmonexam, $rMexamRes, $aMexamFields)
+
+  With grdmonexam
+    .Columns[0].Hidden = True
+    .Columns[1].Hidden = True
+    .Columns[2].Width = CStr(225 * modBasic.$AppWidthRatio) & "px"
+    .Columns[3].Width = CStr(25 * modBasic.$AppWidthRatio) & "px"
+    .Columns[4].Width = CStr(250 * modBasic.$AppWidthRatio) & "px"
+    .Columns[5].Hidden = True
+    .Columns[6].Width = CStr(150 * modBasic.$AppWidthRatio) & "px"
+    .Columns[7].Hidden = True
+    .Columns[8].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[9].Width = CStr(100 * modBasic.$AppWidthRatio) & "px"
+    .Columns[10].Hidden = True
+
+    .Columns[2].Text = "Examination"
+    .Columns[4].Text = "Observation"
+    .Columns[6].Text = "ReportTime"
+    .Columns[8].Text = "UserID"
+    .Columns[9].Text = "Location"
+  End With
+
+End
+
+Public Sub grdmonexam_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rMexamRes.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 3 Then
+    Data.Html = modString.GetImageForHTMLGrid(modMisc.GetGridIcon($rMexamRes[$aMexamFields[Column]]), "75%", "75%")
+    Data.Text = ""
+  Else If Column = 4 Then
+    Data.Html = modClinic.GetExamValueString($encid, $rMexamRes[$aMexamFields[Column]], False)
+  Else If Column = 6 Then
+    Data.Text = modReportVar.GetDateTimeReport($rMexamRes[$aMexamFields[Column]], gb.GeneralDate)
+  Else
+    Data.Text = $rMexamRes[$aMexamFields[Column]]
+  Endif
+
+End
+
+Public Sub btnMonitcomponent_Click()
+
+  Dim hForm2 As FmEnterMultiple
+  Dim res As Result
+  Dim xData As Variant[]
+  Dim yyy As String[]
+
+  Dim xquantival As Variant[]
+  Dim yqualival As Variant[]
+  Dim xlimit As Float[]
+  Dim xType As String
+  Dim xdate As Date
+
+  If grdmonexam.Selection.Count Then
+    $rMexamRes.MoveTo(grdmonexam.Selection[0])
+
+    If $rMexamRes["fldtype"] = "Qualitative" Then
+      xType = modFixClinic.GetExamtOptionType($rMexamRes["fldhead"])
+      If modClinic.GetSubExamBool($rMexamRes["fldid"]) = False Then
+        If xType = "Fixed Components" Then
+          yyy = modFixClinic.GetSubExamArray($rMexamRes["fldhead"])
+          If yyy.Count Then
+            modClinSub.InsertExamSubExam($rMexamRes["fldencounterval"], $rMexamRes["fldid"], $rMexamRes["fldhead"], yyy)
+          Endif
+        Endif
+      Endif
+
+      res = modDatabase.$myConn.Exec("select fldid,fldsubtexam,fldreport,fldtanswertype,fldabnormal,fldindex from tblpatientsubexam where fldheadid=&1", $rMexamRes["fldid"])
+      If res.Available = False Then
+        If xType = "Clinical Scale" Then
+          yqualival = modExamOption.GetClinScalePopUp("Exam", $rMexamRes["fldhead"])
+          If yqualival Then
+            modClinSub.UpdateQualiQuantiData($rMexamRes["fldid"], yqualival[1], CFloat(yqualival[0]), False)
+          Endif
+        Else If xType = "Left and Right" Then
+          yqualival = CLeftRight($rMexamRes["fldhead"], modClinic.GetExamValueString($encid, $rMexamRes["fldid"], False), modFixClinic.GetLeftRightMainHeader("Exam", $rMexamRes["fldhead"]))
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData($rMexamRes["fldid"], yqualival[0], yqualival[1], "")
+          Endif
+        Else If xType = "Date Time" Then
+          xdate = GetDateValue($rMexamRes["fldhead"], ("Select Date Time"), Val($rMexamRes["fldrepquali"]))
+          If xdate Then
+            modClinSub.UpdateClinicQualiData($rMexamRes["fldid"], modDate.DateStringForExam(xdate), False, "")
+          Endif
+        Else If xType = "BS Date" Then
+          xdate = GetDateValue($rMexamRes["fldhead"], ("Select Date Time"), modDate.ConvertToEnglishdate($rMexamRes["fldrepquali"]))
+          If xdate Then
+            modClinSub.UpdateClinicQualiData($rMexamRes["fldid"], modDate.ConvertToLocaldate(xdate), False, "")
+          Endif
+        Else If xType = "Qualitative" Then
+          yqualival = GetQualiString($rMexamRes["fldhead"], $rMexamRes["fldrepquali"], "Exam")
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData($rMexamRes["fldid"], yqualival[0], yqualival[1])
+          Endif
+        Else If xType = "RichText Area" Then
+          yqualival = GetQualiRich($rMexamRes["fldhead"], $rMexamRes["fldrepquali"], "Exam")
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData($rMexamRes["fldid"], yqualival[0], yqualival[1], yqualival[2])
+          Endif
+        Else
+          yqualival = GetQualiValues($rMexamRes["fldhead"], $rMexamRes["fldrepquali"], "Exam")
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData($rMexamRes["fldid"], yqualival[0], yqualival[1], yqualival[2])
+          Endif
+        Endif
+
+      Else If res.Available = True Then
+        xData = New Variant[]
+        For Each res
+          xData.Add([res["fldsubtexam"], res["fldreport"], res["fldid"], res["fldtanswertype"], res["fldabnormal"], res["fldindex"]])
+        Next
+        xData.Add(["Final Impression", $rMexamRes["fldrepquali"], 0, "RichText Area", False, ""])
+        hForm2 = New FmEnterMultiple($rMexamRes["fldid"], "Exam", $rMexamRes["fldhead"], xData, "", "Current")
+        hForm2.ShowModal
+      Endif
+
+    Else If $rMexamRes["fldtype"] = "Quantitative" Then
+      xlimit = modClinic.GetBothQuantiExamVal($rMexamRes["fldhead"], $rMexamRes["fldencounterval"])
+      xquantival = GetQuantiValues("Exam", $encid, $rMexamRes["fldhead"], xlimit[0], xlimit[1], modClinic.GetExamValueByID($rMexamRes["fldid"]))                                       '
+      If xquantival Then
+        modClinSub.UpdateQuantiData($rMexamRes["fldid"], xquantival[0], xquantival[1])
+      Endif
+
+    Endif
+    FillMoniExamtable(txtmonvalue.Value)
+
+  Endif
+
+End
+
+Public Sub btnmonitflag_Click()
+
+  Dim xx As String
+
+  If grdmonexam.Selection.Count Then
+    $rMexamRes.MoveTo(grdmonexam.Selection[0])
+
+    xx = InputCombo("Select Flag for observation", "Change Flag", ["Normal", "Abnormal"], modMisc.GetIconValue($rMexamRes["fldabnormal"]), True)
+    If xx Then
+      modClinSub.UpdateExamFlag($rMexamRes["fldid"], xx)
+      FillMoniExamtable(txtmonvalue.Value)
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnmonitdelete_Click()
+
+  Dim res As Result
+
+  If grdmonexam.Selection.Count Then
+    $rMexamRes.MoveTo(grdmonexam.Selection[0])
+
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      res = modDatabase.$myConn.Edit("tblpatientexam", "fldid=&1", $rMexamRes["fldid"])
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+        res["fldsave"] = False
+        res["flduserid"] = modBasic.$lbluser
+        res.Update
+        FillMoniExamtable(txtmonvalue.Value)
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close()
+
+End
+
+Public Sub btntxtproblem_Click()
+
+  txtmonproblem.RichText = txtmonproblem.RichText & Space(1) & modFillContainer.GetExtraTextArea("Problem Summary", "")
+
+End
+
+Public Sub btntxttreat_Click()
+
+  txtmontreatment.RichText = txtmontreatment.RichText & Space(1) & modFillContainer.GetExtraTextArea("Treatment Summary", "")
+
+End
+
+Public Sub btntxtinput_Click()
+
+  txtmoninout.RichText = txtmoninout.RichText & Space(1) & modFillContainer.GetExtraTextArea("Intake/Output Summary", "")
+
+End
+
+Public Sub btntxtplan_Click()
+
+  txtmonplan.RichText = txtmonplan.RichText & Space(1) & modFillContainer.GetExtraTextArea("Planning", "")
+
+End

@@ -1,0 +1,666 @@
+' Gambas module file
+
+Private $ProgressBar1 As ProgressBar
+
+Private Function FormatPSPPFile(sText As String) As String
+
+  Dim xx As String
+
+  xx = Replace(sText, "{ConfidenceInterval}", CStr(modBasic.$StatConfInterval))
+  Return xx
+
+End
+
+'Note: ------------------------------------ PSPP -----------------------------------------------
+Private Sub PSPPScript(sType As String, sFile As String) As String
+
+  Dim xx As String
+  Dim xval As Float
+
+  xx = File.Load(modHelpVariable.$psppDirectory &/ sType)
+  xx = FormatPSPPFile(xx)
+  If sType = "t-test" Then
+    xval = InputValue("Test Value", "One Sample T-Test", 0)
+    xx = Replace(xx, "{TestValue}", Format(xval, gb.Fixed))
+  Endif
+  xx = Replace(xx, "{DataList}", Trim(File.Load(sFile)))
+
+  Return xx
+
+End
+
+''PSPP output
+Public Function CreatePSPPStatFIle(sType As String, sFile As String) As String
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+  Dim xval As String
+
+  If sFile Then
+    xPath = Temp() & ".sps"
+    xTemp = Temp()
+    sOutput = xTemp & ".html"
+    File.Save(xPath, PSPPScript(sType, sFile))
+    If System.Exist("pspp") = True Then
+      xcmd = ["pspp", xPath, "-o", sOutput]
+      modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+      Exec xcmd Wait
+    Else
+      modApplSub.InstallSelectedApplication(["pspp"])
+    Endif
+  Endif
+
+  If sType = "frequency" Or If sType = "barplot" Then
+    xval = xTemp & "-1.png"
+  Else
+    xval = sOutput
+  Endif
+  Return xval
+
+End
+
+''univariate menu
+Public Function GetEncChartGridNew(sPath As String, Optional sOrder As String[]) As String
+
+  Dim xx As String
+  Dim xTitle As String
+  Dim sType As String
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+
+  xTitle = modSettings.ShowSettingFromFIle("UnivariateAnalysis/DataType")
+  If xTitle Then
+    If xTitle = "Scale" Then
+      sType = "statistics"
+    Else If xTitle = "Ordinal" Then
+      If sOrder And If sOrder.Count Then
+        sType = "statistics-ordinal"
+      Else
+        sType = "statistics-string"
+      Endif
+    Else
+      sType = "statistics-string"
+    Endif
+    xx = File.Load(modHelpVariable.$psppDirectory &/ sType)
+    xx = FormatPSPPFile(xx)
+    xx = Replace(xx, "{DataList}", Trim(File.Load(sPath)))
+    If xTitle = "Ordinal" Then
+      If sOrder And If sOrder.Count Then
+        xx = Replace(xx, "{RecodeList}", GetRecodeList(sOrder))
+        xx = Replace(xx, "{LabelList}", GetValueLabelList(sOrder))
+      Endif
+    Endif
+
+    xPath = Temp() & ".sps"
+    xTemp = Temp()
+    sOutput = xTemp & ".html"
+    File.Save(xPath, xx)
+    If System.Exist("pspp") = True Then
+      xcmd = ["pspp", xPath, "-o", sOutput]
+      modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+      Exec xcmd Wait
+    Else
+      modApplSub.InstallSelectedApplication(["pspp"])
+    Endif
+
+    modExternal.$ExecValueColl.Clear()
+  Endif
+
+  Return sOutput
+
+End
+
+Private Function GetRecodeList(sOrder As String[]) As String
+
+  Dim xxx As String[]
+  Dim i As Integer
+
+  xxx = New String[]
+  For i = 0 To sOrder.Count - 1
+    xxx.Add("(" & Quote(sOrder[i]) & "=" & CStr(i + 1) & ")")
+  Next
+  Return xxx.Join(gb.NewLine)
+
+End
+
+Private Function GetValueLabelList(sOrder As String[]) As String
+
+  Dim xxx As String[]
+  Dim i As Integer
+
+  xxx = New String[]
+  For i = 0 To sOrder.Count - 1
+    xxx.Add(CStr(i + 1) & Space(1) & Quote(sOrder[i]))
+  Next
+  Return xxx.Join(Space(1))
+
+End
+
+''crosstab menu
+' Public Function GetCrssTabChartOnly(GridView1 As GridView, Column As Integer) As String
+'
+'   Dim xx As String
+'
+'   If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Nominal" Then
+'     ' xx = CrossTabChartGrid(GridView1, Column, True)
+'   Endif
+'   Return xx
+'
+' End
+
+''newer
+Public Function GetCrossTabStatNew(sPath As String, xGroup As String[], Optional sOrder As String[]) As String
+
+  Dim xx As String
+
+  If modCustPatient.$CrossIndepType = "Numerical" And If modCustPatient.$CrossOutcomeType = "Nominal" Then
+  Else If modCustPatient.$CrossIndepType = "Numerical" And If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+  Else
+    If sPath Then
+      xx = CrossTabChartGridNew(sPath, False, xGroup, sOrder)
+    Endif
+  Endif
+  Return xx
+
+End
+
+Private Function CrossTabChartGridNew(sPath As String, ChartOnly As Boolean, xsortVar As String[], Optional sOrder As String[]) As String
+
+  Dim xx As String
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+
+  If sPath Then
+    If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Nominal" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "crosstab")
+
+    Else If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+      If xsortVar.Count = 2 Then
+        If sOrder And If sOrder.Count Then
+          xx = File.Load(modHelpVariable.$psppDirectory &/ "mann-whitney-ordinal")
+        Else
+          xx = File.Load(modHelpVariable.$psppDirectory &/ "mann-whitney")
+        Endif
+        xx = Replace(xx, "{var1}", CStr(1))
+        xx = Replace(xx, "{var2}", CStr(2))
+      Else
+        If sOrder And If sOrder.Count Then
+          xx = File.Load(modHelpVariable.$psppDirectory &/ "kruskal-wallis-ordinal")
+        Else
+          xx = File.Load(modHelpVariable.$psppDirectory &/ "kruskal-wallis")    ''
+        Endif
+        xx = Replace(xx, "{var1}", CStr(1))
+        xx = Replace(xx, "{var2}", CStr(xsortVar.Count))
+      Endif
+
+    Else If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Scale" Then
+      If xsortVar.Count = 2 Then
+        xx = File.Load(modHelpVariable.$psppDirectory &/ "indep-t-test")
+        xx = Replace(xx, "{var1}", xsortVar[0])
+        xx = Replace(xx, "{var2}", xsortVar[1])
+      Else
+        xx = File.Load(modHelpVariable.$psppDirectory &/ "oneway-anova")
+      Endif
+
+    Else If modCustPatient.$CrossIndepType = "Numerical" And If modCustPatient.$CrossOutcomeType = "Scale" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "correlation")
+
+    Endif
+
+    If ChartOnly = True Then
+      xTemp = Temp()
+      File.Save(xTemp, File.Load(sPath))
+      sOutput = xTemp
+
+    Else
+      xx = FormatPSPPFile(xx)
+      xx = Replace(xx, "{DataList}", Trim(File.Load(sPath)))
+      If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+        If sOrder And If sOrder.Count Then
+          xx = Replace(xx, "{RecodeList}", GetRecodeList(sOrder))
+          xx = Replace(xx, "{LabelList}", GetValueLabelList(sOrder))
+        Endif
+      Endif
+      xPath = Temp() & ".sps"
+      xTemp = Temp()
+      sOutput = xTemp & ".html"
+      File.Save(xPath, xx)
+      If System.Exist("pspp") = True Then
+        xcmd = ["pspp", xPath, "-o", sOutput]
+        modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+        Exec xcmd Wait
+      Else
+        modApplSub.InstallSelectedApplication(["pspp"])
+      Endif
+    Endif
+
+  Endif
+  modExternal.$ExecValueColl.Clear()
+
+  Return sOutput
+
+End
+
+''Timeseries menu
+Public Function GetTimeChartGrid(xData As Variant[], yData As Variant[]) As String
+
+  Dim xx As String
+
+  If modCustPatient.$TimeIndepType = modCustPatient.$TimeOutcomeType Then
+    xx = TimeSeriesChartGrid(xData, yData, False)
+  Endif
+  Return xx
+
+End
+
+Private Function TimeSeriesChartGrid(xData As Variant[], yData As Variant[], ChartOnly As Boolean) As String
+
+  Dim i As Integer
+  Dim sData As String[]
+  Dim xx As String
+  Dim aafinal As String
+  Dim bbfinal As String
+  Dim afinalx As Variant
+  Dim bfinalx As Variant
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+
+  Dim pprow As String
+  Dim ppcol As String
+  Dim xindep As String
+  Dim xoutdep As String
+
+  sData = New String[]
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  For i = 0 To xData.Count - 1
+
+    ''independent
+    afinalx = modCustPatient.FormatTimeRow(xData[i])
+    aafinal = CStr(afinalx)
+    If aafinal = "__" Then
+      aafinal = ""
+    Endif
+
+    ''dependent variable
+    bfinalx = modCustPatient.FormatTimeColumn(yData[i])
+    bbfinal = CStr(bfinalx)
+    If bbfinal = "__" Then
+      bbfinal = ""
+    Endif
+
+    ''select analysis
+    If modCustPatient.$TimeIndepType = "Nominal" And If modCustPatient.$TimeOutcomeType = "Nominal" Then
+      If Len(aafinal) And If Len(bbfinal) Then
+        sData.Add(Quote(aafinal) & gb.Tab & Quote(bbfinal))
+      Endif
+
+    Else If modCustPatient.$TimeIndepType = "Ordinal" And If modCustPatient.$TimeOutcomeType = "Ordinal" Then
+      If Len(aafinal) And If Len(bbfinal) Then
+        sData.Add(Quote(aafinal) & gb.Tab & Quote(bbfinal))
+      Endif
+
+    Else If modCustPatient.$TimeIndepType = "Scale" And If modCustPatient.$TimeOutcomeType = "Scale" Then
+      If TypeOf(aafinal) = gb.Float Or If TypeOf(aafinal) = gb.Integer Then
+        pprow = Format(aafinal, gb.Fixed)
+      Else If TypeOf(aafinal) = gb.String Then
+        If Len(aafinal) Then
+          If IsNumber(aafinal) Then
+            pprow = Format(aafinal, gb.Fixed)
+          Endif
+        Endif
+      Endif
+      xindep = modCustPatient.GetLimitTimeIndep(pprow)
+      If TypeOf(bbfinal) = gb.Float Or If TypeOf(bbfinal) = gb.Integer Then
+        ppcol = Format(bbfinal, gb.Fixed)
+      Else If TypeOf(bbfinal) = gb.String Then
+        If Len(bbfinal) Then
+          If IsNumber(bbfinal) Then
+            ppcol = Format(bbfinal, gb.Fixed)
+          Endif
+        Endif
+      Endif
+      xoutdep = modCustPatient.GetLimitTimeOutcome(ppcol)
+      If xindep And If xoutdep Then
+        sData.Add(xindep & gb.Tab & xoutdep)
+      Endif
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / xData.Count
+      Wait
+    Endif
+  Next
+
+  If sData.Count Then
+    If modCustPatient.$TimeIndepType = "Nominal" And If modCustPatient.$TimeOutcomeType = "Nominal" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "mcnemar")
+    Else If modCustPatient.$TimeIndepType = "Ordinal" And If modCustPatient.$TimeOutcomeType = "Ordinal" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "wilcoxon")
+    Else If modCustPatient.$TimeIndepType = "Scale" And If modCustPatient.$TimeOutcomeType = "Scale" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "paired-t-test")
+    Endif
+
+    If ChartOnly = True Then
+      xTemp = Temp()
+      File.Save(xTemp, sData.Join(gb.NewLine))
+      sOutput = xTemp
+
+    Else
+      xx = FormatPSPPFile(xx)
+      xx = Replace(xx, "{DataList}", sData.Join(gb.NewLine))
+      xPath = Temp() & ".sps"
+      xTemp = Temp()
+      sOutput = xTemp & ".html"
+      File.Save(xPath, xx)
+      If System.Exist("pspp") = True Then
+        xcmd = ["pspp", xPath, "-o", sOutput]
+        modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+        Exec xcmd Wait
+      Else
+        modApplSub.InstallSelectedApplication(["pspp"])
+      Endif
+    Endif
+
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    If $ProgressBar1 Then
+      $ProgressBar1.Visible = False
+    Endif
+  Endif
+  modExternal.$ExecValueColl.Clear()
+
+  Return sOutput
+
+End
+
+''Regression analysis
+Public Function RegressionChartGridNew(DepData As Variant[], Indep1Data As Variant[], Indep2Data As Variant[], Indep3Data As Variant[], Indep4Data As Variant[], Indep5Data As Variant[]) As String
+
+  Dim i As Integer
+  Dim xData As String[]
+  Dim xsortVar As String
+  Dim xx As String
+
+  Dim bbfinal As String
+  Dim aafinal1 As String
+  Dim aafinal2 As String
+  Dim aafinal3 As String
+  Dim aafinal4 As String
+  Dim aafinal5 As String
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+
+  Dim xcol As Variant
+  Dim xrow1 As Variant
+  Dim xrow2 As Variant
+  Dim xrow3 As Variant
+  Dim xrow4 As Variant
+  Dim xrow5 As Variant
+
+  Dim ppcol As String
+  Dim pprow1 As String
+  Dim pprow2 As String
+  Dim pprow3 As String
+  Dim pprow4 As String
+  Dim pprow5 As String
+  Dim xoutdep As String
+  Dim xindep1 As String
+  Dim xindep2 As String
+  Dim xindep3 As String
+  Dim xindep4 As String
+  Dim xindep5 As String
+
+  Dim xvarlst As String
+  Dim xdovar1 As Integer
+  Dim xdovar2 As Integer
+  Dim xdovar3 As Integer
+  Dim xdovar4 As Integer
+  Dim xdovar5 As Integer
+  Dim p As Integer
+  Dim coltot As Integer
+
+  xData = New String[]
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  If modCustPatient.$RegVar1UseGridVal = "Yes" Or If modCustPatient.$RegVar1Variable Or If modCustPatient.$RegVar1SQLText Then
+    xdovar1 = 1
+  Else
+    xdovar1 = 0
+  Endif
+  If modCustPatient.$RegVar2UseGridVal = "Yes" Or If modCustPatient.$RegVar2Variable Or If modCustPatient.$RegVar2SQLText Then
+    xdovar2 = 1
+  Else
+    xdovar2 = 0
+  Endif
+  If modCustPatient.$RegVar3UseGridVal = "Yes" Or If modCustPatient.$RegVar3Variable Or If modCustPatient.$RegVar3SQLText Then
+    xdovar3 = 1
+  Else
+    xdovar3 = 0
+  Endif
+  If modCustPatient.$RegVar4UseGridVal = "Yes" Or If modCustPatient.$RegVar4Variable Or If modCustPatient.$RegVar4SQLText Then
+    xdovar4 = 1
+  Else
+    xdovar4 = 0
+  Endif
+  If modCustPatient.$RegVar5UseGridVal = "Yes" Or If modCustPatient.$RegVar5Variable Or If modCustPatient.$RegVar5SQLText Then
+    xdovar5 = 1
+  Else
+    xdovar5 = 0
+  Endif
+  xvarlst = ""
+  coltot = xdovar1 + xdovar2 + xdovar3 + xdovar4 + xdovar5
+  For p = 1 To coltot
+    xvarlst = xvarlst & Space(1) & "v" & CStr(p)
+  Next
+
+  For i = 0 To DepData.Count - 1
+
+    ''dependent variable
+    xcol = modCustPatient.FormatDepRegression(DepData[i])
+    bbfinal = CStr(xcol)
+    If bbfinal = "__" Then
+      bbfinal = ""
+    Endif
+
+    If TypeOf(bbfinal) = gb.Float Or If TypeOf(bbfinal) = gb.Integer Then
+      ppcol = Format(bbfinal, gb.Fixed)
+    Else If TypeOf(bbfinal) = gb.String Then
+      If Len(bbfinal) Then
+        If IsNumber(bbfinal) Then
+          ppcol = Format(bbfinal, gb.Fixed)
+        Endif
+      Endif
+    Endif
+    xoutdep = modCustPatient.GetLimitDepRegression(ppcol)
+    xsortVar = xoutdep
+
+    ''independent var1
+    If xdovar1 = 1 Then
+      xrow1 = modCustPatient.FormatVar1Regression(Indep1Data[i])
+      aafinal1 = CStr(xrow1)
+      If aafinal1 = "__" Then
+        aafinal1 = ""
+      Endif
+
+      If aafinal1 Then
+        If TypeOf(aafinal1) = gb.Float Or If TypeOf(aafinal1) = gb.Integer Then
+          pprow1 = Format(aafinal1, gb.Fixed)
+        Else If TypeOf(aafinal1) = gb.String Then
+          If Len(aafinal1) Then
+            If IsNumber(aafinal1) Then
+              pprow1 = Format(aafinal1, gb.Fixed)
+            Endif
+          Endif
+        Endif
+        xindep1 = modCustPatient.GetLimitVar1Regression(pprow1)
+      Else
+        xindep1 = ""
+      Endif
+      xsortVar = xsortVar & gb.Tab & xindep1
+    Endif
+
+    ''independent var2
+    If xdovar2 = 1 Then
+      xrow2 = modCustPatient.FormatVar2Regression(Indep2Data[i])
+      aafinal2 = CStr(xrow2)
+      If aafinal2 = "__" Then
+        aafinal2 = ""
+      Endif
+
+      If aafinal2 Then
+        If TypeOf(aafinal2) = gb.Float Or If TypeOf(aafinal2) = gb.Integer Then
+          pprow2 = Format(aafinal2, gb.Fixed)
+        Else If TypeOf(aafinal2) = gb.String Then
+          If Len(aafinal2) Then
+            If IsNumber(aafinal2) Then
+              pprow2 = Format(aafinal2, gb.Fixed)
+            Endif
+          Endif
+        Endif
+        xindep2 = modCustPatient.GetLimitVar2Regression(pprow2)
+      Else
+        xindep2 = ""
+      Endif
+      xsortVar = xsortVar & gb.Tab & xindep2
+    Endif
+
+    ''independent var3
+    If xdovar3 = 1 Then
+      xrow3 = modCustPatient.FormatVar3Regression(Indep3Data[i])
+      aafinal3 = CStr(xrow3)
+      If aafinal3 = "__" Then
+        aafinal3 = ""
+      Endif
+
+      If aafinal3 Then
+        If TypeOf(aafinal3) = gb.Float Or If TypeOf(aafinal3) = gb.Integer Then
+          pprow3 = Format(aafinal3, gb.Fixed)
+        Else If TypeOf(aafinal3) = gb.String Then
+          If Len(aafinal3) Then
+            If IsNumber(aafinal3) Then
+              pprow3 = Format(aafinal3, gb.Fixed)
+            Endif
+          Endif
+        Endif
+        xindep3 = modCustPatient.GetLimitVar3Regression(pprow3)
+      Else
+        xindep3 = ""
+      Endif
+      xsortVar = xsortVar & gb.Tab & xindep3
+    Endif
+
+    ''independent var4
+    If xdovar4 = 1 Then
+      xrow4 = modCustPatient.FormatVar4Regression(Indep4Data[i])
+      aafinal4 = CStr(xrow4)
+      If aafinal4 = "__" Then
+        aafinal4 = ""
+      Endif
+
+      If aafinal4 Then
+        If TypeOf(aafinal4) = gb.Float Or If TypeOf(aafinal4) = gb.Integer Then
+          pprow4 = Format(aafinal4, gb.Fixed)
+        Else If TypeOf(aafinal4) = gb.String Then
+          If Len(aafinal4) Then
+            If IsNumber(aafinal4) Then
+              pprow4 = Format(aafinal4, gb.Fixed)
+            Endif
+          Endif
+        Endif
+        xindep4 = modCustPatient.GetLimitVar4Regression(pprow4)
+      Else
+        xindep4 = ""
+      Endif
+      xsortVar = xsortVar & gb.Tab & xindep4
+    Endif
+
+    ''independent var5
+    If xdovar5 = 1 Then
+      xrow5 = modCustPatient.FormatVar5Regression(Indep5Data[i])
+      aafinal5 = CStr(xrow5)
+      If aafinal5 = "__" Then
+        aafinal5 = ""
+      Endif
+
+      If aafinal5 Then
+        If TypeOf(aafinal5) = gb.Float Or If TypeOf(aafinal5) = gb.Integer Then
+          pprow5 = Format(aafinal5, gb.Fixed)
+        Else If TypeOf(aafinal5) = gb.String Then
+          If Len(aafinal5) Then
+            If IsNumber(aafinal5) Then
+              pprow5 = Format(aafinal5, gb.Fixed)
+            Endif
+          Endif
+        Endif
+        xindep5 = modCustPatient.GetLimitVar5Regression(pprow5)
+      Else
+        xindep5 = ""
+      Endif
+      xsortVar = xsortVar & gb.Tab & xindep5
+    Endif
+
+    If xoutdep Then
+      xData.Add(xsortVar)
+    Endif
+    xsortVar = ""
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / DepData.Count
+      Wait
+    Endif
+  Next
+
+  If xData.Count Then
+    xx = File.Load(modHelpVariable.$psppDirectory &/ "regression")
+    xx = FormatPSPPFile(xx)
+    xx = Replace(xx, "{VarCount}", "v" & CStr(coltot))
+    xx = Replace(xx, "{DataList}", xData.Join(gb.NewLine))
+    xx = Replace(xx, "{VarList}", xvarlst)
+
+    xPath = Temp() & ".sps"
+    xTemp = Temp()
+    sOutput = xTemp & ".html"
+    File.Save(xPath, xx)
+    If System.Exist("pspp") = True Then
+      xcmd = ["pspp", xPath, "-o", sOutput]
+      modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+      Exec xcmd Wait
+    Else
+      modApplSub.InstallSelectedApplication(["pspp"])
+    Endif
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    If $ProgressBar1 Then
+      $ProgressBar1.Visible = False
+    Endif
+  Endif
+  modExternal.$ExecValueColl.Clear()
+
+  Return sOutput
+
+End

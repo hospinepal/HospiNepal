@@ -1,0 +1,243 @@
+' Gambas class file
+
+Export
+
+Private xAgeGrop As Variant[]
+Private totmale As Integer
+Private totfemale As Integer
+Private totall As Integer
+Private xEthnicCol As Collection
+Private xLocatVar As Variant[]
+
+Static Public Sub _init()
+
+  Env["GB_WEB_GUI_DEBUG"] = "1"
+  modHelpVariable.GetSessionParam()
+
+End
+
+Public Sub _new()
+
+  Me.AddHeader("<meta name='viewport' content='width=device-width, initial-scale=1'>")
+  Me.AddJavascriptFile("js/Chart.js")
+  WebForm.Debug = True
+
+  modHelpVariable.MakeWorkingDir()
+  modHelpVariable.CreateWorkingDir()
+  modHelpVariable.SetAppConfigFile()
+
+  modHelpVariable.CreateUserCacheDir()
+  modHelpVariable.ConnectionMain()
+  modHelpVariable.CalenderConnection()
+  modHelpVariable.ICDTablesConnection()
+  modBasic.EnableCollectionCache()
+  modPublicDash.$ProvName = modSettings.ShowSettingFromFIle("Dashboard/Province")
+  If modDatabase.$myConn.Opened = True Then
+    ' modBasic.LoadGeneralVariables()
+    txtprovince.Text = modPublicDash.$ProvName
+    OpeningModules()
+    ShowAllCharts()
+
+  Endif
+
+End
+
+Public Sub mnuexit_Click()
+
+  Session.Abandon()
+  WebForm.Current = fmLogIn
+  Me.Close()
+
+End
+
+Public Sub WebForm_Close()
+
+  Session.Abandon()
+  modDatabase.CloseDatabase()
+  modExternal.DeleteFolderRecursive("/tmp" &/ modHelpVariable.AppName &/ "docs" &/ modHelpVariable.$SessionCode)
+  modExternal.DeleteFolderRecursive(modHelpVariable.AppCacheDir)
+
+End
+
+Private Sub OpeningModules()
+
+  modBasic.FillMunicipalList()
+  cmbdistrict.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(flddistrict) as col from tblmunicipals where fldprovince=&1", modPublicDash.$ProvName))                    ''
+
+End
+
+Public Sub cmbdistrict_Click()
+
+  If cmbdistrict.Text Then
+    cmbmunicipality.List = modDataRepo.GetMunicipalsByDistrict(cmbdistrict.Text)
+  Endif
+
+End
+
+Private Sub ShowAllCharts()
+
+  Dim hForm As CPublicDash
+
+  hForm = New CPublicDash(cmbmunicipality.Text, cmbdistrict.Text)
+  xAgeGrop = hForm.GetAgeSexVariant()
+  totmale = hForm.GetTotalMale()
+  totfemale = hForm.GetTotalFeMale()
+  totall = hForm.GetTotalAll()
+  xEthnicCol = hForm.GetEthnicCol()
+  xLocatVar = hForm.GetLocationDistribution()
+  WebTimer1.Enabled = True
+
+End
+
+Public Sub btnshow_Click()
+
+  ShowAllCharts()
+  ShowStatistics()
+  ''charts
+  CreateAgeGroupChart()
+  CreateEthnicChart(xEthnicCol)
+  CreateLocationChart(xLocatVar)
+
+End
+
+Public Sub WebTimer1_Timer()
+
+  ShowStatistics()
+  ''charts
+  CreateAgeGroupChart()
+  CreateEthnicChart(xEthnicCol)
+  CreateLocationChart(xLocatVar)
+  WebTimer1.Enabled = False
+
+End
+
+Private Sub ShowStatistics()
+
+  WebHtml2.Html = "Total Population : " & CStr(totall)
+  WebHtml3.Html = "Male Population : " & CStr(totmale)
+  WebHtml4.Html = "Female Population : " & CStr(totfemale)
+
+End
+
+Private Sub CreateAgeGroupChart()
+
+  Dim aList As String[]
+  Dim aType As String
+
+  Dim xMaleColl As Collection
+  Dim xFemaleColl As Collection
+
+  Dim aColl As Collection
+  Dim xmale As Integer
+  Dim xfemale As Integer
+
+  Dim xWebCanvMale As WebCanvas
+  Dim xWebCanvFemale As WebCanvas
+
+  xMaleColl = New Collection
+  xFemaleColl = New Collection
+  aList = modPublicDash.GetDashAgeGroupList()
+  For Each aType In aList
+    For Each aColl In xAgeGrop
+      If aType = aColl["Category"] Then
+        xmale = 0
+        xfemale = 0
+        xmale = Round(aColl["Male"] * 100 / totmale, -2)
+        xfemale = Round(aColl["Female"] * 100 / totfemale, -2)
+        xMaleColl.Add(xmale, aColl["Category"])
+        xFemaleColl.Add(xfemale, aColl["Category"])
+      Endif
+    Next
+  Next
+
+  If wbfemale.Children.Count Then
+    wbfemale.DeleteChildren()
+  Endif
+  xWebCanvFemale = New WebCanvas(wbfemale)
+  xWebCanvFemale.Width = "80%"
+  xWebCanvFemale.Height = "80%"
+  CreateUniChartImage("horizontalBar", "Female", xFemaleColl, xWebCanvFemale)
+
+  If wbmale.Children.Count Then
+    wbmale.DeleteChildren()
+  Endif
+  xWebCanvMale = New WebCanvas(wbmale)
+  xWebCanvMale.Width = "80%"
+  xWebCanvMale.Height = "80%"
+  CreateUniChartImage("horizontalBar", "Male", xMaleColl, xWebCanvMale)
+
+End
+
+Private Sub CreateEthnicChart(sColl As Collection)
+
+  Dim xWebCanv As WebCanvas
+
+  If wbtwo.Children.Count Then
+    wbtwo.DeleteChildren()
+  Endif
+  xWebCanv = New WebCanvas(wbtwo)
+  xWebCanv.Width = "80%"
+  xWebCanv.Height = "80%"
+  CreateUniChartImage("doughnut", "Ethnicity", sColl, xWebCanv)
+
+End
+
+Private Sub CreateLocationChart(sVar As Variant[])
+
+  Dim xWebCanv As WebCanvas
+  Dim xValues As Variant[]
+  Dim yValues As Variant[]
+  Dim zValues As Variant[]
+
+  Dim aColl As Collection
+
+  xValues = New Variant[]
+  yValues = New Variant[]
+  zValues = New Variant[]
+  For Each aColl In sVar
+    xValues.Add(aColl["Category"])
+    yValues.Add(aColl["Male"])
+    zValues.Add(aColl["Female"])
+  Next
+
+  If wblarge.Children.Count Then
+    wblarge.DeleteChildren()
+  Endif
+  xWebCanv = New WebCanvas(wblarge)
+  xWebCanv.Width = "80%"
+  xWebCanv.Height = "80%"
+  CreateStackedBarImage(["Male", "Female"], xValues, yValues, zValues, xWebCanv)
+
+End
+
+''===================== Procedures ======================
+Private Sub CreateUniChartImage(sType As String, sTitle As String, sColl As Collection, xWebCanvas As WebCanvas)
+
+  Dim xValues As Variant[]
+  Dim yValues As Variant[]
+  Dim aVal As Variant
+  Dim xChart As Collection
+  Dim sPath As String
+
+  xValues = New Variant[]
+  yValues = New Variant[]
+  For Each aVal In sColl
+    xValues.Add(sColl.Key)
+    yValues.Add(CFloat(aVal))
+  Next
+  xChart = modChartJS.GetHTMLChartScript(sType, sTitle, xValues, yValues)
+  sPath = "new Chart(\"" & xWebCanvas.Name & "\", " & JSON.Encode(xChart) & ")"
+  Me.Exec(sPath)
+
+End
+
+Private Sub CreateStackedBarImage(sTitles As String[], xValues As Variant[], yValues As Variant[], zValues As Variant[], xWebCanvas As WebCanvas)
+
+  Dim xChart As Collection
+  Dim sPath As String
+
+  xChart = modChartJS.GetHTMLStackedScript("stacked", sTitles, xValues, yValues, zValues)
+  sPath = "new Chart(\"" & xWebCanvas.Name & "\", " & JSON.Encode(xChart) & ")"
+  Me.Exec(sPath)
+
+End

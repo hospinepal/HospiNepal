@@ -1,0 +1,176 @@
+' Gambas class file
+
+Private $encid As String
+Private $aColl As Collection
+Private $startDate As Date
+Private $endDate As Date
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+  GetDateRanges()
+  SHowChatVAlues()
+
+End
+
+Private Function GetAllowTalk(encid As String) As Boolean
+
+  Dim res As Result
+  Dim xallow As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldstart,fldend from tblremotefollow where fldstatus=&1 and fldencounterval=&2", "Active", encid)
+  If res.Available Then
+    If res["fldstart"] <= Now() And If res["fldend"] >= Now() Then
+      xallow = True
+    Else
+      xallow = False
+    Endif
+  Else
+    xallow = False
+  Endif
+
+  Return xallow
+
+End
+
+Private Sub GetDateRanges()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select fldstart,fldend from tblremotefollow where fldstatus=&1 and fldencounterval=&2", "Active", $encid)
+  If res.Available Then
+    $startDate = res["fldstart"]
+    $endDate = res["fldend"]
+  Endif
+
+End
+
+Public Sub btnaddimage_Click()
+
+  Dim hForm As FmImageLoad
+
+  hForm = New FmImageLoad("IMAGE", $encid)
+  hForm.ShowModal
+
+End
+
+Public Sub btnaddvideo_Click()
+
+  Dim hForm As FmVideoLoad
+
+  hForm = New FmVideoLoad("VIDEO", $encid)
+  hForm.ShowModal
+
+End
+
+Public Sub btnaddnote_Click()
+
+  If txtnote.Text Then
+    modPatientGeneral.AddExamGeneralQualiData($encid, "Notes", "Patient Note", txtimpression.Text, txtnote.Text, False)                   ''
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+  Endif
+
+End
+
+Public Sub btnshowreply_Click()
+
+  If $startDate And If $startDate < Now() Then
+    SHowConversations()
+  Endif
+
+End
+
+Private Sub SHowConversations()
+
+  Dim dtList As Date[]
+  Dim xdate As Date
+  Dim res As Result
+  Dim Column As Integer
+
+  Dim xdata As String
+  Dim pic2 As String
+  Dim pic3 As String
+
+  pic2 = "icons/coll2.png"
+  pic3 = "icons/coll4.png"
+
+  dtList = modDate.GetDateArrayBetween($startDate, Now())
+  dtList.Sort(gb.Descent)
+  ColumnView1.Clear()
+  ColumnView1.Columns.Count = 3
+  With ColumnView1
+    .Columns[0].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+    .Columns[1].Width = CStr(50 * modBasic.$AppWidthRatio) & "px"
+    .Columns[2].Width = CStr(475 * modBasic.$AppWidthRatio) & "px"
+
+    .Columns[0].Text = "Time"
+    .Columns[1].Text = "Category"
+    .Columns[2].Text = "Description"
+  End With
+
+  $aColl = New Collection
+  For Each xdate In dtList
+    res = modDatabase.$myConn.Exec("select flditem,fldreportquali,flddetail,flduserid,fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and (flditem=&3 or flditem=&4) and fldtime>=&5 and fldtime<=&6 ORDER BY fldtime DESC", $encid, "Notes", "Progress Note", "Patient Note", modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate))                          ''
+    If res.Available Then
+      ColumnView1.Add(CStr(xdate), modReportVar.GetDateTimeReport(xdate, gb.MediumDate), pic2)
+
+      Column = 0
+      For Each res
+        xdata = ""
+        If res["fldreportquali"] Then
+          xdata = "<b>IMPRESSION:</b>" & res["fldreportquali"]
+        Endif
+        If res["flddetail"] Then
+          xdata = xdata & "<br>" & "<b>DESCRIPTION:</b>" & res["flddetail"]
+        Endif
+        $aColl.Add(xdata, CStr(xdate) & ":" & CStr(Column))
+        ColumnView1.Add(CStr(xdate) & ":" & CStr(Column), modReportVar.GetDateTimeReport(res["fldtime"], gb.ShortTime), pic3, CStr(xdate))
+        If res["flditem"] = "Progress Note" Then
+          ColumnView1[CStr(xdate) & ":" & CStr(Column)][1] = "Doctor"
+        Else If res["flditem"] = "Patient Note" Then
+          ColumnView1[CStr(xdate) & ":" & CStr(Column)][1] = "Patient"
+        Endif
+        ' ' ColumnView1[CStr(xdate) & ":" & CStr(Column)][1] = xdata
+        Column = Column + 1
+      Next
+
+    Endif
+  Next
+
+End
+
+Public Sub ColumnView1_Data(Index As String, Column As Integer, Data As WebTreeData)
+
+  If Column = 2 Then
+    Data.Html = $aColl[Index]
+  Endif
+
+End
+
+''--------------------- Video chat -----------------
+Public Sub mnuopenlink_Click()
+
+  Me.Exec("window.open('" & txtchaturl.Text & "'); ")
+
+End
+
+Public Sub btncallurl_Click()
+
+  If txtchaturl.Text Then
+    mnuopenlink_Click()
+  Endif
+
+End
+
+Private Sub SHowChatVAlues()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select fldvidroom,fldvidpass,fldvidserver from tbltelemedtalk where fldencounterval=&1 and fldordtime>=&2 and fldordtime<=&3", $encid, modDate.StartSqlDate(Now()), modDate.EndSqlDate(Now()))
+  If res.Available Then
+    res.MoveLast
+    txtchaturl.Text = res["fldvidserver"] &/ "room" &/ res["fldvidroom"]
+    txtpass.Text = res["fldvidpass"]
+  Endif
+
+End

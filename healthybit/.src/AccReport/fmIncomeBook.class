@@ -1,0 +1,160 @@
+' Gambas class file
+
+Private $sType As String
+Private $sLocaType As String
+Private $sLocation As String
+Private $sYear As String
+
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Public Sub _new(sType As String, sLocaType As String, sLocation As String, sYear As String)
+
+  $sType = sType
+  $sLocaType = sLocaType
+  $sLocation = sLocation
+  $sYear = sYear
+
+End
+
+Public Sub Form_Open()
+
+  Me.Title = $sType
+  LoadTableNames()
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If $sYear = "Current" Then
+    $tblpatbilldetail = "tblpatbilldetail"
+    $tbltempbilldetail = "tbltempbilldetail"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", $sYear, "Active")
+    If res.Available Then
+      If res["fldpatbilldetail"] Then
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+      If res["fldtempbilldetail"] Then
+        $tbltempbilldetail = res["fldtempbilldetail"]
+      Else
+        $tbltempbilldetail = "tbltempbilldetail"
+      Endif
+    Else
+      $tblpatbilldetail = "tblpatbilldetail"
+      $tbltempbilldetail = "tbltempbilldetail"
+    Endif
+  Endif
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnbillshow_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo($sLocaType, $sLocation)
+  res = modDatabase.$syConn.Exec("select fldbillno from " & $tbltempbilldetail & " where fldtime>=&1 and fldtime<=&2" & RepoStr, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value))
+  If res.Available Then
+    res.MoveFirst
+    txtfromrecpt.Text = res["fldbillno"]
+    res.MoveLast
+    txttorecpt.Text = res["fldbillno"]
+  Endif
+
+  res1 = modDatabase.$syConn.Exec("select fldbillno from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2" & RepoStr, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value))
+  If res1.Available Then
+    res1.MoveFirst
+    txtfrombill.Text = res1["fldbillno"]
+    res1.MoveLast
+    txttobill.Text = res1["fldbillno"]
+  Endif
+
+End
+
+Public Sub btnclear_Click()
+
+  txtfromrecpt.Text = ""
+  txttorecpt.Text = ""
+  txtfrombill.Text = ""
+  txttobill.Text = ""
+
+End
+
+Public Sub btngenerate_Click()
+
+  Dim xPath As String
+  Dim xUserList As String[]
+
+  Inc Application.Busy
+  If $sType = "Income Booking" Then
+    xPath = modIDFinance.GetIDIncomeBookingFinance(modDatabase.$syConn, txtfrombill.Text, txttobill.Text, txtfromrecpt.Text, txttorecpt.Text, $sLocaType, $sLocation, $sYear)
+  Else If $sType = "User Collection" Then
+    Select modHelpVariable.$LogInCategory
+      Case "Cashier", "Dispensar"
+        xUserList = [modBasic.$lbluser]
+      Case Else
+        xUserList = GetUserListRange(dtfir.Value, dtlast.Value)
+    End Select
+    xPath = modCHTMLInvoice.SummaryReceiveBillingSIngleUser(modDatabase.$syConn, txtfrombill.Text, txttobill.Text, txtfromrecpt.Text, txttorecpt.Text, xUserList, "%", "tblpatbilldetail", "tbltempbilldetail")
+  Endif
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+''============== Specific Procedures =================
+Private Function GetUserListRange(dt1 As Date, dt2 As Date) As String[]
+
+  Dim aList As String[]
+  Dim bList As String[]
+  Dim xList As String[]
+  Dim xUserList As String[]
+
+  xList = New String[]
+  aList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(lower(flduserid)) as col from " & $tbltempbilldetail & " where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2)))
+  bList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(lower(flduserid)) as col from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2)))
+  xList.Insert(aList)
+  xList.Insert(bList)
+  xUserList = modString.BinaryDistinctStringArray(xList)
+
+  Return xUserList
+
+End

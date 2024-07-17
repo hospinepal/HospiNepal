@@ -1,0 +1,171 @@
+' Gambas class file
+
+Private $rData As Result
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  DisplayKeyData()
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub btncreate_Click()
+
+  Dim xlist As String[]
+  Dim hForm As FmTerminal
+
+  If Not txtfolder.Value Then
+    txtfolder.Value = User.Home &/ ".gnupg"
+  Endif
+  xlist = ["gpg", "--homedir", txtfolder.Value, "--gen-key"]
+  modBasic.DebugString("Execute " & xlist.Join(Space(1)))
+  hForm = New FmTerminal("Exec", xlist)
+  hForm.ShowModal
+
+End
+
+Public Sub btnview_Click()
+
+  Dim xx As String
+  Dim arcmd As String[]
+
+  If Not txtfolder.Value Then
+    txtfolder.Value = User.Home &/ ".gnupg"
+  Endif
+  arcmd = ["gpg", "--homedir", txtfolder.Value, "--list-sigs", "--fingerprint"]
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd To xx
+  Message.Info(xx, ("OK"))
+
+End
+
+Public Sub txtpublic_Click()
+
+  If Dialog.OpenFile() Then Return
+  txtpublic.Text = Dialog.Path
+
+End
+
+Public Sub txtprivate_Click()
+
+  If Dialog.OpenFile() Then Return
+  txtprivate.Text = Dialog.Path
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim res As Result
+
+  If txtkeyid.Text And If txtkeyname.Text And If txtpublic.Text And If txtprivate.Text Then
+    Inc Application.Busy
+    res = modDatabase.$myConn.Create("tblgnupg")
+    res["fldkeyid"] = txtkeyid.Text
+    res["fldkeyname"] = txtkeyname.Text
+    res["fldfingerprint"] = txtfingerprint.Text
+    If modMisc.BlobTarget("GnuPG") = "FTP" Then
+      res["fldpublic"] = ""
+      res["fldprivate"] = ""
+      res["fldpublink"] = modFTPSub.SendBlobToFTP(txtpublic.Text, "public", "GnuPG")
+      res["fldprilink"] = modFTPSub.SendBlobToFTP(txtprivate.Text, "private", "GnuPG")
+    Else
+      res["fldpublic"] = File.Load(txtpublic.Text)
+      res["fldprivate"] = File.Load(txtprivate.Text)
+      res["fldpublink"] = ""
+      res["fldprilink"] = ""
+    Endif
+    res.Update
+    Dec Application.Busy
+    DisplayKeyData()
+  Endif
+
+End
+
+Private Sub DisplayKeyData()
+
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  $rData = modDatabase.$myConn.Exec("select fldkeyid,fldkeyname,fldfingerprint from tblgnupg")
+
+  GridView1.Clear
+  GridView1.Columns.Count = $rData.Fields.Count
+  GridView1.Rows.Count = $rData.Count
+
+  For Each $rData
+    Column = 0
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+      GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 500 * modBasic.$AppWidthRatio
+    .Columns[0].Text = "Key"
+    .Columns[1].Text = "Name"
+    .Columns[2].Text = "FingerPrint"
+  End With
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnuinfo_Click()
+
+  Dim xx As String
+
+  xx = ""
+  If GridView1.Rows.Selection.Count > 0 Then
+    xx = xx & "KeyID: " & GridView1[GridView1.Row, 0].Text & gb.NewLine
+    xx = xx & "KeyName: " & GridView1[GridView1.Row, 1].Text & gb.NewLine
+    xx = xx & "FingerPrint: " & GridView1[GridView1.Row, 2].Text
+    Message.Info(xx, ("OK"))
+  Endif
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblgnupg", "fldkeyid=&1", GridView1[GridView1.Row, 0].Text)
+      DisplayKeyData()
+    Endif
+  Endif
+
+End
+
+Public Sub btnftp_Click()
+
+  Dim sFile As String
+  Dim hForm As FmFTPUpload
+  Dim arcmd As String[]
+
+  If txtkeyid.Text Then
+    If Desktop.NetworkAvailable = True Then
+      sFile = Temp(txtkeyid.Text & ".key")
+      arcmd = ["gpg", "--homedir", txtfolder.Value, "--armor", "--output", sFile, "--export", txtkeyid.Text]
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+      hForm = New FmFTPUpload(sFile)
+      hForm.ShowModal()
+    Endif
+  Endif
+
+End

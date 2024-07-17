@@ -1,0 +1,354 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub _new()
+
+  If MMain.$WebReport = "Multiple" Then
+    pnlbuttons.Visible = False
+  Endif
+
+  Select modHelpVariable.$LogInCategory
+    Case "Purchase"
+      If modBasic.$ViewLockInventory = "Location" Then
+        cmbcomp.Text = modBasic.$compID
+        cmbcomp.Enabled = False
+        mnudel.Visible = False
+      Else
+        cmbcomp.List = modBasic.$AllCompPerList
+        cmbcomp.Text = "%"
+      Endif
+
+    Case Else
+      cmbcomp.List = modBasic.$AllCompPerList
+      cmbcomp.Text = "%"
+      pnlbuttons.Visible = False
+      btneditmulti.Visible = False
+      WebContainer1.Visible = False
+  End Select
+
+  cmbledger.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldacledger) as col from tblacledger"))
+  cmbstatus.List = ["Active", "Inactive"]
+  cmbpaymode.List = ["Cash Payment", "Credit Payment"]
+  dtstart.Value = Now()
+  If MMain.$RepoReportMode = True Then
+    pnlbuttons.Visible = False
+    mnudel.Visible = False
+  Endif
+  FillGridSupplier()
+  txtsupname.SetFocus
+
+End
+
+Public Sub WebForm_Open()
+
+  modGeneralMain.RecordFormUse(Me)
+
+End
+
+Public Sub dtnepstart_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtstart.Value))
+  If xx Then
+    dtnepstart.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Private Sub BlankAll()
+
+  txtconphone.Text = ""
+  txtcontname.Text = ""
+  txtcreday.Value = 0
+  txtsupadd.Text = ""
+  txtsuphone.Text = ""
+  txtsupname.Text = ""
+  txtemail.Text = ""
+  dtstart.Value = Date()
+  cmbpaymode.Text = ""
+  cmbstatus.Text = ""
+
+End
+
+' Public Sub cmbpaymode_KeyRelease()
+'
+'   modFillContainer.AutoFillComboBox(cmbpaymode)
+'   modFillContainer.RestrictComboToContent(cmbpaymode)
+'
+' End
+'
+' Public Sub cmbstatus_KeyRelease()
+'
+'   modFillContainer.AutoFillComboBox(cmbstatus)
+'   modFillContainer.RestrictComboToContent(cmbstatus)
+'
+' End
+
+' ' Public Sub txtsupname_Activate()
+' '
+' '   txtsupname.Text = UCase(txtsupname.Text)
+' '
+' ' End
+' '
+' ' Public Sub txtsupadd_Activate()
+' '
+' '   txtsupadd.text = String.UCaseFirst(txtsupadd.text)
+' '
+' ' End
+' '
+' ' Public Sub txtcontname_Activate()
+' '
+' '   txtcontname.text = String.UCaseFirst(txtcontname.text)
+' '
+' ' End
+
+Public Sub btnfullrep_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, "SUPPLIERS", modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim res As Result
+
+  If txtsupname.Text And If cmbstatus.Text Then
+    res = modDatabase.$myConn.Create("tblsupplier")
+    res["fldsuppname"] = UCase(Trim(txtsupname.Text))
+    res["fldsuppaddress"] = String.UCaseFirst(Trim(txtsupadd.Text))
+    res["fldsupppan"] = Trim(txtpanno.Text)
+    res["fldsuppledger"] = cmbledger.Text
+    res["fldsuppphone"] = txtsuphone.Text
+    res["fldsuppemail"] = Trim(txtemail.Text)
+    res["fldcontactname"] = String.UCaseFirst(txtcontname.Text)
+    res["fldcontactphone"] = txtconphone.Text
+    res["fldstartdate"] = dtstart.Value
+    res["fldpaymentmode"] = cmbpaymode.Text
+    res["fldcreditday"] = txtcreday.Value
+    res["fldactive"] = cmbstatus.Text
+    res["fldpaiddebit"] = 0
+    res["fldleftcredit"] = 0
+    res.Update()
+    BlankAll()
+    FillGridSupplier()
+    Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+    ' Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub btnedit_Click()
+
+  Dim res As Result
+
+  If GridView1.Selection.Count Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      $rData.MoveTo(GridView1.Selection[0])
+      res = modDatabase.$myConn.Edit("tblsupplier", "fldsuppname=&1", $rData["fldsuppname"])
+      res["fldsuppaddress"] = String.UCaseFirst(Trim(txtsupadd.Text))
+      res["fldsupppan"] = Trim(txtpanno.Text)
+      res["fldsuppledger"] = cmbledger.Text
+      res["fldsuppphone"] = txtsuphone.Text
+      res["fldsuppemail"] = Trim(txtemail.Text)
+      res["fldcontactname"] = String.UCaseFirst(txtcontname.Text)
+      res["fldcontactphone"] = txtconphone.Text
+      res["fldstartdate"] = dtstart.Value
+      res["fldpaymentmode"] = cmbpaymode.Text
+      res["fldcreditday"] = txtcreday.Value
+      res["fldactive"] = cmbstatus.Text
+      res["xyz"] = False
+      res.Update()
+      Me.Exec("Toastify({text: 'Information updated', duration: 3000}).showToast()")
+      ' Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Private Sub FillGridSupplier()
+
+  Dim sql As String
+  Dim debit As Float
+  Dim credit As Float
+  Dim btot As Float
+
+  sql = "select fldsuppname,fldsuppaddress,fldactive,fldleftcredit,fldpaiddebit,(fldleftcredit-fldpaiddebit) as tot from tblsupplier"
+  $rData = modDatabase.$myConn.Exec(sql)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = CStr(250 * modBasic.$AppWidthRatio) & "px"
+    .Columns[1].Width = CStr(200 * modBasic.$AppWidthRatio) & "px"
+    .Columns[2].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+    .Columns[3].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[4].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+    .Columns[5].Width = CStr(125 * modBasic.$AppWidthRatio) & "px"
+
+    .Columns[0].Text = "Supplier"
+    .Columns[1].Text = "Address"
+    .Columns[2].Text = "Status"
+    .Columns[3].Text = "PURCHASE"
+    .Columns[4].Text = "PAYMENTS"
+    .Columns[5].Text = "PENDING"
+  End With
+
+  debit = 0
+  credit = 0
+  btot = 0
+  For Each $rData
+    debit = debit + $rData["fldpaiddebit"]
+    credit = credit + $rData["fldleftcredit"]
+    btot = btot + $rData["tot"]
+  Next
+  txttotdebit.Value = Round(debit, -2)
+  txttotcredit.Value = Round(credit, -2)
+  txtbalance.Value = Round(btot, -2)
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 3 Then
+    Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 4 Then
+    Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 5 Then
+    Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else
+    Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Select()
+
+  Dim sql As String
+  Dim res As Result
+  Dim xsupp As String
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+    xsupp = $rData["fldsuppname"]
+    sql = "select fldsuppname,fldsuppaddress,fldsupppan,fldsuppledger,fldsuppphone,fldsuppemail,fldcontactname,fldcontactphone,fldstartdate,fldpaymentmode,fldcreditday,fldactive from tblsupplier where fldsuppname=&1"
+    res = modDatabase.$myConn.Exec(sql, xsupp)
+    If res.Available Then
+      txtsupadd.Text = res["fldsuppaddress"]
+      txtpanno.Text = res["fldsupppan"]
+      cmbledger.Text = res["fldsuppledger"]
+      txtsuphone.Text = res["fldsuppphone"]
+      txtemail.Text = res["fldsuppemail"]
+      dtstart.Value = res["fldstartdate"]
+      cmbpaymode.Text = res["fldpaymentmode"]
+      txtconphone.Text = res["fldcontactphone"]
+      txtcontname.Text = res["fldcontactname"]
+      txtcreday.Value = res["fldcreditday"]
+      cmbstatus.Text = res["fldactive"]
+      txtsupname.Text = res["fldsuppname"]
+    Endif
+  Endif
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblsupplier", "fldsuppname=&1 and fldpaiddebit=&2 and fldleftcredit=&3", $rData["fldsuppname"], 0, 0)
+      FillGridSupplier()
+      BlankAll()
+    Endif
+  Endif
+
+End
+
+Public Sub btndetail_Click()
+
+  Dim hForm As FmPurdetail
+
+  If txtsupname.Text Then
+    hForm = New FmPurdetail(txtsupname.Text, cmbcomp.Text)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btninvoice_Click()
+
+  Dim xx As Date[]
+  Dim xPath As String
+
+  If txtsupname.Text Then
+    xx = DoubleDates(("Select Purchase Invoice Dates"), txtsupname.Text, [Date(), Date()])
+    If xx Then
+      xPath = modHTMLStock.ShowSupplierInnvoices(txtsupname.Text, xx[0], xx[1], cmbcomp.Text)
+      modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub btnitems_Click()
+
+  Dim xx As Date[]
+  Dim xPath As String
+
+  If txtsupname.Text Then
+    xx = DoubleDates(("Select Purchase Invoice Dates"), txtsupname.Text, [Date(), Date()])
+    If xx Then
+      xPath = modHTMLStock.ShowSupplierItemList(txtsupname.Text, xx[0], xx[1], cmbcomp.Text)
+      modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub btnpayment_Click()
+
+  Dim xPath As String
+
+  If txtsupname.Text Then
+    xPath = modHTMLStock.ShowTotalPaymentSupplier(txtsupname.Text)
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnrepototal_Click()
+
+  Dim xx As Date[]
+  Dim xPath As String
+
+  xx = DoubleDates(("Select Purchase Invoice Dates"), "Summary", [Date(), Date()])
+  If xx Then
+    xPath = modHTMLStock.GetSupplierSummaryAmount(xx[0], xx[1], cmbcomp.Text)
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btneditmulti_Click()
+
+  Dim xnew As String
+
+  If modBasic.$SuperUser = True Then
+    If Message.Question(("This process will affect multiple tables. Are you sure?"), ("No"), ("Yes")) = 2 Then
+      xnew = InputBox("Provide new name of the supplier")
+      If xnew Then
+        modPharmChange.RecodeSupplierName(txtsupname.Text, xnew)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnexcel_Click()
+
+  ' Me.Exec("ExportToExcel('bodytable', 'xlsx')")
+
+End

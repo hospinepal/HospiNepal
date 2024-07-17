@@ -1,0 +1,94 @@
+' Gambas class file
+
+Private $xAuthString As String
+Private $HeadString As String
+
+Private $PatCode As String
+Private $xVarColl As Collection
+
+Private Sub SetAuthentication()
+
+  If modBasic.$SSFQuote = "Yes" Then
+    $xAuthString = "'" & modBasic.$SSFUser & ":" & modBasic.$SSFPass & "'"
+  Else
+    $xAuthString = modBasic.$SSFUser & ":" & modBasic.$SSFPass
+  Endif
+  $HeadString = "remote-user:" & modBasic.$SSFRemoUser
+
+End
+
+Public Sub _new(sPatcode As String)
+
+  $PatCode = sPatcode
+  $xVarColl = GetFinancialDetails($PatCode)
+
+End
+
+Private Function GetFinancialDetails(sPatCode As String) As Collection
+
+  Dim acmd As String
+  Dim xurl As String
+  Dim xcont As String
+  Dim xcolVar As Collection
+  Dim aVar As Variant[]
+  Dim xcoll As Collection
+  Dim yColl As Collection
+  Dim xpatout As String
+  Dim xResColl As Collection
+  Dim xhead As String
+
+  SetAuthentication()
+  xurl = modBasic.$SSFEligibleURL
+  xcont = "Content-Type: application/json"
+
+  xcolVar = New Collection
+  xcolVar.Add("CoverageEligibilityRequest", "resourceType")
+  xcoll = New Collection
+  xcoll.Add("Patient/" & sPatCode, "reference")
+  xcolVar.Add(xcoll, "patient")
+
+  aVar = New Variant[]
+  xcoll = New Collection
+  xcoll.Add("visitDate", "url")
+  xcoll.Add(Format(Now(), "yyyy-mm-dd"), "valueString")
+  aVar.Add(xcoll)
+  xcoll = New Collection
+  xcoll.Add("fhir/extensions/extEncStrJSON", "url")
+  yColl = New Collection
+  yColl.Add("action.doKycUpdate", "cmd_action")
+  yColl.Add(sPatCode, "chfId")
+  xcoll.Add(yColl, "valueString")
+  aVar.Add(xcoll)
+  xcolVar.Add(aVar, "extension")
+
+  xhead = Space(1)
+  If modBasic.$SSFCACert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If modBasic.$SSFUserAgent Then
+    xhead = xhead & "-A " & modBasic.$SSFUserAgent & Space(1)
+  Endif
+
+  acmd = "curl" & xhead & "-u " & $xAuthString & " -H " & Quote(xcont) & " -H " & Quote($HeadString) & " --location -d '" & JSON.Encode(xcolVar) & "' -X POST " & xurl
+  modBasic.DebugAPIString(Replace("Execute " & acmd, $xAuthString, "****"))
+  Shell acmd To xpatout
+  modBasic.DebugAPIString("Response: " & xpatout)
+
+  If xpatout Then
+    Try xResColl = JSON.Decode(xpatout)
+    If xResColl Then
+      Return xResColl
+    Else
+      Message.Warning("Error in getting data", "OK")
+    Endif
+  Else
+    Message.Warning("No Response from server", "OK")
+  Endif
+
+End
+
+Public Function GetAPIOutput() As String
+
+  Return JSON.Encode($xVarColl)
+
+End

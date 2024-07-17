@@ -1,0 +1,720 @@
+' Gambas class file
+
+Private hPatient As FmBillingEntry
+Private $BillingOption As String
+Private $status As String
+Private $PatientNum As String
+Private $AdvPayment As String
+Private $F12Lock As Boolean
+
+Private $rData As Result
+Private $rData1 As Result
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  $BillingOption = modBasic.$BillCashOption
+  hPatient = New FmBillingEntry(Panel2)
+  If modBasic.$AppCachePatientDemographics = "Yes" Then
+  Else
+    modGeneralMain.RemovePatientCacheSelected("PatientData")
+  Endif
+
+  cmbpaying.List = modBasic.$ACLedgerListCredit
+  cmbledgerac.List = modBasic.$ACLedgerListCash
+  rbinvoice.Value = True
+  $F12Lock = False
+
+End
+
+Public Sub Form_Activate()
+
+  If Not txtencid.Text Then
+    txtencid.SetFocus
+  Else If txtencid.Text = modBasic.$EncIdPrefix Then
+    txtencid.SetFocus
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  If txtencid.Text Then
+    modPatientSub.ReleaseLockEncounter(Trim(txtencid.Text), modHelpVariable.$LogInCategory)
+  Endif
+
+  hPatient.Close
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Private Function ShowBilling() As Boolean
+
+  Dim xx As Boolean
+
+  If $BillingOption = "No" Then
+    xx = False
+  Else
+    xx = True
+  Endif
+  Return xx
+
+End
+
+Public Sub btnwebcam_Click()
+
+  txtencid.Text = modDevice.ChooseBarCodeSource()
+  txtencid.SetFocus
+  txtencid.Pos = Len(txtencid.Text)
+
+End
+
+Public Sub tlbtnpayment_Click()
+
+  If txtencid.Text Then
+    modNonMedical.CurrentPayStatusMsg(Trim(txtencid.Text))
+  Endif
+
+End
+
+Public Sub mnusearch_Click()
+
+  txtencid.Text = PatSearch("Encounter")
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If Not txtencid.Text Then
+      txtencid.Text = PatSearch("Encounter")
+      txtencid.SetFocus
+    Else
+      If modBasic.$AutoEncSuffix = "Yes" Then
+        txtencid.Text = txtencid.Text & modBasic.$HospCode
+      Endif
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  Dim CPayForm As GetQRSCanPay
+  Dim xtraceid As String
+
+  If Key.Code = Key["O"] And If Key.Control Then
+    btnwebcam_Click()
+  Else If Key.Code = Key["F"] And If Key.Control Then
+    txtencid.Text = GetEncid()
+
+  Else If Key.Code = Key.F12 Then
+    If txtencid.Text Then
+      If txtpatientname.Text Then
+
+        xtraceid = ""
+        If $AdvPayment = "Advance" Then
+          If $F12Lock = False Then
+            $F12Lock = True
+            CPayForm = New GetQRSCanPay(Trim(txtencid.Text), hPatient.$billtype, cmbledgerac.Text, Trim(txtreference.Text), $sTatus, hPatient.$LockToComp)
+            xtraceid = CPayForm.GetTransactionDone()
+            If xtraceid Then
+              hPatient.$AdvTraceID = xtraceid
+              GetF12KeyPress()
+              $F12Lock = False
+            Else
+              ClearQRCodeExt()
+              $F12Lock = False
+            Endif
+          Endif
+        Else
+          GetF12KeyPress()
+        Endif
+
+      Endif
+    Endif
+
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Private Sub GetF12KeyPress()
+
+  If ShowBilling() = True Then
+    SaveGridData()
+    If hPatient.Enabled = True Then
+      hPatient.$ACLedger = cmbledgerac.Text
+      hPatient.$ACReference = Trim(txtreference.Text)
+      hPatient.DirectCashBilling()
+      Wait
+      RefresgOldData()
+      If hPatient.$DisplayMiniCalc = "BlankForm" Then
+        hPatient.GetBillingFormBlank()
+      Endif
+    Else
+      RefresgOldData()
+    Endif
+  Else
+    RefresgOldData()
+  Endif
+
+End
+
+Public Sub mnulastencid_Click()
+
+  txtencid.Text = modSettings.ShowLogValues("LastValue/Encounter")
+
+End
+
+Private Sub SetBillingType()
+
+  If rbinvoice.Value = True Then
+    hPatient.$billtype = "InvoiceClearance"
+  Else If rbreceipt.Value = True Then
+    hPatient.$billtype = "ReceiptClearance"
+  Endif
+
+End
+
+Public Sub rbinvoice_Click()
+
+  SetBillingType()
+  If txtencid.Text Then
+    ShowSavedGrid()
+    ShowNewEntry()
+  Endif
+
+End
+
+Public Sub rbreceipt_Click()
+
+  SetBillingType()
+  If txtencid.Text Then
+    ShowSavedGrid()
+    ShowNewEntry()
+  Endif
+
+End
+
+Public Sub btnshow_GotFocus()
+
+  btnshow_Click()
+
+End
+
+Public Sub btnshow_Click()
+
+  Dim res As Result
+
+  If txtencid.Text Then
+    Me.Title = "ENC: " & txtencid.Text
+    If txtencid.Text = modBasic.$EncIdPrefix Then
+    Else
+      modSettings.SaveValuesToLog("LastValue/Encounter", Trim(txtencid.Text))
+    Endif
+
+    hPatient.$encid = Trim(txtencid.Text)
+    SetBillingType()
+    If ShowBilling() = False Then
+      hPatient.Enabled = False
+    Endif
+
+    res = modDatabase.$myConn.Exec("select fldpatientval from tblencounter where fldencounterval=&1", Trim(txtencid.Text))
+    If res.Available = False Then
+      modLinkDB.CheckEncDataRemote(Trim(txtencid.Text))
+      txtencid.SetFocus
+    Else
+      modRepository.$RepoDataStatus = False
+      txtpatientname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
+      If txtpatientname.Text Then
+        $PatientNum = modPatient.GetPatientNoByEnc(Trim(txtencid.Text))
+        $sTatus = modPatient.CurrentAdmissionStatus(Trim(txtencid.Text))
+
+        hPatient.SetDefaultModeCashCredit("Cash", True)
+
+        If $sTatus = "Admitted" Then
+          If modBasic.$BillLockAdmitted = "Yes" Then
+            If hPatient Then
+              hPatient.Enabled = False
+            Endif
+          Endif
+        Else
+          If hPatient Then
+            hPatient.ShowDepositButton()
+          Endif
+        Endif
+
+        modImage.ShowPhotoSplash("Patient", $PatientNum)
+        modPatientSub.PopUpPatientForm(Trim(txtencid.Text), Me.Tag)
+        ShowSavedGrid()
+        ShowNewEntry()
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbledgerac_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbledgerac)
+  modFillContainer.RestrictComboToContent(cmbledgerac)
+
+End
+
+Public Sub cmbledgerac_Change()
+
+  hPatient.$ACLedger = cmbledgerac.Text
+
+End
+
+Public Sub txtreference_Change()
+
+  hPatient.$ACReference = Trim(txtreference.Text)
+
+End
+
+Public Sub btnaddnew_Click()
+
+  Dim res As Result
+  Dim xList As String[]
+  Dim xledger As String
+  Dim xbillno As String
+  Dim xtot As Float
+  Dim xtype As String
+  Dim xdata As String[]
+
+  If cmbledgerac.Text Then
+    If cmbpaying.Text Then
+      xledger = " and fldbankname like &3"
+    Else
+      xledger = ""
+    Endif
+
+    If rbinvoice.Value = True Then
+      xtype = "InvoiceClearance"
+      If modBasic.$BillReturnDueClear = "Enable" Then
+        res = modDatabase.$myConn.Exec("select fldbillno,fldbankname,(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as chrgeamt from tblpatbilldetail where fldencounterval=&1 and fldbilltype=&2 and fldbillno not in (select fldbillno from tblduebilldetail)" & xledger, Trim(txtencid.Text), "Credit", cmbpaying.Text)                      ''
+      Else
+        res = modDatabase.$myConn.Exec("select fldbillno,fldbankname,(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as chrgeamt from tblpatbilldetail where fldencounterval=&1 and fldbilltype=&2 and fldbillno not in (select fldbillno from tblduebilldetail) and (fldbillno like &4 or fldbillno like &5)" & xledger, Trim(txtencid.Text), "Credit", cmbpaying.Text, "CAS%", "PHM%")
+      Endif
+    Else If rbreceipt.Value = True Then
+      xtype = "ReceiptClearance"
+      If modBasic.$BillReturnDueClear = "Enable" Then
+        res = modDatabase.$myConn.Exec("select fldbillno,fldbankname,(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as chrgeamt from tbltempbilldetail where fldencounterval=&1 and fldbilltype=&2 and fldbillno not in (select fldbillno from tblduebilldetail)" & xledger, Trim(txtencid.Text), "Credit", cmbpaying.Text)
+      Else
+        res = modDatabase.$myConn.Exec("select fldbillno,fldbankname,(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as chrgeamt from tbltempbilldetail where fldencounterval=&1 and fldbilltype=&2 and fldbillno not in (select fldbillno from tblduebilldetail) and (fldbillno like &4 or fldbillno like &5)" & xledger, Trim(txtencid.Text), "Credit", cmbpaying.Text, "TMP%", "TPM%")
+      Endif
+    Endif
+    If res.Available Then
+      xdata = New String[]
+      For Each res
+        xdata.Add(res["fldbillno"] & "@" & res["fldbankname"] & "@" & CStr(res["chrgeamt"]))
+      Next
+      xList = GridTriColumn("Due Clearance", xdata)
+      If xList Then
+        For Each xbillno In xList
+          xtot = 0
+          If rbinvoice.Value = True Then
+            xtot = modNonMedical.GetCreditAMTFromInvoice(xbillno)
+          Else If rbreceipt.Value = True Then
+            xtot = modNonMedical.GetCreditAMTFromReceipt(xbillno)
+          Endif
+          modBillings.InsertBlankBillClearance(modDatabase.$myConn, Trim(txtencid.Text), hPatient.GetCashCreditMode(), cmbledgerac.Text, xtype, xbillno, xtot, "Punched", False, False)
+        Next
+        ShowNewEntry()
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Private Sub ExecuteNewQuery()
+
+  Dim sql As String
+  Dim xtype As String
+  Dim xcomp As String
+
+  If rbinvoice.Value = True Then
+    xtype = "InvoiceClearance"
+  Else If rbreceipt.Value = True Then
+    xtype = "ReceiptClearance"
+  Endif
+  If chkallcomp.Value = True Then
+    xcomp = "%"
+  Else
+    xcomp = modBasic.$compID
+  Endif
+  sql = "select fldid,fldid,fldordtime,flditemtype,fldbillitem,flditemrate,flditemqty,flddiscper,fldtaxper,fldditemamt from tblduebilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp like &4 and fldstatus=&5 and flditemtype=&6 ORDER BY fldid DESC"                                       ''
+  $rData = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), False, False, xcomp, "Punched", xtype)
+
+End
+
+Private Sub ShowNewEntry()
+
+  Dim xitem As Float
+  Dim xx As Float
+  Dim disc As Float
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  ExecuteNewQuery()
+  GridView1.Clear
+  GridView1.Columns.Count = $rData.Fields.Count
+  GridView1.Rows.Count = $rData.Count
+
+  xitem = 0
+  disc = 0
+  xx = 0
+  For Each $rData
+    xitem = xitem + $rData["flditemrate"] * $rData["flditemqty"]
+    disc = disc + $rData["flddiscper"] * $rData["flditemrate"] * $rData["flditemqty"] / 100
+    xx = xx + $rData["fldditemamt"]
+    Column = 0
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+      If Column = 1 Then
+        GridView1[$rData.Index, Column].Text = modReportVar.GetDateTimeReport($rData["fldordtime"], gb.GeneralDate)
+      Else
+        GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[2].Text = "DateTime"
+    .Columns[3].Text = "Category"
+    .Columns[4].Text = "Particulars"
+    .Columns[5].Text = "Rate"
+    .Columns[6].Text = "QTY"
+    .Columns[7].Text = "Disc%"
+    .Columns[8].Text = "Tax%"
+    .Columns[9].Text = "Total"
+
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+  End With
+
+  txtsubtotalnew.Value = Round(xitem, -2)
+  txtdiscnew.Value = Round(disc, -2)
+  txtnetotalnew.Value = Round(xx, -2)
+  txtnewtop.Value = Round(xx, -2)
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+  Dim col As Integer
+  Dim row As Integer
+  Dim xval As Float
+
+  Dim fixtax As String
+  Dim fixdisc As String
+
+  col = GridView1.Column
+  row = GridView1.Row
+  If GridView1.Column = 8 Then
+    fixtax = modBasic.$BillFixTax
+    If fixtax = "No" Then
+      If modBasic.$BillEditTaxDiscForm = "Amount" Then
+      Else
+        xval = InputValue(GridView1[GridView1.Row, 4].Text, ("Change Tax Percentage"), GridView1[GridView1.Row, 8].Text)
+        If xval >= 0 And If xval <= 100 Then
+          res = modDatabase.$myConn.Edit("tblduebilling", "fldid=&1 and fldsave=&2 and fldprint=&3 and fldstatus=&4", GridView1[GridView1.Row, 0].Text, False, False, "Punched")
+          If res.Available Then
+            res["fldtaxper"] = xval
+            res.Update
+          Endif
+        Endif
+      Endif
+    Endif
+
+  Else If GridView1.Column = 7 Then
+    fixdisc = modBasic.$BillFixDisc
+    If fixdisc = "No" Then
+
+      xval = InputValue(GridView1[GridView1.Row, 4].Text, ("Change Discount Percentage"), GridView1[GridView1.Row, 7].Text)
+      If xval >= 0 And If xval <= 100 Then
+        res = modDatabase.$myConn.Edit("tblduebilling", "fldid=&1 and fldsave=&2 and fldprint=&3 and fldstatus=&4", GridView1[GridView1.Row, 0].Text, False, False, "Punched")
+        If res.Available Then
+          res["flddiscper"] = xval
+          res["fldditemamt"] = res!flditemrate * res!flditemqty * (1 - xval / 100) * (1 + res!fldtaxper / 100)
+          res.Update
+        Endif
+      Endif
+
+    Endif
+
+  Endif
+  ShowNewEntry()
+  GridView1.Column = col
+  GridView1.Row = row
+
+End
+
+Public Sub mnusave_Click()
+
+  If txtencid.Text Then
+    If modBasic.$BillTwoStepBilling = "Yes" Then
+      SaveGridData()
+      Wait
+
+      RefresgOldData()
+
+      hPatient.$ACLedger = cmbledgerac.Text
+      hPatient.$ACReference = Trim(txtreference.Text)
+      hPatient.txtdiscamt.SetFocus
+
+    Endif
+  Endif
+
+End
+
+Public Sub chkqrscan_Click()
+
+  If chkqrscan.Value = True Then
+    $AdvPayment = "Advance"
+  Else
+    $AdvPayment = ""
+  Endif
+  Message.Optional("<h1>Terms of Use of QR Scan Payment</h1><br>" & modLongVar.$AppLegalWarning, ("Accept"), ("Always Accept Terms of Use of QR Scan Payment"))
+
+End
+
+Public Sub RemoveQRCheck()
+
+  chkqrscan.Value = False
+
+End
+
+Public Sub RefresgOldData()
+
+  ShowNewEntry()
+  TabPanel1.Index = 1
+  ShowSavedGrid()
+
+End
+
+Private Sub SaveGridData()
+
+  Dim res As Result
+  Dim res3 As Result
+  Dim xcomp As String
+
+  If chkallcomp.Value = True Then
+    xcomp = "%"
+  Else
+    xcomp = modBasic.$compID
+  Endif
+  res = modDatabase.$myConn.Exec("select fldid,fldbillitem,fldencounterval from tblduebilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldordcomp like &4 and fldstatus=&5", Trim(txtencid.Text), False, False, xcomp, "Punched")
+  If res.Available = True Then
+    Inc Application.Busy
+    modDatabase.$myConn.Begin
+    For Each res
+      InsertDueBillDetail(res["fldencounterval"], res["fldbillitem"])
+
+      'update current record
+      res3 = modDatabase.$myConn.Edit("tblduebilling", "fldid=&1", res["fldid"])
+      res3["fldstatus"] = "Done"
+      res3["fldsave"] = True
+      res3["flduserid"] = modBasic.$lbluser
+      res3["fldtime"] = Now()
+      res3["fldcomp"] = modBasic.$compID
+      res3["xyz"] = False
+      res3.Update()
+    Next
+    modDatabase.$myConn.Commit
+    Dec Application.Busy
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub InsertDueBillDetail(encid As String, sbillNo As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Create("tblduebilldetail")
+  res["fldbillno"] = sbillNo
+  res["fldencounterval"] = encid
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["fldhostmac"] = ""
+  res["xyz"] = False
+  res.Update
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnudelete_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modDatabase.$myConn.Delete("tblduebilling", "fldid=&1 and fldstatus=&2", GridView1[GridView1.Row, 0].Text, "Punched")
+    ShowNewEntry()
+  Endif
+
+End
+
+Public Sub mnuitems_Click()
+
+  Dim sql As String
+  Dim hForm As FRequest
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    sql = "select fldencounterval,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt as tot,fldtime,fldid,fldbillno from tblpatbilling where fldbillno=&1"                                                  ''
+    res = modDatabase.$syConn.Exec(sql, GridView1[GridView1.Row, 4].Text)
+    If res.Available Then
+      hForm = New FRequest(res, GridView1[GridView1.Row, 4].Text, "Billing:SelectedInvoice", False)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+''========================= Saved Grid ======================
+Private Sub ExecuteSavedQuery()
+
+  Dim sql As String
+  Dim xtype As String
+
+  If rbinvoice.Value = True Then
+    xtype = "InvoiceClearance"
+  Else If rbreceipt.Value = True Then
+    xtype = "ReceiptClearance"
+  Endif
+  sql = "select fldid,fldid,fldordtime,flditemtype,fldbillitem,flditemrate,flditemqty,flddiscper,fldtaxper,fldditemamt from tblduebilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldstatus=&4 and flditemtype=&5 ORDER BY fldid DESC"                                       ''
+  $rData1 = modDatabase.$myConn.Exec(sql, Trim(txtencid.Text), True, False, "Done", xtype)
+
+End
+
+Private Sub ShowSavedGrid()
+
+  Dim xitem As Float
+  Dim xx As Float
+  Dim disc As Float
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  ExecuteSavedQuery()
+  GridView2.Clear
+  GridView2.Columns.Count = $rData1.Fields.Count
+  GridView2.Rows.Count = $rData1.Count
+
+  xitem = 0
+  disc = 0
+  xx = 0
+  For Each $rData1
+    xitem = xitem + $rData1!flditemrate * $rData1!flditemqty
+    disc = disc + $rData1!flddiscper * $rData1!flditemrate * $rData1!flditemqty / 100
+    xx = xx + $rData1!fldditemamt
+    Column = 0
+    For Each fld In $rData1.Fields
+      modGeneralMain.GridExplicitDecoration(GridView2, $rData1.Index, Column)
+      If Column = 1 Then
+        GridView2[$rData1.Index, Column].Text = modReportVar.GetDateTimeReport($rData1["fldordtime"], gb.GeneralDate)
+      Else
+        GridView2[$rData1.Index, Column].Text = $rData1[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView2.Row = 0
+
+  With GridView2
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[2].Text = "DateTime"
+    .Columns[3].Text = "Category"
+    .Columns[4].Text = "Particulars"
+    .Columns[5].Text = "Rate"
+    .Columns[6].Text = "QTY"
+    .Columns[7].Text = "Disc%"
+    .Columns[8].Text = "Tax%"
+    .Columns[9].Text = "Total"
+
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+  End With
+
+  txtsubtotasave.Value = Round(xitem, -2)
+  txtdiscsave.Value = Round(disc, -2)
+  txtnetotalsave.Value = Round(xx, -2)
+  txtsavedtop.Value = Round(xx, -2)
+
+End
+
+Public Sub btnlabclear_Click()
+
+  Dim hForm As FmRemoClear
+
+  If txtencid.Text Then
+    hForm = New FmRemoClear(Trim(txtencid.Text))
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuclearqrscan_Click()
+
+  ClearQRCodeExt()
+  Message.Info("QR Code cleared", "OK")
+
+End
+
+Private Sub ClearQRCodeExt()
+
+  Dim Row As Integer
+  Dim res As Result
+
+  For Row = 0 To GridView1.Rows.Count - 1
+    res = modDatabase.$myConn.Edit("tblduebilling", "fldid=&1 and fldsave=&2 and fldprint=&3", GridView1[Row, 0].Text, False, False)
+    If res.Available Then
+      res["fldextracol"] = ""
+      res.Update
+    Endif
+  Next
+
+End

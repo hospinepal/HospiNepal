@@ -1,0 +1,239 @@
+' Gambas class file
+
+Private $rData As Result
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  cmbmode.List = ["Disk", "MIC", "E-Test"]
+  cmbspecimen.List = modMedicine.GetLabSampleTypeList()
+  cmbspecimen.Add("%")
+  cmbdrugname.List = modControlSub.GetDirectFillresult(modDatabase.$medConn.Exec("select flclass as col from tblsensidrugs"))
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub btnaddanti_Click()
+
+  Dim hForm As FmAddVariableGrid
+
+  hForm = New FmAddVariableGrid("flclass", "tblsensidrugs")
+  hForm.ShowModal
+  cmbdrugname.List = modControlSub.GetDirectFillresult(modDatabase.$medConn.Exec("select flclass as col from tblsensidrugs"))
+
+End
+
+Public Sub cmbgroup_GotFocus()
+
+  cmbgroup.List = modControlSub.GetDirectFillresult(modDatabase.$medConn.Exec("select distinct(fldgroup) as col from tblantipanel"))
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim res As Result
+
+  If cmbgroup.Text And If cmbmode.Text And If cmbdrugname.Text And If cmbspecimen.Text Then
+    res = modDatabase.$medConn.Create("tblantipanel")
+    res["fldgroup"] = cmbgroup.Text
+    res["flditemtype"] = cmbmode.Text
+    res["flditemname"] = cmbdrugname.Text
+    res["fldspecimen"] = cmbspecimen.Text
+    res["fldactive"] = "Active"
+    res["fldsensimax"] = 0
+    res["fldsensimin"] = 0
+    res["fldintermax"] = 0
+    res["fldintermin"] = 0
+    res["fldresismax"] = 0
+    res["fldresismin"] = 0
+    res.Update()
+    ShowGridData()
+    cmbmode.Text = ""
+    cmbdrugname.Text = ""
+    cmbspecimen.Text = ""
+    cmbmode.SetFocus
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  ShowGridData()
+
+End
+
+Private Sub ShowGridData()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  If cmbgroup.Text Then
+    sql = "select fldid,flditemtype,fldspecimen,flditemname,fldid,fldid from tblantipanel where fldgroup=&1 ORDER BY flditemtype ASC"
+    $rData = modDatabase.$medConn.Exec(sql, cmbgroup.Text)
+
+    GridView1.Clear
+    GridView1.Columns.Count = $rData.Fields.Count
+    GridView1.Rows.Count = $rData.Count
+
+    For Each $rData
+      Column = 0
+      For Each fld In $rData.Fields
+        modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+        If Column = 4 Then
+          GridView1[$rData.Index, Column].Picture = Picture["icon:/small/edit"]
+          GridView1[$rData.Index, Column].Text = ""
+        Else If Column = 5 Then
+          GridView1[$rData.Index, Column].Picture = Picture["icon:/small/cancel"]
+          GridView1[$rData.Index, Column].Text = ""
+        Else
+          GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+        Endif
+        Column = Column + 1
+      Next
+    Next
+    GridView1.Row = 0
+
+    With GridView1
+      .Rows.Height = modBasic.$AppGridRowHeight
+      .Columns[0].Width = 1
+      .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 225 * modBasic.$AppWidthRatio
+      .Columns[4].Width = 25 * modBasic.$AppWidthRatio
+      .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+
+      .Columns[1].Text = "Category"
+      .Columns[2].Text = "Specimen"
+      .Columns[3].Text = "Antibiotics"
+    End With
+
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim Row As Integer
+  Dim hForm As FmSensiRange
+
+  If GridView1.Rows.Selection.Count Then
+    If GridView1.Column = 4 Then
+      Row = GridView1.Row
+      hForm = New FmSensiRange(GridView1[GridView1.Row, 0].Text)
+      hForm.ShowModal
+      GridView1.Row = Row
+
+    Else If GridView1.Column = 5 Then
+      If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+        modDatabase.$medConn.Delete("tblantipanel", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+        ShowGridData()
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnlist_Click()
+
+  Dim xPath As String
+
+  xPath = ShowAntibioticPanelReport()
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+Public Sub txtimport_Click()
+
+  If Dialog.OpenFile() Then Return
+  txtimport.Text = Dialog.Path
+
+End
+
+Public Sub btnupload_Click()
+
+  Dim xdelim As String
+
+  If Trim(txtdelim.Text) Then
+    xdelim = Trim(txtdelim.Text)
+  Else
+    xdelim = ";"
+  Endif
+
+  If Message.Question(("Are you sure ?"), ("No"), ("Yes")) = 2 Then
+    modTextDB.ImportCSVToCurrentDB(modDatabase.$medConn, "tblantipanel", txtimport.Text, xdelim)
+    ShowGridData()
+    Balloon.Info(("Data Import completed"), btnupload)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Private Function ShowAntibioticPanelReport() As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim xlist As String[]
+  Dim xx As String
+
+  Inc Application.Busy
+  $BillingReport = New CReportHTML([("Specimen"), ("Antibiotics"), ("Method"), ("Resistant"), ("Intermediate"), ("Sensitive")], "", "")
+  $BillingReport.UserData.Add("ANTIBIOTIC PANELS", "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  xlist = modControlSub.GetDirectFillresult(modDatabase.$medConn.Exec("select distinct(fldgroup) as col from tblantipanel"))
+  For Each xx In xlist
+    $BillingReport.AddChapter(xx)
+    res = modDatabase.$syConn.Exec("select fldspecimen,flditemtype,flditemname,fldsensimax,fldsensimin,fldintermax,fldintermin,fldresismax,fldresismin from tblantipanel where fldgroup=&1 and fldactive=&2", xx, "Active")                                                                            ''"
+    For Each res
+      With asx
+        .Add(res!fldspecimen)
+        .Add(res!flditemname)
+        .Add(res!flditemtype)
+        .Add(CStr(res!fldresismin) & " - " & CStr(res!fldresismax))
+        .Add(CStr(res!fldintermin) & " - " & CStr(res!fldintermax))
+        .Add(CStr(res!fldsensimin) & " - " & CStr(res!fldsensimax))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      .Add("***")
+      .Add("***")
+      .Add("***")
+      .Add("***")
+      .Add("***")
+      .Add("***")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+  Next
+  Dec Application.Busy
+  Return $BillingReport.NewHTMLPath()
+
+End

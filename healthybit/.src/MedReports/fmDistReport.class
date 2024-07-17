@@ -1,0 +1,361 @@
+' Gambas class file
+
+Private $formCode As String
+Private $sType As String
+
+Public Sub _new(sHospCode As String, sType As String)
+
+  $formCode = sHospCode
+  $sType = sType
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  If $sType = "Hospital" Then
+    Me.Title = modDataRepo.GetHospitaltName($formCode)
+  Else If $sType = "District" Then
+    Me.Title = $formCode
+  Endif
+  cmbcategory.List = ["Disease surveillance", "Consultation Summary", "Delivery Summary", "Laboratory Summary", "Radiology Summary", "Examination Summary", "Major Procedures Summary", "Dispensing Summary", "Admission Summary", "Discharge/Exit Summary", "Invoice Summary", "Equipment Use Summary"]
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Inc Application.Busy
+  ProgressBar1.Value = 0
+  If cmbcategory.Text = "Consultation Summary" Then
+    FillConsultation()
+  Else If cmbcategory.Text = "Delivery Summary" Then
+    FillDelivery()
+  Else If cmbcategory.Text = "Laboratory Summary" Then
+    FillLaboratory()
+  Else If cmbcategory.Text = "Radiology Summary" Then
+    FillRadiology()
+  Endif
+  Dec Application.Busy
+
+End
+
+Private Sub ResizeGrid()
+
+  With GridView1
+    .Columns[0].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+  End With
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, cmbcategory.Text, "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate))
+
+End
+
+''=================================== Procedures ==========================================
+Private Sub FillConsultation()
+
+  Dim grpList As String[]
+  Dim genlst As String[]
+  Dim res As Result
+  Dim xdept As String
+  Dim sgen As String
+  Dim i As Integer
+  Dim j As Integer
+  Dim xtot As Integer
+  Dim xall As Integer
+  Dim xgrand As Integer
+
+  If $sType = "Hospital" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldconsultname) as col from tblconsult where fldconsulttime>=&1 and fldconsulttime<=&2 and fldhospcode=&3", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode))
+  Else If $sType = "District" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldconsultname) as col from tblconsult where fldconsulttime>=&1 and fldconsulttime<=&2 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&3)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode))
+  Endif
+  If grpList Then
+    grpList.Sort()
+  Endif
+  genlst = ["Male", "Female", "Other"]
+  GridView1.Clear
+  GridView1.Rows.Count = grpList.Count
+  GridView1.Columns.Count = 5
+
+  ResizeGrid()
+  With GridView1
+    .Columns[0].Text = "Consultation"
+    .Columns[1].Text = "Male"
+    .Columns[2].Text = "Female"
+    .Columns[3].Text = "Other"
+    .Columns[4].Text = "Total"
+  End With
+
+  xgrand = 0
+  i = 0
+  For Each xdept In grpList
+    GridView1[i, 0].Text = xdept
+
+    j = 0
+    xall = 0
+    For Each sgen In genlst
+      xtot = 0
+      If $sType = "Hospital" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblconsult where fldconsulttime>=&1 and fldconsulttime<=&2 and fldconsultname like &3 and fldhospcode=&4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen)                     ''
+      Else If $sType = "District" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblconsult where fldconsulttime>=&1 and fldconsulttime<=&2 and fldconsultname like &3 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen)
+      Endif
+      If res["cnt"] Then
+        xtot = xtot + res["cnt"]
+      Endif
+      xall = xall + xtot
+      GridView1[i, j + 1].Text = modReportVar.GetLocaleNumberFormat(xtot, 0)
+      j = j + 1
+    Next
+
+    xgrand = xgrand + xall
+    GridView1[i, 4].Text = modReportVar.GetLocaleNumberFormat(xall, 0)
+
+    i = i + 1
+    ProgressBar1.Value = i / grpList.Count
+    Wait
+  Next
+  txttotalval.Value = xgrand
+
+End
+
+Private Sub FillDelivery()
+
+  Dim grpList As String[]
+  Dim genlst As String[]
+  Dim res As Result
+  Dim xdept As String
+  Dim sgen As String
+  Dim i As Integer
+  Dim j As Integer
+  Dim xtot As Integer
+  Dim xall As Integer
+  Dim xgrand As Integer
+
+  If $sType = "Hospital" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(flddeltype) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldhospcode=&3", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode))
+  Else If $sType = "District" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(flddeltype) as col from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&3)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode))
+  Endif
+  If grpList Then
+    grpList.Sort()
+  Endif
+  genlst = ["Live Baby", "Fresh Still Birth", "Macerated Still Birth"]
+  GridView1.Clear
+  GridView1.Rows.Count = grpList.Count
+  GridView1.Columns.Count = 5
+
+  ResizeGrid()
+  With GridView1
+    .Columns[0].Text = "Delivery Mode"
+    .Columns[1].Text = "Live Baby"
+    .Columns[2].Text = "Fresh Still"
+    .Columns[3].Text = "Macer. Still"
+    .Columns[4].Text = "Total"
+  End With
+
+  xgrand = 0
+  i = 0
+  For Each xdept In grpList
+    GridView1[i, 0].Text = xdept
+
+    j = 0
+    xall = 0
+    For Each sgen In genlst
+      xtot = 0
+      If $sType = "Hospital" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddeltype like &3 and fldhospcode=&4 and flddelresult=&5", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen)                     ''
+      Else If $sType = "District" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblconfinement where flddeltime>=&1 and flddeltime<=&2 and flddeltype like &3 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&4) and flddelresult=&5", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen)
+      Endif
+      If res["cnt"] Then
+        xtot = xtot + res["cnt"]
+      Endif
+      xall = xall + xtot
+      GridView1[i, j + 1].Text = modReportVar.GetLocaleNumberFormat(xtot, 0)
+      j = j + 1
+    Next
+
+    xgrand = xgrand + xall
+    GridView1[i, 4].Text = modReportVar.GetLocaleNumberFormat(xall, 0)
+
+    i = i + 1
+    ProgressBar1.Value = i / grpList.Count
+    Wait
+  Next
+  txttotalval.Value = xgrand
+
+End
+
+Private Sub FillLaboratory()
+
+  Dim grpList As String[]
+  Dim genlst As String[]
+  Dim res As Result
+  Dim xdept As String
+  Dim sgen As String
+  Dim i As Integer
+  Dim j As Integer
+  Dim xtot As Integer
+  Dim xall As Integer
+  Dim xgrand As Integer
+
+  If $sType = "Hospital" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldtestid) as col from tblpatlabtest where fldtime_report>=&1 and fldtime_report<=&2 and fldhospcode=&3", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode)) ''
+  Else If $sType = "District" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldtestid) as col from tblpatlabtest where fldtime_report>=&1 and fldtime_report<=&2 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&3)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode))
+  Endif
+  If grpList Then
+    grpList.Sort()
+  Endif
+  genlst = ["Male", "Female", "Other"]
+  GridView1.Clear
+  GridView1.Rows.Count = grpList.Count
+  GridView1.Columns.Count = 5
+
+  ResizeGrid()
+  With GridView1
+    .Columns[0].Text = "Test Name"
+    .Columns[1].Text = "Male"
+    .Columns[2].Text = "Female"
+    .Columns[3].Text = "Other"
+    .Columns[4].Text = "Total"
+  End With
+
+  xgrand = 0
+  i = 0
+  For Each xdept In grpList
+    GridView1[i, 0].Text = xdept
+
+    j = 0
+    xall = 0
+    For Each sgen In genlst
+      xtot = 0
+      If $sType = "Hospital" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblpatlabtest where fldtime_report>=&1 and fldtime_report<=&2 and fldtestid like &3 and fldhospcode=&4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen) ''                     ''
+      Else If $sType = "District" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblpatlabtest where fldtime_report>=&1 and fldtime_report<=&2 and fldtestid like &3 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen)
+      Endif
+      If res["cnt"] Then
+        xtot = xtot + res["cnt"]
+      Endif
+      xall = xall + xtot
+      GridView1[i, j + 1].Text = modReportVar.GetLocaleNumberFormat(xtot, 0)
+      j = j + 1
+    Next
+
+    xgrand = xgrand + xall
+    GridView1[i, 4].Text = modReportVar.GetLocaleNumberFormat(xall, 0)
+
+    i = i + 1
+    ProgressBar1.Value = i / grpList.Count
+    Wait
+  Next
+  txttotalval.Value = xgrand
+
+End
+
+Private Sub FillRadiology()
+
+  Dim grpList As String[]
+  Dim genlst As String[]
+  Dim res As Result
+  Dim xdept As String
+  Dim sgen As String
+  Dim i As Integer
+  Dim j As Integer
+  Dim xtot As Integer
+  Dim xall As Integer
+  Dim xgrand As Integer
+
+  If $sType = "Hospital" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldtestid) as col from tblpatradiotest where fldtime_report>=&1 and fldtime_report<=&2 and fldhospcode=&3", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode)) ''
+  Else If $sType = "District" Then
+    grpList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldtestid) as col from tblpatradiotest where fldtime_report>=&1 and fldtime_report<=&2 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&3)", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), $formCode))
+  Endif
+  If grpList Then
+    grpList.Sort()
+  Endif
+  genlst = ["Male", "Female", "Other"]
+  GridView1.Clear
+  GridView1.Rows.Count = grpList.Count
+  GridView1.Columns.Count = 5
+
+  ResizeGrid()
+  With GridView1
+    .Columns[0].Text = "Test Name"
+    .Columns[1].Text = "Male"
+    .Columns[2].Text = "Female"
+    .Columns[3].Text = "Other"
+    .Columns[4].Text = "Total"
+  End With
+
+  xgrand = 0
+  i = 0
+  For Each xdept In grpList
+    GridView1[i, 0].Text = xdept
+
+    j = 0
+    xall = 0
+    For Each sgen In genlst
+      xtot = 0
+      If $sType = "Hospital" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblpatradiotest where fldtime_report>=&1 and fldtime_report<=&2 and fldtestid like &3 and fldhospcode=&4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen) ''                     ''
+      Else If $sType = "District" Then
+        res = modDatabase.$syConn.Exec("select count(fldencounterval) as cnt from tblpatradiotest where fldtime_report>=&1 and fldtime_report<=&2 and fldtestid like &3 and fldhospcode in(select fldhospcode from tblhospitals where flddistrict=&4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&5))", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), xdept, $formCode, sgen)
+      Endif
+      If res["cnt"] Then
+        xtot = xtot + res["cnt"]
+      Endif
+      xall = xall + xtot
+      GridView1[i, j + 1].Text = modReportVar.GetLocaleNumberFormat(xtot, 0)
+      j = j + 1
+    Next
+
+    xgrand = xgrand + xall
+    GridView1[i, 4].Text = modReportVar.GetLocaleNumberFormat(xall, 0)
+
+    i = i + 1
+    ProgressBar1.Value = i / grpList.Count
+    Wait
+  Next
+  txttotalval.Value = xgrand
+
+End

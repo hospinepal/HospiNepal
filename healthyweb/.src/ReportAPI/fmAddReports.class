@@ -1,0 +1,275 @@
+' Gambas class file
+
+Private $encid As String
+Private $iCreate As Boolean
+Private $sValue As String[]
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $tblpatreport As String
+
+Public Sub Run(encid As String, iCreate As Boolean) As String[]
+
+  $encid = encid
+  $iCreate = iCreate
+
+  btncreate.Visible = $iCreate
+  cmbsource.List = ["Diagnostic Tests", "Radio Diagnostics", "General Reports", "Scanned Images", "Past Documents"]
+  cmbsource.Text = "Scanned Images"
+  modAccount.PasInvoiceSettingRead(cmbfiscal)
+  LoadTableNames()
+  ShowDocuments()
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatreport = "tblpatreport"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatreport from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatreport"] Then
+        $tblpatreport = res["fldpatreport"]
+      Else
+        $tblpatreport = "tblpatreport"
+      Endif
+    Else
+      $tblpatreport = "tblpatreport"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Public Sub btncreate_Menu()
+
+  mnudocs.Popup(btncreate)
+
+End
+
+''---- Reports ---------------------
+Public Sub mnuscanfile_Click()
+
+  Dim hForm As FmScanForm
+
+  If $encid Then
+    hForm = New FmScanForm($encid, "Scanned Images")
+    hForm.ShowModal
+    ShowDocuments()
+  Endif
+
+End
+
+Public Sub mnucamera_Click()
+
+  Dim sPath As String
+  Dim sLongID As String
+
+  sPath = modImage.GetWebCamValue()
+  If sPath Then
+    sLongID = modImage.SavePatientFileGeneral($encid, "Scanned Images", "Scanned Images:" & modString.GetDateString(Now()), sPath, False)
+    ShowDocuments()
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  ShowDocuments()
+
+End
+
+Private Sub ShowDocuments()
+
+  $rData = modDatabase.$syConn.Exec("select fldid,fldid,fldtime,fldcateg,fldtitle,flddetail,fldsave,fldlink,fldencounterval from " & $tblpatreport & " where fldencounterval like &1 and fldcateg like &2 and (flvisible=&3 or flvisible IS NULL)", $encid, cmbsource.Text, "Visible")
+  ResizeGridView()
+
+End
+
+Private Sub ResizeGridView()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Hidden = True
+    .Columns[1].Hidden = True
+    .Columns[2].Width = CStr(150 * modBasic.$AppWidthRatio) & "px"
+    .Columns[3].Width = CStr(150 * modBasic.$AppWidthRatio) & "px"
+    .Columns[4].Width = CStr(150 * modBasic.$AppWidthRatio) & "px"
+    .Columns[5].Width = CStr(250 * modBasic.$AppWidthRatio) & "px"
+    .Columns[6].Hidden = True
+    .Columns[7].Hidden = True
+    .Columns[8].Hidden = True
+
+    .Columns[2].Text = "DateTime"
+    .Columns[3].Text = "Category"
+    .Columns[4].Text = "Title"
+    .Columns[5].Text = "Comment"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  If Column = 2 Then
+    Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else
+    Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+''================== Activity =============================
+Public Sub mnuopenfile_Click()
+
+  Dim hForm As FmPDFView
+  Dim xLink As String
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+
+    xLink = modImage.GetBlobFileData($rData["fldid"], $tblpatreport)
+    If xLink Then
+      hForm = New FmPDFView(xLink, False, $rData["fldencounterval"])
+      hForm.ShowModal
+    Endif
+
+  Endif
+
+End
+
+Public Sub mnuprint_Click()
+
+  Dim xLink As String
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+
+    xLink = modImage.GetBlobFileData($rData["fldid"], $tblpatreport)
+    If xLink Then
+      Me.Exec("printJS('" & modPrint.GetFileWebURL(xLink) & "')")
+    Endif
+
+  Endif
+
+End
+
+Public Sub mnuemail_Click()
+
+  Dim xpath As String
+  Dim hForm As FmRemoteMail
+  Dim xx As String
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+
+    xpath = modImage.GetBlobFileData($rData["fldid"], $tblpatreport)
+    If xpath Then
+      xx = modPatient.GetPatientEmail($rData["fldencounterval"])
+      hForm = New FmRemoteMail(xx, xpath, "Report", $rData["fldtitle"])
+      hForm.ShowModal()
+    Endif
+
+  Endif
+
+End
+
+Public Sub mnuftp_Click()
+
+  Dim xx As String
+  Dim xpath As String
+  Dim xLink As String
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+
+    If modBasic.$RepoManHost And If modBasic.$RepoManFolder And If modBasic.$RepoManUser Then
+
+      xLink = modImage.GetBlobFileData($rData["fldid"], $tblpatreport)
+      If xLink Then
+        xpath = modString.GetNowString() & ".pdf"
+        xx = modDevAll.SendFileToFTP(modBasic.$RepoManHost, modBasic.$RepoManFolder &/ modBasic.$lbluser, modBasic.$RepoManUser, modBasic.$RepoManPass, xpath, xLink)
+        If xx Then
+          Message.Warning(xx, ("OK"))
+        Else
+          Message.Info("Upload file is" & "<br>" & xpath, ("OK"))
+        Endif
+      Endif
+
+    Endif
+
+  Endif
+
+End
+
+Public Sub mnuopd_Click()
+
+  Dim hCls As CReportCustom
+  Dim xPath As String
+
+  If $encid Then
+    If modSettings.ShowSettingFromFIle("OPD Sheet/Name") Then
+      hCls = New CReportCustom($encid, "OPD Sheet", "ReportSize", MMain.$defUnit)
+      hCls.Preview()
+    Else
+      xPath = modPatReports.ShowOPDPostSummary($encid, MMain.$defUnit)
+      modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub mnudischarge_Click()
+
+  Dim xvarList As Variant[]
+  Dim hCls As CReportCustom
+  Dim xPath As String
+
+  If $encid Then
+    If modSettings.ShowSettingFromFIle("Discharge Letter/Name") Then
+      hCls = New CReportCustom($encid, "Discharge Letter", "ReportSize", MMain.$defUnit)
+      hCls.Preview()
+    Else
+      xvarList = ListViewMulti($encid)
+      If xvarList Then
+        xPath = modPatReports.ShowDischargeReport($encid, xvarList[0], xvarList[2], xvarList[1], MMain.$defUnit)
+        modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnupload_Click()
+
+  Dim Row As Integer
+  Dim pathList As String[]
+  Dim xPath As String
+
+  pathList = New String[]
+  For Row = 0 To GridView1.Selection.Count - 1
+    If GridView1.IsSelected(Row) Then
+      $rData.MoveTo(GridView1.Selection[0])
+      xPath = modImage.GetBlobFileData($rData["fldid"], $tblpatreport)
+      If Exist(xPath) Then
+        pathList.Add(xPath)
+      Endif
+    Endif
+  Next
+  Wait
+  $sValue = pathList
+  Me.Close(True)
+
+End

@@ -1,0 +1,320 @@
+' Gambas class file
+
+Private $SubListView As Variant[]
+Private $FixedListGrp As Variant[]
+
+Private $Conn As Connection
+Private $sType As String
+Private $selList As String[]
+Private $erList As String[]
+Private $allList As String[]
+Private $sValue As String[]
+
+Public Sub Run(sConn As Connection, sType As String, selList As String[], erList As String[], allList As String[]) As String[]
+
+  $Conn = sConn
+  $sType = sType
+  $selList = selList
+  $erList = erList
+  $allList = allList
+
+  modGeneralMain.GetOpenModalForm(Me)
+  $sValue = New String[]
+  If $sType = "Disease" Then
+    SetFixedList()
+    SetFixedListData()
+  Else If $sType = "Procedure" Then
+  Endif
+
+  chkleftsub.Value = modBasic.$SearchBothSide
+  modSettings.ShowCheckBox(chkgroup, "ClinicForms/ICDGroups")
+  $SubListView = New Variant[]
+
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Public Sub chkgroup_Click()
+
+  modSettings.EnterCheckSetting(chkgroup, "ClinicForms/ICDGroups")
+
+End
+
+Public Sub rboutpatient_Click()
+
+  SetFixedListData()
+  LoadDefinedDiagnosis("")
+  modSettings.SaveSettingsToFile("ICDDiagnosis/FixedList", "OutPatient")
+
+End
+
+Public Sub rbemergency_Click()
+
+  SetFixedListData()
+  LoadDefinedDiagnosis("")
+  modSettings.SaveSettingsToFile("ICDDiagnosis/FixedList", "Emergency")
+
+End
+
+Public Sub rbicdlist_Click()
+
+  SetFixedListData()
+  LoadDefinedDiagnosis("")
+  modSettings.SaveSettingsToFile("ICDDiagnosis/FixedList", "ICDList")
+
+End
+
+Private Sub SetFixedListData()
+
+  Dim aList As String[]
+
+  aList = New String[]
+  aList.Add("All Categories")
+  If rbemergency.Value = True Then
+    aList.Insert($erList)
+  Else If rboutpatient.Value = True
+    aList.Insert($selList)
+  Else
+    aList.Insert($allList)
+  Endif
+  cmbchapter.List = aList
+
+End
+
+Private Sub SetFixedList()
+
+  Dim sSetting As String
+
+  sSetting = modSettings.ShowSettingFromFIle("ICDDiagnosis/FixedList")
+  If sSetting Then
+    If sSetting = "OutPatient" Then
+      rboutpatient.Value = True
+    Else If sSetting = "Emergency" Then
+      rbemergency.Value = True
+    Else
+      rbicdlist.Value = True
+    Endif
+  Else
+    rboutpatient.Value = True
+  Endif
+
+End
+
+Public Sub cmbchapter_Select()
+
+  If cmbchapter.Text Then
+    LoadDefinedDiagnosis(cmbchapter.Text)
+  Endif
+
+End
+
+Private Sub LoadDefinedDiagnosis(sItem As String)
+
+  txtlist.Text = ""
+  txtcode.Text = ""
+  txtname.Text = ""
+  If $SubListView Then
+    $SubListView.Clear()
+  Endif
+
+  If rbemergency.Value = True Then
+    $FixedListGrp = GetFixDiagnosisList(sItem, "Emergency Groups")
+  Else If rboutpatient.Value = True
+    $FixedListGrp = GetFixDiagnosisList(sItem, "Diagnosis Groups")
+  Else
+    $FixedListGrp = GetICDDiagnosisList(sItem)
+  Endif
+  $SubListView = $FixedListGrp
+  FillListView()
+  If modBasic.$TabletModeEnable = "Yes" Then
+  Else
+    txtlist.SetFocus
+  Endif
+
+End
+
+Private Function GetFixDiagnosisList(sGroup As String, sType As String) As Variant[]
+
+  Dim res As Result
+  Dim sList As Variant[]
+
+  sList = New Variant[]
+  If cmbchapter.Text = "All Categories" Then
+    res = modDatabase.$myConn.Exec("select fldcodenew,fldcodeid,flditemname from tbldiagnogroup where fldgroupname like &1 and fldformat=&2", "%", sType)
+  Else
+    res = modDatabase.$myConn.Exec("select fldcodenew,fldcodeid,flditemname from tbldiagnogroup where fldgroupname=&1 and fldformat=&2", sGroup, sType)
+  Endif
+  If res.Available Then
+    For Each res
+      sList.Add([res["fldcodenew"], res["fldcodeid"], res["flditemname"]])
+    Next
+  Endif
+  Return sList
+
+End
+
+Private Function GetICDDiagnosisList(sGroup As String) As Variant[]
+
+  Dim res As Result
+  Dim sList As Variant[]
+
+  sList = New Variant[]
+  If chkgroup.Value Then
+    If cmbchapter.Text = "All Categories" Then
+      res = $Conn.Exec("select fldicdcode,fldoldcode,fldicdnme from tblicddisease where fldicdcode NOT LIKE &1", "%.%")
+    Else
+      res = $Conn.Exec("select fldicdcode,fldoldcode,fldicdnme from tblicddisease where fldicdchpter=&1 and fldicdcode NOT LIKE &2", sGroup, "%.%")
+    Endif
+  Else
+    If cmbchapter.Text = "All Categories" Then
+      res = $Conn.Exec("select fldicdcode,fldoldcode,fldicdnme from tblicddisease")
+    Else
+      res = $Conn.Exec("select fldicdcode,fldoldcode,fldicdnme from tblicddisease where fldicdchpter=&1", sGroup)
+    Endif
+  Endif
+  If res.Available Then
+    For Each res
+      sList.Add([res["fldicdcode"], res["fldoldcode"], res["fldicdnme"]])
+    Next
+  Endif
+  Return sList
+
+End
+
+''================================== Individual Diagnosis =====================================
+Public Sub chkleftsub_Click()
+
+  modBasic.$SearchBothSide = chkleftsub.Value
+  txtlist.SetFocus
+
+End
+
+Public Sub txtlist_Change()
+
+  Dim xlst As Variant[]
+  Dim xx As String[]
+  Dim xlsfinal As Variant[]
+  Dim awords As String[]
+
+  If txtcodelist.Text Then
+    txtcodelist.Text = ""
+  Endif
+  If cmbchapter.Text Then
+    If Trim(txtlist.Text) Then
+      xlst = $FixedListGrp
+      xlsfinal = New String[]
+      awords = modString.SplitTextArray(LCase(txtlist.Text))
+      For Each xx In xlst
+        If chkleftsub.Value Then
+          If awords.Count > 1 Then
+            If LCase(xx[2]) Like "*" & awords[0] & "*" And If LCase(xx[2]) Like "*" & awords[1] & "*" Then
+              xlsfinal.Add(xx)
+            Endif
+          Else
+            If LCase(xx[2]) Like "*" & LCase(txtlist.Text) & "*" Then
+              xlsfinal.Add(xx)
+            Endif
+          Endif
+        Else
+          If LCase(xx[2]) Like LCase(txtlist.Text) & "*" Then
+            xlsfinal.Add(xx)
+          Endif
+        Endif
+      Next
+      If xlsfinal Then
+        xlsfinal.Sort()
+      Endif
+      $SubListView = xlsfinal
+      FillListView()
+
+    Else
+      $SubListView = $FixedListGrp
+      FillListView()
+    Endif
+  Endif
+
+End
+
+Public Sub txtcodelist_Change()
+
+  Dim xlst As Variant[]
+  Dim xx As String[]
+  Dim xlsfinal As Variant[]
+
+  If txtlist.Text Then
+    txtlist.Text = ""
+  Endif
+  If cmbchapter.Text Then
+    If Trim(txtcodelist.Text) Then
+      xlst = $FixedListGrp
+      xlsfinal = New String[]
+      For Each xx In xlst
+        If LCase(xx[0]) Like LCase(txtcodelist.Text) & "*" Then
+          xlsfinal.Add(xx)
+        Endif
+      Next
+      If xlsfinal Then
+        xlsfinal.Sort()
+      Endif
+      $SubListView = xlsfinal
+      FillListView()
+
+    Else
+      $SubListView = $FixedListGrp
+      FillListView()
+    Endif
+  Endif
+
+End
+
+Private Sub FillListView()
+
+  GridView2.Clear()
+  GridView2.Columns.Count = 3
+  GridView2.Count = $SubListView.Count
+
+  With GridView2
+    .Columns[0].Width = CStr(75 * modBasic.$AppWidthRatio) & "px"
+    .Columns[1].Hidden = True
+    .Columns[2].Expand = True
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  modGridView.GridViewDecoration(Data, Row)
+  Data.Text = $SubListView[Row][Column]
+
+End
+
+Public Sub GridView2_Select()
+
+  If GridView2.Selection.Count Then
+    txtcode.Text = $SubListView[GridView2.Selection[0]][0]
+    txtoldcode.Text = $SubListView[GridView2.Selection[0]][1]
+    txtname.Text = $SubListView[GridView2.Selection[0]][2]
+  Endif
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim xx As String[]
+
+  If txtcode.Text And If txtname.Text Then
+    xx = New String[]
+    xx.Add(Trim(txtname.Text))
+    xx.Add(txtcode.Text)
+    xx.Add(txtoldcode.Text)
+    $sValue = xx
+    Me.Close(True)
+  Endif
+
+End
+
+Public Sub btnscroll1_Click()
+
+  WebScrollView1.EnsureVisible(wPanel3)
+
+End

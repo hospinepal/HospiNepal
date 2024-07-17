@@ -1,0 +1,289 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $refno As String
+Private $strType As String
+Private $Lock As Boolean
+
+Public Sub _new(strType As String, refno As String, sLock As Boolean, sPath As String)
+
+  $strType = strType
+  $refno = refno
+  $Lock = sLock
+  If sPath Then
+    btnplay.Tag = sPath
+  Endif
+  If $Lock = True Then
+    btnOK.Visible = False
+    btnChange.Visible = False
+  Endif
+  txtpath.ProgressControl = WebProgressBar1
+  ShowGridImage()
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close()
+
+End
+
+Public Sub btncam_Click()
+
+  txtpath.Text = modImage.GetWebCamValue()
+
+End
+
+Private Sub ShowGridImage()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtitle,fldlink from tblofficedocs where fldreference=&1 and fldcateg=&2"
+  $rData = modDatabase.$myConn.Exec(sql, $refno, $strType)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Hidden = True
+    .Columns[1].Expand = True
+    .Columns[2].Hidden = True
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  Data.Text = $rData[$aMyFields[Column]]
+
+End
+
+Public Sub GridView1_Select()
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+    DisplayBlobData($rData["fldid"])
+  Endif
+
+End
+
+Private Sub DisplayBlobData(serial As Long)
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim xpdf As String
+  Dim aFile As String
+
+  sql = "select fldpic,fldtitle,flddetail,fldlink,fldextension,fldcomp from tblofficedocs where fldid=&1"
+  res = modDatabase.$myConn.Exec(sql, serial)
+  If res.Available = True Then
+    tempFile = Temp() & "." & res["fldextension"]
+    If res["fldlink"] Then
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      If Exist(aFile) Then
+        Copy aFile To tempFile
+      Endif
+    Else
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+
+    If res["fldextension"] = "pdf" Then
+      If modGlobalSetting.ShowSettingFromDBAny("GeneralSettings/PDFEncrypt", res["fldcomp"]) = "Yes" Then
+        xpdf = Temp() & ".pdf"
+        modDevAll.GetDecryptPDF(tempFile, xpdf, modHelpVariable.$CryptPDF)
+        btnplay.Tag = modPrint.GetFileWebURL(xpdf)
+      Else
+        btnplay.Tag = modPrint.GetFileWebURL(tempFile)
+      Endif
+    Else
+      btnplay.Tag = modPrint.GetFileWebURL(tempFile)
+    Endif
+
+    txttitle.Text = res["fldtitle"]
+    txtdetail.Text = res["flddetail"]
+  Endif
+
+End
+
+Public Sub btnplay_Click()
+
+  If btnplay.Tag Then
+    Me.Exec("window.open('" & btnplay.Tag & "'); ")
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim res As Result
+  Dim sFIle As String
+  Dim xblobfile As String
+
+  If txttitle.Text And If txtpath.Text Then
+    If LCase(File.Ext(txtpath.Text)) = "pdf" Then
+      If modBasic.$UploadEncryptPDF = "Yes" Then
+        sFIle = File.Dir(txtpath.Text) &/ File.BaseName(txtpath.Text) & "_lock.pdf"
+        modDevAll.GetEncryptPDF(txtpath.Text, sFIle, modHelpVariable.$CryptPDF)
+      Else
+        sFIle = txtpath.Text
+      Endif
+    Else
+      sFIle = txtpath.Text
+    Endif
+
+    If modMisc.BlobTarget("OfficeDocs") = "FTP" Then
+      xblobfile = modFTPSub.SendBlobToFTP(sFIle, $strType, "OfficeDocs")
+    Else
+      xblobfile = File.Load(sFIle)
+    Endif
+    If xblobfile Then
+      res = modDatabase.$myConn.Create("tblofficedocs")
+      res["fldreference"] = $refno
+      res["fldcateg"] = $strType
+      If modMisc.BlobTarget("OfficeDocs") = "FTP" Then
+        res["fldpic"] = ""
+        res["fldlink"] = xblobfile
+      Else
+        res["fldpic"] = xblobfile
+        res["fldlink"] = ""
+      Endif
+      res["fldextension"] = File.Ext(sFIle)
+      res["fldtitle"] = Trim(txttitle.Text)
+      res["flddetail"] = txtdetail.Text
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = True
+      res["flduptime"] = ""
+      res.Update()
+
+      ShowGridImage()
+      Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+
+      txttitle.Text = ""
+      txtdetail.Text = ""
+    Endif
+  Endif
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+  Dim sFIle As String
+  Dim xblobfile As String
+
+  If GridView1.Selection.Count Then
+    $rData.MoveTo(GridView1.Selection[0])
+    If txttitle.Text Then
+
+      res = modDatabase.$myConn.Edit("tblofficedocs", "fldid=&1", $rData["fldid"])
+      If res["flduserid"] = modBasic.$lbluser Then
+
+        If txtpath.Text Then
+          If LCase(File.Ext(txtpath.Text)) = "pdf" Then
+            If modBasic.$UploadEncryptPDF = "Yes" Then
+              sFIle = File.Dir(txtpath.Text) &/ File.BaseName(txtpath.Text) & "_lock.pdf"
+              modDevAll.GetEncryptPDF(txtpath.Text, sFIle, modHelpVariable.$CryptPDF)
+            Else
+              sFIle = txtpath.Text
+            Endif
+          Else
+            sFIle = txtpath.Text
+          Endif
+
+          If modMisc.BlobTarget("OfficeDocs") = "FTP" Then
+            xblobfile = modFTPSub.SendBlobToFTP(sFIle, $strType, "OfficeDocs")
+          Else
+            xblobfile = File.Load(sFIle)
+          Endif
+          If xblobfile Then
+            If modMisc.BlobTarget("OfficeDocs") = "FTP" Then
+              res["fldpic"] = ""
+              res["fldlink"] = xblobfile
+            Else
+              res["fldpic"] = xblobfile
+              res["fldlink"] = ""
+            Endif
+            res["fldextension"] = File.Ext(sFIle)
+            res["fldtitle"] = Trim(txttitle.Text)
+            res["flddetail"] = txtdetail.Text
+            res["flduptime"] = Now()
+            res.Update()
+            ShowGridImage()
+            Me.Exec("Toastify({text: 'Information updated', duration: 3000}).showToast()")
+
+          Endif
+        Endif
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub OfficeDOcsReport()
+
+  Dim $BillingReport As CReportHTML
+  Dim res1 As Result
+  Dim asx As New String[0]
+
+  $BillingReport = New CReportHTML([("Date"), ("Title"), ("Description")], "", "")
+  $BillingReport.UserData.Add($strType, "PARAM1")
+  $BillingReport.UserData.Add("Ref: " & $refno, "PARAM2")
+
+  res1 = modDatabase.$myConn.Exec("select fldtime,fldtitle,flddetail from tblofficedocs where fldreference=&1 and fldcateg=&2", $refno, $strType)                      ''
+  For Each res1
+    With asx
+      .Add(modReportVar.GetDateTimeReport(res1["fldtime"], gb.GeneralDate))
+      .Add(res1["fldtitle"])
+      .Add(res1["flddetail"])
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Public Sub btnexport_Click()
+
+  OfficeDOcsReport()
+
+End
+
+Public Sub mnudelete_Click()
+
+  Dim sLink As String
+  Dim xfile As String
+
+  If GridView1.Selection.Count Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      $rData.MoveTo(GridView1.Selection[0])
+
+      sLink = $rData["fldlink"]
+      If sLink Then
+        modFTPSub.DeleteBlobFIleFTP(sLink)
+        xfile = modImage.GetBlobFileData($rData["fldid"])
+        If Not Exist(xfile) Then
+          modDatabase.$myConn.Delete("tblofficedocs", "fldid=&1 and fldreference=&2 and fldcateg=&3", $rData["fldid"], $refno, $strType)
+          ShowGridImage()
+        Endif
+      Else
+        modDatabase.$myConn.Delete("tblofficedocs", "fldid=&1 and fldreference=&2 and fldcateg=&3", $rData["fldid"], $refno, $strType)
+        ShowGridImage()
+      Endif
+
+    Endif
+  Endif
+
+End

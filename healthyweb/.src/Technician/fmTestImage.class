@@ -1,0 +1,360 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $encid As String
+Private $strType As String
+
+Public Sub _new(strType As String, encid As String, sIndex As Variant, testname As String, sMode As String, sPath As String)
+
+  $strType = strType
+  $encid = encid
+  txtid.Text = sIndex
+  lbltest.Text = testname
+  lblobs.Text = sMode
+
+  Me.Title = $strType & " Files"
+  ShowGridImage()
+
+  If sPath Then
+    DisplaySelectImg(sPath)
+  Endif
+
+  Select modHelpVariable.$LogInCategory
+    Case "Clinician", "Technician"
+      WebContaineredit.Visible = True
+    Case Else
+      WebContaineredit.Visible = False
+  End Select
+
+End
+
+Private Sub DisplaySelectImg(sPath As String)
+
+  Dim xpath As String
+
+  If sPath Then
+    If $strType = "IMAGE" Then
+      modImage.StretchtPictureToBox(PictureBox1, sPath)
+    Else If $strType = "DICOM" Then
+      xpath = modDevAll.ConverDicomToPNG(sPath)
+      Try PictureBox1.Image = modPrint.GetFileWebURL(xpath)
+    Endif
+  Endif
+
+End
+
+Private Function DisplayBlobData(serial As Variant) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  If MMain.$WebEntry = True Then
+    sql = "select fldpic,fldtitle,fldkeyword,flddetail,fldlink,fldcateg from tblpatserialimage where fldrepoid=&1"
+  Else
+    sql = "select fldpic,fldtitle,fldkeyword,flddetail,fldlink,fldcateg from tblpatserialimage where fldid=&1"
+  Endif
+  res = modDatabase.$myConn.Exec(sql, serial)
+  If res.Available Then
+    If res["fldcateg"] = "IMAGE" Then
+      tempFile = Temp() & ".png"
+    Else If res["fldcateg"] = "DICOM" Then
+      tempFile = Temp() & ".dcm"
+    Endif
+    If res["fldlink"] Then
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      If Exist(aFile) Then
+        Copy aFile To tempFile
+      Endif
+    Else
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+
+    txttitle.Text = res["fldtitle"]
+    txtkeyword.Text = res["fldkeyword"]
+    txtdetail.Text = res["flddetail"]
+  Endif
+
+  Return tempFile
+
+End
+
+Private Sub ShowGridImage()
+
+  Dim sql As String
+
+  If MMain.$WebEntry = True Then
+    sql = "select fldrepoid,fldtitle,fldlink from tblpatserialimage where fldencounterval=&1 and fldtestid=&2 and fldcateg=&3 and fldmode=&4"
+  Else
+    sql = "select fldid,fldtitle,fldlink from tblpatserialimage where fldencounterval=&1 and fldtestid=&2 and fldcateg=&3 and fldmode=&4"
+  Endif
+  $rData = modDatabase.$myConn.Exec(sql, $encid, txtid.Text, $strType, lblobs.Text)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(dgimage, $rData, $aMyFields)
+  dgimage.Columns[0].Hidden = True
+  dgimage.Columns[1].Text = "Title"
+  dgimage.Columns[2].Hidden = True
+
+End
+
+Public Sub dgimage_Data(Row As Integer, Column As Integer, Data As WebTableData)
+
+  $rData.MoveTo(Row)
+  modGridView.GridViewDecoration(Data, Row)
+  Data.Text = $rData[$aMyFields[Column]]
+
+End
+
+Public Sub dgimage_Select()
+
+  Dim sPath As String
+
+  If dgimage.Selection.Count Then
+    $rData.MoveTo(dgimage.Selection[0])
+    If MMain.$WebEntry = True Then
+      sPath = DisplayBlobData($rData["fldrepoid"])
+    Else
+      sPath = DisplayBlobData($rData["fldid"])
+    Endif
+    DisplaySelectImg(sPath)
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim res As Result
+  Dim sPath As String
+  Dim xblobfile As String
+  Dim xIntVal As String
+
+  If txttitle.Text And If PictureBox1.Tag Then
+    If $strType = "IMAGE" Then
+      sPath = PictureBox1.Tag
+    Else If $strType = "DICOM" Then
+      sPath = PictureBox1.Tag
+    Endif
+
+    If modMisc.BlobTarget("Patient") = "FTP" Then
+      xblobfile = modFTPSub.SendBlobToFTP(sPath, txtid.Text, "Patient")
+    Else
+      xblobfile = File.Load(sPath)
+    Endif
+    If xblobfile Then
+      res = modDatabase.$myConn.Create("tblpatserialimage")
+      res["fldencounterval"] = $encid
+      res["fldcateg"] = $strType
+      res["fldmode"] = lblobs.Text
+      res["fldtestid"] = CLong(txtid.Text)
+      If modMisc.BlobTarget("Patient") = "FTP" Then
+        res["fldpic"] = ""
+        res["fldlink"] = xblobfile
+      Else
+        res["fldpic"] = xblobfile
+        res["fldlink"] = ""
+      Endif
+      res["fldtitle"] = Trim(txttitle.Text)
+      res["fldkeyword"] = Trim(txtkeyword.Text)
+      res["flddetail"] = txtdetail.Text
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = True
+      res["flduptime"] = ""
+      If MMain.$WebEntry = True Then
+        xIntVal = modString.GetDateString(Now())
+        res["fldid"] = CLong(xIntVal)
+        res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+        res["fldrepodate"] = Now()
+        res["fldrepomac"] = CGI["REMOTE_ADDR"] & ":" & CGI["REMOTE_PORT"]
+        res["fldhospcode"] = modBasic.$HospCode
+      Endif
+      res.Update()
+
+      ShowGridImage()
+      Me.Exec("Toastify({text: 'Information saved', duration: 3000}).showToast()")
+      ' Balloon.Delay = modBasic.$BalloonDelay
+      txttitle.Text = ""
+      txtkeyword.Text = ""
+      txtdetail.Text = ""
+    Endif
+  Endif
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+  Dim sPath As String
+  Dim xblobfile As String
+
+  If dgimage.Selection.Count Then
+    If txttitle.Text And If PictureBox1.Tag Then
+      $rData.MoveTo(dgimage.Selection[0])
+
+      If MMain.$WebEntry = True Then
+        res = modDatabase.$myConn.Edit("tblpatserialimage", "fldrepoid=&1", $rData["fldrepoid"])
+      Else
+        res = modDatabase.$myConn.Edit("tblpatserialimage", "fldid=&1", $rData["fldid"])              ''
+      Endif
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+
+        If PictureBox1.Tag Then
+          If $strType = "IMAGE" Then
+            sPath = PictureBox1.Tag
+          Else If $strType = "DICOM" Then
+            sPath = PictureBox1.Tag
+          Endif
+
+          If modMisc.BlobTarget("Patient") = "FTP" Then
+            xblobfile = modFTPSub.SendBlobToFTP(sPath, txtid.Text, "Patient")
+          Else
+            xblobfile = File.Load(sPath)
+          Endif
+          If xblobfile Then
+            If modMisc.BlobTarget("Patient") = "FTP" Then
+              res["fldpic"] = ""
+              res["fldlink"] = xblobfile
+            Else
+              res["fldpic"] = xblobfile
+              res["fldlink"] = ""
+            Endif
+
+            res["fldtitle"] = Trim(txttitle.Text)
+            res["fldkeyword"] = Trim(txtkeyword.Text)
+            res["flddetail"] = txtdetail.Text
+            res["flduptime"] = Now()
+            res["flduserid"] = modBasic.$lbluser
+            res.Update()
+            ShowGridImage()
+            Me.Exec("Toastify({text: 'Information updated', duration: 3000}).showToast()")
+            ' Balloon.Delay = modBasic.$BalloonDelay
+          Endif
+        Endif
+
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnexport_Click()
+
+  ImageReport()
+
+End
+
+Public Sub ImageReport()
+
+  Dim $BillingReport As CReportHTML
+  Dim res1 As Result
+  Dim asx As New String[0]
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  $BillingReport = New CReportHTML([("Date"), ("Title"), ("Description"), ("Image")], "PatientReport", $encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add($strType, "PARAM1")
+
+  res1 = modDatabase.$myConn.Exec("select fldtime,fldpic,fldtitle,flddetail,fldlink from tblpatserialimage where fldencounterval=&1 and fldtestid=&2 and fldcateg=&3 and fldmode=&4", $encid, txtid.Text, $strType, lblobs.Text)                       ''
+  For Each res1
+    tempFile = Temp() & ".png"
+    If res1["fldlink"] Then
+      aFile = modFTPSub.GetFileFromLocalFTP(res1["fldlink"])
+      If Exist(aFile) Then
+        Copy aFile To tempFile
+      Endif
+    Else
+      hFile = res1["fldpic"]
+      If hFile.Length Then
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+
+    With asx
+      .Add(modReportVar.GetDateTimeReport(res1["fldtime"], gb.GeneralDate))
+      .Add(res1["fldtitle"])
+      .Add(res1["flddetail"])
+      .Add(modString.GetImageForHTML(tempFile))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close()
+
+End
+
+''------------------- Buttons --------------------------
+Public Sub btnOpen_Click()
+
+  btnOpen.Upload()
+
+End
+
+Public Sub btnOpen_Progress()
+
+  WebProgressBar1.Value = btnOpen.Progress
+
+End
+
+Public Sub btnOpen_Finish()
+
+  Dim xPath As String
+
+  Me.Exec("Toastify({text: 'Upload complete', duration: 3000}).showToast()")
+  xPath = modPrint.GetCopyTempPath(btnOpen.Path)
+  DisplaySelectImg(xPath)
+
+End
+
+Public Sub btnOpen_Abort(Reason As String)
+
+  Message.Error("Unable to upload file.<br>Reason: " & Html(Reason))
+  WebProgressBar1.Value = 0
+
+End
+
+Public Sub btnscrpen_Click()
+
+  Dim xxx As String
+
+  If $strType = "IMAGE" Then
+    xxx = CustomDraw()
+    If xxx Then
+      PictureBox1.Tag = xxx
+      If PictureBox1.Tag Then
+        PictureBox1.Image = modPrint.GetFileWebURL(PictureBox1.Tag)
+      Endif
+    Endif
+  Else If $strType = "DICOM" Then
+  Endif
+
+End
+
+Public Sub btnwebcam_Click()
+
+  If $strType = "IMAGE" Then
+    PictureBox1.Tag = modImage.GetWebCamValue()
+    If PictureBox1.Tag Then
+      PictureBox1.Image = modPrint.GetFileWebURL(PictureBox1.Tag)
+    Endif
+  Else If $strType = "DICOM" Then
+  Endif
+
+End

@@ -1,0 +1,386 @@
+' Gambas class file
+
+Private $conn As Connection
+
+Public Sub _new(conn As Connection)
+
+  $conn = conn
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  FillCategory()
+  cmbcategory.Text = ""
+
+End
+
+Public Sub Form_Close()
+
+  If modWeb.$webMedConn Then
+    modWeb.$webMedConn.Close()
+  Endif
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Private Sub FillCategory()
+
+  cmbcategory.Clear
+  cmbcategory.Add("ICD List")
+  cmbcategory.Add("Symptoms")
+  cmbcategory.Add("Syndromes")
+
+End
+
+Public Sub lstfirst_Click()
+
+  modFillContainer.ShowCheckedListView(lstfirst)
+
+End
+
+Public Sub cmbcategory_Click()
+
+  Dim res As Result
+
+  Inc Application.Busy
+  If cmbcategory.Text = "ICD List" Then
+
+  Else If cmbcategory.Text = "Symptoms" Then
+    res = $conn.Exec("select distinct(fldcategory) as col from tblsymptoms")
+    modFillContainer.FillListView(lstfirst, res)
+    chkdetail.Enabled = False
+  Else If cmbcategory.Text = "Syndromes" Then
+    res = $conn.Exec("select distinct(fldcategory) as col from tblsyndromes")
+    modFillContainer.FillListView(lstfirst, res)
+    chkdetail.Enabled = True
+  Endif
+
+  Dec Application.Busy
+
+End
+
+Public Sub btnexecute_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim i As Integer
+
+  xx = New String[]
+  If chkalldrug.Value = True Then
+    For i = 1 To lstfirst.Count
+      xx.Add(lstfirst[CStr(i)].Text)
+    Next
+  Else If chkalldrug.Value = False Then
+    For i = 1 To lstfirst.Count
+      If lstfirst[CStr(i)].Picture = Picture["icons/checked.png"] Then
+        xx.Add(lstfirst[CStr(i)].Text)
+      Endif
+    Next
+  Endif
+
+  If chkdetail.Value = False Then
+    If cmbcategory.Text = "ICD List" Then
+      MakeICDDiseaseList(xx)
+    Else If cmbcategory.Text = "Symptoms" Then
+      MakeSymptomList(xx)
+    Else If cmbcategory.Text = "Syndromes" Then
+      MakeSyndromeList(xx)
+    Endif
+
+  Else If chkdetail.Value = True Then
+    yy = New String[]
+    If chksymptom.Value = True Then
+      yy.Add("Hallmark Symptoms")
+    Endif
+    If chkexam.Value = True Then
+      yy.Add("Examination Criteria")
+    Endif
+    If chkdiagno.Value = True Then
+      yy.Add("Diagnostic Criteria")
+    Endif
+    If chkmedicine.Value = True Then
+      yy.Add("Therapeutic Regimen")
+    Endif
+    MakePathoDetail(cmbcategory.Text, xx, yy)
+
+  Endif
+
+End
+
+Private Sub MakeICDDiseaseList(sChapter As String[])
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xxx As String
+
+  Inc Application.Busy
+  $BillingReport = New CReportHTML([("Block"), ("Group"), ("Disease")], "", "")
+  $BillingReport.UserData.Add("INTERNATIONAL CLASSIFICATION OF DISEASES", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each xxx In sChapter
+    $BillingReport.AddSection(xxx, True)
+
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  Dec Application.Busy
+
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Private Sub MakeSymptomList(sChapter As String[])
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim xx As String
+
+  Inc Application.Busy
+  $BillingReport = New CReportHTML([("Symptom"), ("Description"), ("Types")], "", "")
+  $BillingReport.UserData.Add("LIST OF SYMPTOMS", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each xx In sChapter
+    $BillingReport.AddSection(xx, True)
+    res = $conn.Exec("select fldsymptom,fldsymdetail from tblsymptoms where fldcategory=&1", xx)
+    For Each res
+      With asx
+        .Add(res!fldsymptom)
+        .Add(res!fldsymdetail)
+        .Add(MakeSubSymptomList(res!fldsymptom))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  Dec Application.Busy
+
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Private Function MakeSubSymptomList(strSymptom As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = $conn.Exec("select fldsubsymptom from tblsubsymptoms where fldsymptom=&1", strSymptom)
+  xx = modControlSub.GetDirectFillresult(res).Join("<br>")
+
+  Return xx
+
+End
+
+Private Sub MakeSyndromeList(sChapter As String[])
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim xx As String
+
+  Inc Application.Busy
+  $BillingReport = New CReportHTML([("Syndrome"), ("Description"), ("Types")], "", "")
+  $BillingReport.UserData.Add("LIST OF SYNDROMES", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each xx In sChapter
+    $BillingReport.AddSection(xx, True)
+    res = $conn.Exec("select fldsyndrome,fldsymdetail from tblsyndromes where fldcategory=&1", xx)
+    For Each res
+      With asx
+        .Add(res!fldsyndrome)
+        .Add(res!fldsymdetail)
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+  Dec Application.Busy
+
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+''-------------------------------------------------------------------------------------------------------------------------
+Private Sub SetPanel()
+
+  If chkdetail.Value = True Then
+    Panel1.Enabled = True
+  Else If chkdetail.Value = False Then
+    Panel1.Enabled = False
+  Endif
+
+End
+
+Public Sub chkdetail_Click()
+
+  SetPanel()
+
+End
+
+Private Sub MakePathoDetail(sCategory As String, sChapter As String[], sOptions As String[])
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim xx As String
+  Dim yy As String
+
+  Inc Application.Busy
+  $BillingReport = New CReportHTML([("Particulars"), ("Category"), ("Description")], "", "")
+  $BillingReport.UserData.Add(sCategory, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each xx In sChapter
+    If cmbcategory.Text = "ICD List" Then
+      res = $conn.Exec("select fldcode as col from tblicd where fldchapter=&1", xx)
+    Else If cmbcategory.Text = "Syndromes" Then
+      res = $conn.Exec("select fldsyndrome as col from tblsyndromes where fldcategory=&1", xx)
+    Endif
+
+    If res.Available = True Then
+      $BillingReport.AddSection(xx, True)
+      For Each res
+        For Each yy In sOptions
+          If GetPathoDetail(yy, res!col) Then
+            With asx
+              .Add(res!col)
+              .Add(yy)
+              .Add(GetPathoDetail(yy, res!col))
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+        Next
+      Next
+
+      With asx
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+    Endif
+  Next
+  Dec Application.Busy
+
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Private Function GetPathoDetail(sOption As String, sItem As String) As String
+
+  Dim xx As String
+
+  If sOption = "Hallmark Symptoms" Then
+    xx = GetHallMarkSymptom(sItem)
+  Else If sOption = "Examination Criteria" Then
+    xx = GetExamination(sItem)
+  Else If sOption = "Diagnostic Criteria" Then
+    xx = GetDiagnostic(sItem)
+  Else If sOption = "Therapeutic Regimen" Then
+    xx = GetMedicineRegimen(sItem)
+  Endif
+
+  Return xx
+
+End
+
+Private Function GetMedicineRegimen(sItem As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = $conn.Exec("select fldroute,fldcodename,flddosetype,fldagegroup,fldgender,flddose,flddoseunit,fldfreq,fldday from tblregimen where flddisease=&1", sItem)                                                  ''
+  xx = ""
+  If res.Available = True Then
+    For Each res
+      xx = xx & "SEX:" & res!fldgender & "   AGE:" & res!fldagegroup & Space(2) & res!flddosetype & " Dose:- " & res!fldcodename & Space(1) & res!fldroute & Space(1) & res!flddose & Space(1) & res!flddoseunit & " x " & res!fldfreq & " x " & res!fldday & "<br>"
+    Next
+  Endif
+
+  Return xx
+
+End
+
+Private Function GetHallMarkSymptom(sItem As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = $conn.Exec("select fldchild from tblpathosymp where fldparent=&1", sItem)                                                  ''
+  xx = ""
+  If res.Available = True Then
+    For Each res
+      xx = xx & Space(1) & res!fldchild & ";"
+    Next
+  Endif
+
+  Return xx
+
+End
+
+Private Function GetExamination(sItem As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = $conn.Exec("select fldexamid,fldrelation,fldvalquali,fldvalquanti from tblpathoexam where fldparent=&1", sItem)                                                  ''
+  xx = ""
+  If res.Available = True Then
+    For Each res
+      xx = xx & res!fldexamid & Space(1) & res!fldrelation & Space(1) & res!fldvalquali & Space(1) & modFixClinic.GetExamUnitWithOutAgeSex(res!fldexamid) & "<br>"
+    Next
+  Endif
+
+  Return xx
+
+End
+
+Private Function GetDiagnostic(sItem As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = $conn.Exec("select fldtestid,fldrelation,fldvalquali,fldvalquanti,fldtestunit from tblpathotest where fldparent=&1", sItem)                                                  ''
+  xx = ""
+  If res.Available = True Then
+    For Each res
+      xx = xx & res!fldtestid & Space(1) & res!fldrelation & Space(1) & res!fldvalquali & Space(1) & modFixLab.GetTestUnitWithOutAgeSex(res!fldtestid, res!fldtestunit) & "<br>"
+    Next
+  Endif
+
+  Return xx
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End

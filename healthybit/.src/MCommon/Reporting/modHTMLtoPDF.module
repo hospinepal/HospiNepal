@@ -1,0 +1,616 @@
+' Gambas module file
+
+Public $HTMLHeader As String
+Public $HTMLFooter As String
+
+Private headsource As String
+Private footsource As String
+
+Private topmargin As String
+Private bottommargin As String
+
+Private Sub LoadWkSetting(sPrt As String)
+
+  headsource = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_Source")
+  footsource = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_Source")
+
+  topmargin = modSettings.ShowSettingFromFIle(sPrt & "/PDF_TopMargin")
+  bottommargin = modSettings.ShowSettingFromFIle(sPrt & "/PDF_BottomMargin")
+
+End
+
+''================== google chrome ===========================
+Public Sub ChrometoPDF(stInput As String, stOutput As String, strType As String, sExec As String)
+
+  Dim xcmd As String[]
+  Dim sPrt As String
+
+  If strType = "LabelSize" Then
+    sPrt = "Label"
+  Else If strType = "InvoiceSize" Then
+    sPrt = "Invoice"
+  Else If strType = "ReportSize" Then
+    sPrt = "Report"
+  Endif
+  ' xPage = GetChromePageString(sPrt)
+
+  xcmd = New String[]
+  xcmd.Add(sExec)
+  xcmd.Add("--headless")
+  xcmd.Add("--disable-gpu")
+  xcmd.Add("--run-all-compositor-stages-before-draw")
+  xcmd.Add("--print-to-pdf=" & stOutput)
+  xcmd.Add("--no-pdf-header-footer")
+  ' If xPage.Count Then
+  '   xcmd.Insert(xPage)
+  ' Endif
+  xcmd.Add(stInput)
+
+  If Exist(sExec) Then
+    modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+    Exec xcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["google-chrome-stable"])
+  Endif
+
+End
+
+Private Function GetChromePageString(sPrt As String) As String[]
+
+  Dim cmd As String[]
+  Dim xmleft As String
+  Dim xmright As String
+  Dim xmpgwid As String
+  Dim xmpght As String
+  Dim xmheadspace As String
+  Dim xmfootspace As String
+  Dim xorient As String
+  Dim xpapsize As String
+
+  cmd = New String[]
+
+  xmleft = modSettings.ShowSettingFromFIle(sPrt & "/PDF_LeftMargin")
+  xmright = modSettings.ShowSettingFromFIle(sPrt & "/PDF_RightMargin")
+  xmheadspace = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_Spacing")
+  xmfootspace = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_Spacing")
+
+  xmpgwid = modSettings.ShowSettingFromFIle(sPrt & "/PDF_PageWidth")
+  xpapsize = modSettings.ShowSettingFromFIle(sPrt & "/PDF_PaperSize")
+
+  xmpght = modSettings.ShowSettingFromFIle(sPrt & "/PDF_PageHeight")
+  xorient = modSettings.ShowSettingFromFIle(sPrt & "/PDF_Orientation")
+
+  If xorient = "Landscape" Then
+    cmd.Add("--landscape=True")
+  Endif
+
+  If topmargin And If CInt(topmargin) Then
+    cmd.Add("--marginTop=" & Format(CFloat(topmargin) / 25.4, gb.Fixed))
+  Endif
+  If bottommargin And If CInt(bottommargin) Then
+    cmd.Add("--marginBottom=" & Format(CFloat(bottommargin) / 25.4, gb.Fixed))
+  Endif
+
+  If xmleft And If CInt(xmleft) Then
+    cmd.Add("--marginLeft=" & Format(CFloat(xmleft) / 25.4, gb.Fixed))
+  Endif
+  If xmright And If CInt(xmright) Then
+    cmd.Add("--marginRight=" & Format(CFloat(xmright) / 25.4, gb.Fixed))
+  Endif
+
+  If xmpght And If CInt(xmpght) Then
+    cmd.Add("--paperHeight=" & Format(CFloat(xmpght) / 25.4, gb.Fixed))
+  Endif
+
+  If xmpgwid And If CInt(xmpgwid) Then
+    cmd.Add("--paperWidth=" & Format(CFloat(xmpgwid) / 25.4, gb.Fixed))
+  Endif
+
+  Return cmd
+
+End
+
+''================================== wkhtmltopdf ===========================
+Public Sub WkHTMLtoPDF(stInput As String, stOutput As String, strType As String)
+
+  Dim sPrt As String
+  Dim xGenCmd As String[]
+  Dim xHeadCmd As String[]
+  Dim xFootCmd As String[]
+  Dim xPage As String[]
+  Dim xx As String[]
+
+  Dim strFile As String
+  Dim sigtext As String
+  Dim bodyPath As String
+
+  Dim xhead As String
+  Dim xfoot As String
+  Dim xbody As String
+
+  Dim titlefile As String
+  Dim headfile As String
+  Dim bodfile As String
+  Dim footfile As String
+  Dim footimgfile As String
+
+  Dim htmltitle As String
+  Dim htmlpatinfo As String
+  Dim htmlsigna As String
+  Dim htmlfootimg As String
+  Dim htmlfootpage As String
+  Dim gnupgsig As String
+
+  Dim xrotate As String
+  Dim xnewpdf As String
+
+  If strType = "LabelSize" Then
+    sPrt = "Label"
+  Else If strType = "InvoiceSize" Then
+    sPrt = "Invoice"
+  Else If strType = "ReportSize" Then
+    sPrt = "Report"
+  Endif
+
+  LoadWkSetting(sPrt)
+
+  If sPrt = "Invoice" Or If sPrt = "Report" Then
+    If Exist(stInput) Then
+      strFile = File.Load(stInput)
+      gnupgsig = modSettings.ShowSettingFromFIle("GeneralSettings/GnuPG_Enable")
+      If gnupgsig And If gnupgsig = "Yes" Then
+        sigtext = "<a href=" & modSettings.ShowSettingFromFIle("Report" & "/PDF_GnuPGLink") & "><small>" & modSettings.ShowSettingFromFIle("Report" & "/PDF_GnuPGText") & "</small></a>"
+        strFile = Replace(strFile, "</html>", sigtext & gb.NewLine & "</html>")
+      Endif
+      titlefile = modString.GetSelectedText(strFile, modReportVar.$TitleStart, modReportVar.$TitleEnd)
+      headfile = modString.GetSelectedText(strFile, modReportVar.$HeaderStart, modReportVar.$HeaderEnd)
+      bodfile = modString.GetSelectedText(strFile, modReportVar.$BodyStart, modReportVar.$BodyEnd)
+      footfile = modString.GetSelectedText(strFile, modReportVar.$FooterStart, modReportVar.$FooterEnd)
+      footimgfile = modString.GetSelectedText(strFile, modReportVar.$FootImageStart, modReportVar.$FootImageEnd)
+
+      xbody = strFile
+      xhead = ""
+      xfoot = ""
+
+      If headsource And If headsource = "HTML" Then
+        htmltitle = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_HTML_Title")
+        htmlpatinfo = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_HTML_PatInfo")
+        If htmltitle And If htmltitle = "Yes" Then
+          xhead = xhead & gb.NewLine & titlefile & "     " & gb.NewLine
+          xbody = Replace(xbody, titlefile, "")
+        Endif
+        If htmlpatinfo And If htmlpatinfo = "Yes" Then
+          xhead = xhead & gb.NewLine & headfile & "     " & gb.NewLine
+          xbody = Replace(xbody, headfile, "")
+        Endif
+      Endif
+
+      If footsource And If footsource = "HTML" Then
+        htmlsigna = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_HTML_Signature")
+        htmlfootimg = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_HTML_FooterImage")
+        htmlfootpage = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_HTML_PageNumber")
+        If htmlsigna And If htmlsigna = "Yes" Then
+          xfoot = xfoot & gb.NewLine & footfile & "     " & gb.NewLine
+          xbody = Replace(xbody, footfile, "")
+        Endif
+        If htmlfootimg And If htmlfootimg = "Yes" Then                                  ''
+          xfoot = xfoot & gb.NewLine & footimgfile & "     " & gb.NewLine
+          xbody = Replace(xbody, footimgfile, "")
+        Endif
+        If htmlfootpage And If htmlfootpage = "Yes" Then
+          xfoot = xfoot & gb.NewLine & modRepoTemplete.GetPageNumberHTML() & "     " & gb.NewLine
+        Endif
+      Endif
+
+      If xhead Then
+        $HTMLHeader = Temp() & ".html"
+        File.Save($HTMLHeader, modRepoTemplete.TitleHTMLScript() & "     " & gb.NewLine & xhead & "     " & gb.NewLine & "</html>")
+      Endif
+      If xfoot Then
+        $HTMLFooter = Temp() & ".html"
+        File.Save($HTMLFooter, modRepoTemplete.TitleHTMLScript() & "     " & gb.NewLine & xfoot & "     " & gb.NewLine & "</html>")
+      Endif
+
+      bodyPath = Temp() & ".html"
+      File.Save(bodyPath, xbody)
+
+      xGenCmd = GetWKHTMLGenaralString(sPrt)
+      xHeadCmd = GetWKHTMLHeadString(sPrt)
+      xFootCmd = GetWKHTMLFootString(sPrt)
+    Endif
+  Endif
+
+  xPage = GetWKHTMLPageString(sPrt)
+
+  xx = New String[]
+  xx.Add("wkhtmltopdf")
+  xx.Add("-q")
+  xx.Add("--enable-local-file-access")
+  If xPage.Count Then
+    xx.Insert(xPage)
+  Endif
+
+  If sPrt = "Invoice" Or If sPrt = "Report" Then
+    If xGenCmd And If xGenCmd.Count Then
+      xx.Insert(xGenCmd)
+    Endif
+    If xHeadCmd And If xHeadCmd.Count Then
+      xx.Insert(xHeadCmd)
+    Endif
+    If xFootCmd And If xFootCmd.Count Then
+      xx.Insert(xFootCmd)
+    Endif
+
+    If xx.Exist("--margin-top") = False Then
+      If xx.Exist("--header-html") Then
+        If xx.Exist("--footer-left") Or If xx.Exist("--footer-center") Or If xx.Exist("--footer-right") Then
+          If topmargin Then
+            xx.Add("--margin-top")
+            xx.Add(topmargin & "mm")
+          Endif
+        Endif
+      Endif
+    Endif
+    If xx.Exist("--margin-bottom") = False Then
+      If xx.Exist("--footer-html") Then
+        If xx.Exist("--header-left") Or If xx.Exist("--header-center") Or If xx.Exist("--header-right") Then
+          If bottommargin Then
+            xx.Add("--margin-bottom")
+            xx.Add(bottommargin & "mm")
+          Endif
+        Endif
+      Endif
+    Endif
+
+    xx.Add(bodyPath)
+  Else
+    xx.Add(stInput)
+  Endif
+
+  xx.Add(stOutput)
+
+  If System.Exist("wkhtmltopdf") Then
+    modBasic.DebugString("Execute " & xx.Join(Space(1)))
+    Exec xx Wait
+  Else
+    modApplSub.InstallSelectedApplication(["wkhtmltopdf"])
+  Endif
+
+  xrotate = modSettings.ShowSettingFromFIle(sPrt & "/PDF_Rotate")
+  If xrotate = "90" Or If xrotate = "180" Or If xrotate = "270" Then
+    xnewpdf = modDevAll.GetPDFRotate(stOutput, xrotate)
+    Kill stOutput
+    Move xnewpdf To stOutput
+  Endif
+
+End
+
+''-------------------- local array ----------------------------------------
+Private Function GetWKHTMLGenaralString(sPrt As String) As String[]
+
+  Dim cmd As String[]
+
+  Dim xbackprt As String
+  Dim ximgprt As String
+  Dim xpdfform As String
+  Dim xpdflink As String
+  Dim xpdfintn As String
+  Dim xgray As String
+  Dim xstyle As String
+  Dim xzoom As String
+  Dim xlowqual As String
+
+  cmd = New String[]
+
+  xbackprt = modSettings.ShowSettingFromFIle(sPrt & "/PDF_BackgroundPrint")
+  ximgprt = modSettings.ShowSettingFromFIle(sPrt & "/PDF_ImagePrint")
+  xpdfform = modSettings.ShowSettingFromFIle(sPrt & "/PDF_EnableForm")
+  xpdflink = modSettings.ShowSettingFromFIle(sPrt & "/PDF_EnableExternalLink")
+  xgray = modSettings.ShowSettingFromFIle(sPrt & "/PDF_GrayscalePrint")
+  xpdfintn = modSettings.ShowSettingFromFIle(sPrt & "/PDF_EnableInternalLink")
+  xstyle = modSettings.ShowSettingFromFIle(sPrt & "/PDF_JavaScript")
+  xzoom = modSettings.ShowSettingFromFIle(sPrt & "/PDF_SmartShrinking")
+  xlowqual = modSettings.ShowSettingFromFIle(sPrt & "/PDF_LowQuality")
+
+  If xbackprt Then
+    If xbackprt = "Yes" Then
+      cmd.Add("--background")
+    Else If xbackprt = "No" Then
+      cmd.Add("--no-background")
+    Endif
+  Endif
+
+  If ximgprt Then
+    If ximgprt = "Yes" Then
+      cmd.Add("--images")
+    Else If ximgprt = "No" Then
+      cmd.Add("--no-images")
+    Endif
+  Endif
+
+  If xpdfform Then
+    If xpdfform = "Yes" Then
+      cmd.Add("--enable-forms")
+    Else If xpdfform = "No" Then
+      cmd.Add("--disable-forms")
+    Endif
+  Endif
+
+  If xpdflink Then
+    If xpdflink = "Yes" Then
+      cmd.Add("--enable-external-links")
+    Else If xpdflink = "No" Then
+      cmd.Add("--disable-external-links")
+    Endif
+  Endif
+
+  If xpdfintn Then
+    If xpdfintn = "Yes" Then
+      cmd.Add("--enable-internal-links")
+    Else If xpdfintn = "No" Then
+      cmd.Add("--disable-internal-links")
+    Endif
+  Endif
+
+  If xgray Then
+    If xgray = "Yes" Then
+      cmd.Add("--grayscale")
+    Endif
+  Endif
+
+  If xzoom Then
+    If xzoom = "Enable" Then
+      cmd.Add("--enable-smart-shrinking")
+    Else If xzoom = "Disable" Then
+      cmd.Add("--disable-smart-shrinking")
+    Endif
+  Endif
+
+  If xlowqual Then
+    If xlowqual = "Enable" Then
+      cmd.Add("--lowquality")
+    Endif
+  Endif
+
+  If xstyle And If Exist(xstyle) Then
+    cmd.Add("--run-script")
+    cmd.Add(xstyle)
+  Endif
+
+  Return cmd
+
+End
+
+Private Function GetWKHTMLHeadString(sPrt As String) As String[]
+
+  Dim cmd As String[]
+
+  Dim headline As String
+  Dim headlefttext As String
+  Dim headcentext As String
+  Dim headrttext As String
+  Dim headfont As String
+  Dim headcustom As String
+
+  cmd = New String[]
+
+  If headsource Then
+    headline = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_Line")
+    headlefttext = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_LeftText")
+    headcentext = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_CenterText")
+    headrttext = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_RightText")
+    headfont = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_Font")
+    headcustom = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_CustomPath")
+
+    If headline Then
+      If headline = "Yes" Then
+        cmd.Add("--header-line")
+      Else If headline = "No" Then
+        cmd.Add("--no-header-line")
+      Endif
+    Endif
+
+    If headsource = "Text" Then                                                     ''
+
+      If headlefttext Then
+        cmd.Add("--header-left")
+        cmd.Add(headlefttext)
+      Endif
+
+      If headcentext Then
+        cmd.Add("--header-center")
+        cmd.Add(headcentext)
+      Endif
+
+      If headrttext Then
+        cmd.Add("--header-right")
+        cmd.Add(headrttext)
+      Endif
+
+      If headfont Then
+        If Font[headfont].Name Then
+          cmd.Add("--header-font-name")
+          cmd.Add(Font[headfont].Name)
+        Endif
+        If Font[headfont].Size Then
+          cmd.Add("--header-font-size")
+          cmd.Add(Font[headfont].Size)
+        Endif
+
+      Else
+        cmd.Add("--header-font-name")
+        cmd.Add(Application.Font.Name)
+        cmd.Add("--header-font-size")
+        cmd.Add(Application.Font.Size)
+      Endif
+
+    Else If headsource = "HTML" Then
+      cmd.Add("--header-html")
+      cmd.Add($HTMLHeader)
+
+    Else If headsource = "Custom" Then
+      If Exist(headcustom) Then
+        cmd.Add("--header-html")
+        cmd.Add(headcustom)
+      Endif
+
+    Endif
+  Endif
+
+  Return cmd
+
+End
+
+Private Function GetWKHTMLFootString(sPrt As String) As String[]
+
+  Dim cmd As String[]
+
+  Dim footline As String
+  Dim footlefttext As String
+  Dim footcentext As String
+  Dim footrttext As String
+  Dim footfont As String
+  Dim footcustom As String
+
+  cmd = New String[]
+
+  If footsource Then
+    footline = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_Line")
+    footlefttext = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_LeftText")
+    footcentext = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_CanterText")
+    footrttext = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_RightText")
+    footfont = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_Font")
+    footcustom = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_CustomPath")
+
+    If footline Then
+      If footline = "Yes" Then
+        cmd.Add("--footer-line")
+      Else If footline = "No" Then
+        cmd.Add("--no-footer-line")
+      Endif
+    Endif
+
+    If footsource = "Text" Then
+
+      If footlefttext Then
+        cmd.Add("--footer-left")
+        cmd.Add(footlefttext)
+      Endif
+
+      If footcentext Then
+        cmd.Add("--footer-center")
+        cmd.Add(footcentext)
+      Endif
+
+      If footrttext Then
+        cmd.Add("--footer-right")
+        cmd.Add(footrttext)
+      Endif
+
+      If footfont Then
+        If Font[footfont].Name Then
+          cmd.Add("--footer-font-name")
+          cmd.Add(Font[footfont].Name)
+        Endif
+        If Font[footfont].Size Then
+          cmd.Add("--footer-font-size")
+          cmd.Add(Font[footfont].Size)
+        Endif
+
+      Else
+        cmd.Add("--footer-font-name")
+        cmd.Add(Application.Font.Name)
+        cmd.Add("--footer-font-size")
+        cmd.Add(Application.Font.Size)
+      Endif
+
+    Else If footsource = "HTML" Then
+      cmd.Add("--footer-html")
+      cmd.Add($HTMLFooter)
+
+    Else If footsource = "Custom" Then
+      If Exist(footcustom) Then
+        cmd.Add("--footer-html")
+        cmd.Add(footcustom)
+      Endif
+
+    Endif
+  Endif
+
+  Return cmd
+
+End
+
+Private Function GetWKHTMLPageString(sPrt As String) As String[]
+
+  Dim cmd As String[]
+  Dim xmleft As String
+  Dim xmright As String
+  Dim xmpgwid As String
+  Dim xmpght As String
+  Dim xmheadspace As String
+  Dim xmfootspace As String
+  Dim xorient As String
+  Dim xpapsize As String
+
+  cmd = New String[]
+
+  xmleft = modSettings.ShowSettingFromFIle(sPrt & "/PDF_LeftMargin")
+  xmright = modSettings.ShowSettingFromFIle(sPrt & "/PDF_RightMargin")
+  xmheadspace = modSettings.ShowSettingFromFIle(sPrt & "/PDFHeader_Spacing")
+  xmfootspace = modSettings.ShowSettingFromFIle(sPrt & "/PDFFooter_Spacing")
+
+  xmpgwid = modSettings.ShowSettingFromFIle(sPrt & "/PDF_PageWidth")
+  xpapsize = modSettings.ShowSettingFromFIle(sPrt & "/PDF_PaperSize")
+
+  xmpght = modSettings.ShowSettingFromFIle(sPrt & "/PDF_PageHeight")
+  xorient = modSettings.ShowSettingFromFIle(sPrt & "/PDF_Orientation")
+
+  If topmargin And If CInt(topmargin) Then
+    cmd.Add("--margin-top")
+    cmd.Add(topmargin & "mm")
+  Endif
+  If bottommargin And If CInt(bottommargin) Then
+    cmd.Add("--margin-bottom")
+    cmd.Add(bottommargin & "mm")
+  Endif
+
+  If xmleft And If CInt(xmleft) Then
+    cmd.Add("--margin-left")
+    cmd.Add(xmleft & "mm")
+  Endif
+  If xmright And If CInt(xmright) Then
+    cmd.Add("--margin-right")
+    cmd.Add(xmright & "mm")
+  Endif
+
+  If xmpght And If CInt(xmpght) Then
+    cmd.Add("--page-height")
+    cmd.Add(xmpght & "mm")
+  Endif
+  If xorient Then
+    cmd.Add("--orientation")
+    cmd.Add(xorient)
+  Endif
+
+  If xmpgwid And If CInt(xmpgwid) Then
+    cmd.Add("--page-width")
+    cmd.Add(xmpgwid & "mm")
+  Endif
+  If xpapsize Then
+    cmd.Add("--page-size")
+    cmd.Add(xpapsize)
+  Endif
+
+  If xmheadspace And If CInt(xmheadspace) Then
+    cmd.Add("--header-spacing")
+    cmd.Add(xmheadspace)
+  Endif
+  If xmfootspace And If CInt(xmfootspace) Then
+    cmd.Add("--footer-spacing")
+    cmd.Add(xmfootspace)
+  Endif
+
+  Return cmd
+
+End

@@ -1,0 +1,155 @@
+' Gambas class file
+
+Private $ImgLst As String[]
+Private $TestList As String[]
+
+Public $sHost As String
+Public $sAET As String
+Public $sPPort As String
+Public $sHttPort As String
+Public $sHTTPUser As String
+Public $sHTTPPass As String
+Public $sSSL As String
+
+Public Sub _new(encid As String)
+
+  txtencid.Text = encid
+
+End
+
+Public Sub Form_Open()
+
+  If txtencid.Text Then
+    txtencid.ReadOnly = True
+    btnrefresh_Click()
+  Else
+    btnrefresh.Visible = True
+  Endif
+  $TestList = modMedicine.FillRadioTestCombo("%")
+  cmbserver.List = modMisc.GetPacsServerList()
+
+End
+
+Public Sub btnrefresh_Click()
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
+  txtgender.Text = modPatient.GetPatientAgeString(Trim(txtencid.Text), Now()) & "/" & modPatient.GetPatientSex(Trim(txtencid.Text))
+
+End
+
+Public Sub txttestname_Click()
+
+  txttestname.Text = GridViewNew("Select Radiology Test Name", $TestList, False)
+
+End
+
+Private Sub GetPacsServSetting(sHost As String)
+
+  Dim xhttp As String
+  Dim xuser As String
+  Dim xpass As String
+
+  $sHost = modSettings.ShowSettingFromFIle(sHost & "/" & "HostName")
+  $sAET = modSettings.ShowSettingFromFIle(sHost & "/" & "AETitle")
+  $sPPort = modSettings.ShowSettingFromFIle(sHost & "/" & "Port")
+  $sSSL = modSettings.ShowSettingFromFIle(sHost & "/" & "UseSSL")
+  xhttp = modSettings.ShowSettingFromFIle(sHost & "/" & "HTTPPort")
+  If xhttp Then
+    $sHttPort = xhttp
+  Else
+    $sHttPort = "8042"
+  Endif
+  xuser = modSettings.ShowSettingFromFIle(sHost & "/" & "HTTPUser")
+  If xuser Then
+    $sHTTPUser = UnBase64(xuser)
+  Endif
+  xpass = modSettings.ShowSettingFromFIle(sHost & "/" & "HTTPPass")
+  If xpass Then
+    $sHTTPPass = UnBase64(xpass)
+  Endif
+
+End
+
+Public Sub txtpacsupload_Click()
+
+  If Dialog.OpenFile() Then Return
+  txtpacsupload.Text = Dialog.Path
+
+End
+
+Public Sub btnpacsupload_Click()
+
+  Dim xxx As String
+  Dim xVar As Variant[]
+
+  If cmbserver.Text Then
+    If Exist(txtpacsupload.Text) Then
+
+      GetPacsServSetting(cmbserver.Text)
+      Inc Application.Busy
+      xxx = modPACS.UploadDicomArchive($sHost, $sHttPort, txtpacsupload.Text, $sHTTPUser, $sHTTPPass, $sSSL)
+      Dec Application.Busy
+      If xxx Then
+        xVar = JSON.Decode(xxx)
+        If xVar.Count Then
+          GetImagesList(xVar)
+          txtcount.MaxValue = $ImgLst.Count - 1
+          txtcount_Change()
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Private Sub GetImagesList(sVar As Variant[])
+
+  Dim sColl As Collection
+  Dim xval As String
+
+  $ImgLst = New String[]
+  For Each sColl In sVar
+    xval = ""
+    xval = sColl["ParentStudy"] & "|" & sColl["ParentSeries"]
+    If $ImgLst.Count = 0 Then
+      $ImgLst.Add(xval)
+    Else
+      If $ImgLst.Exist(xval) = False Then
+        $ImgLst.Add(xval)
+      Endif
+    Endif
+  Next
+
+End
+
+Public Sub txtcount_Change()
+
+  Dim asx As String[]
+
+  txtstudy.Text = ""
+  txtseries.Text = ""
+  txtformat.Text = "Orthanc"
+  asx = Split($ImgLst[txtcount.Value], "|")
+  If asx.Count = 2 Then
+    txtstudy.Text = asx[0]
+    txtseries.Text = asx[1]
+  Endif
+
+End
+
+Public Sub btncreate_Click()
+
+  Dim i As Integer
+  Dim asx As String[]
+
+  For i = 0 To $ImgLst.Count - 1
+    asx = Split($ImgLst[i], "|")
+    If asx.Count = 2 Then
+      modRadioSub.InsertRadioTestOrder(Trim(txtencid.Text), txttestname.Text, modFixRadio.GetRadioTestType(txttestname.Text), "Regular", 0, "", "", "", "", "", "Orthanc", asx[0], asx[1])                 ''
+    Endif
+  Next
+  Balloon.Info(("Information added"), btncreate)
+  Balloon.Delay = modBasic.$BalloonDelay
+
+End
