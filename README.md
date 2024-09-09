@@ -9,7 +9,7 @@ D-code Technology Pvt. Ltd.<br>
 +9779802300720,+977 1 4428855<br>
 https://d-codetechnology.com/
 
-Lead by:<br>
+Project Lead:<br>
 Dr. Safiur Rahman Ansari<br>
 +9779808942553<br>
 Email: isafiur@gmail.com
