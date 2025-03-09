@@ -6,6 +6,7 @@ Private xGridData As Variant[]
 Private $HMISChapters As String[]
 Private $DHISVar As Variant[]
 Private $xPass As String
+Private $LoadZero As String
 
 Public Sub Form_Open()
 
@@ -25,7 +26,7 @@ Public Sub Form_Open()
   Endif
   btnhmisregist.Menu = "mnuhmisregist"
 
-  $HMISChapters = ["Summary of Services", "Summary of Indoor Services", "Safe Motherhood Programme", "Newborn Care", "Non-Communicable Diseases", "New Outpatient Morbidity", "Common Emergency Diseases", "Laboratory Services", "Geriatric Services", "One-Stop Crisis Management Center", "Social Service Unit"]
+  $HMISChapters = ["Hospital Summary Dataset", "Hospital Indoor Service", "Inpatient Morbidity", "Hospital Mortality", "Maternal And New-born Health", "New Born Care", "Non Communicable Disease", "New Outpatient Morbidity", "Common Emergency Diseases", "Laboratory Services", "Geriatric Services", "One-Stop Crisis Management Center", "Social Service Unit"]
   modHMISRep.LoadHMISLists()
   modHMISRep.GetHMISCollection()
   cmbagegroup.List = ["HMIS", "Default"]
@@ -33,6 +34,7 @@ Public Sub Form_Open()
   dtfir.Value = Now()
   dtlast.Value = Now()
   modHMISRep.LoadHMISTree(TreeView1)
+  $LoadZero = modSettings.ShowSettingFromFIle("HMISReporting/UploadZero")
 
   If modBasic.$SuperUser = True Then
     $decrypt = True
@@ -124,7 +126,7 @@ End
 ''============== HMIS Reports =============
 Private Sub ShowSelectedTables(sCategory As String, sItem As String)
 
-  If sCategory = "Summary of Services" Then
+  If sCategory = "Hospital Summary Dataset" Then
     If sItem = "Hospital Services" Then
       GetHospitalService()
     Else If sItem = "Emergency Services" Then
@@ -135,7 +137,7 @@ Private Sub ShowSelectedTables(sCategory As String, sItem As String)
       GetFreeServiceImprovised()
     Endif
 
-  Else If sCategory = "Summary of Indoor Services" Then
+  Else If sCategory = "Hospital Indoor Service" Then
     If sItem = "Inpatient Outcome" Then
       ShowInpatientsOutcome()
     Else If sItem = "Neonate Form" Then
@@ -152,13 +154,15 @@ Private Sub ShowSelectedTables(sCategory As String, sItem As String)
       GetFreeServicesHMIS()
     Else If sItem = "Free health service summary" Then
       GetCostExemptionReport()
-    Else If sItem = "Inpatient Morbidity" Then
-      GetAgeWiseMorbidity("InPatient")
-    Else If sItem = "Hospital Mortality" Then
-      GetAgeWiseMorbidity("Mortality")
     Endif
 
-  Else If sCategory = "Safe Motherhood Programme" Then
+  Else If sCategory = "Inpatient Morbidity" Then
+    GetAgeWiseMorbidity("InPatient", sItem)
+
+  Else If sCategory = "Hospital Mortality" Then
+    GetAgeWiseMorbidity("Mortality", sItem)
+
+  Else If sCategory = "Maternal And New-born Health" Then
     If sItem = "ANC Services" Then
       ANCVisitreportAge()
     Else If sItem = "Delivery Service" Then
@@ -188,7 +192,7 @@ Private Sub ShowSelectedTables(sCategory As String, sItem As String)
 
   Else If sCategory = "Family Planning Programme" Then
 
-  Else If sCategory = "Newborn Care" Then
+  Else If sCategory = "New Born Care" Then
     If sItem = "Number of sick babies admitted at SNCU/NICU/KMCU" Then
       GetSickBabiesAdmittedNICU()
     Else If sItem = "Management & Treatment Outocmes at SNCU/NICU/KMCU" Then
@@ -197,7 +201,7 @@ Private Sub ShowSelectedTables(sCategory As String, sItem As String)
       GetKMCManagedNICU()
     Endif
 
-  Else If sCategory = "Non-Communicable Diseases" Then
+  Else If sCategory = "Non Communicable Disease" Then
     If sItem = "Number of NCD cases on Treatment (OPD/Emergency)" Then
       GetTreatmentOpdErNCD()
     Else If sItem = "Number of NCD Cause-Specific Deaths" Then
@@ -309,15 +313,34 @@ Public Sub btnrefresh_Click()
 
 End
 
+Private Function RemoveNullHMISVar(sVar As Variant[]) As Variant[]
+
+  Dim Row As Integer
+  Dim xVar As Variant[]
+
+  xVar = New Variant[]
+  For Row = 0 To sVar.Count - 1
+    If sVar[Row]["value"] And If CInt(sVar[Row]["value"]) > 0 Then
+      xVar.Add(sVar[Row])
+    Endif
+  Next
+
+  Return xVar
+
+End
+
 ''================== API =====================
 Public Sub btndhis_Click()
 
   Dim xdate As String
   Dim xdaterange As Date[]
+  Dim xDataSet As String
 
   Dim xVar As Variant[]
+  Dim aVar As Variant[]
   Dim hForm As CDHISapi
   Dim xstatus As String
+  Dim xmsg As String
 
   If btndhis.Text = "Select Date" Then
     xdate = InputMask("Select BS Date", "0000/00", "BS Date", "")
@@ -345,20 +368,44 @@ Public Sub btndhis_Click()
     Endif
     If modPassword.GetSuperVerification(modBasic.$lbluser, $xPass) = True Then
 
-      If TreeView1.Current.Text = "Inpatient Morbidity" And If TreeView1.Current.ParentKey = "Summary of Indoor Services" Then
+      If TreeView1.Current.ParentKey = "Inpatient Morbidity" Then
         UploadInpatientDiagnosis("Inpatient Morbidity")
-      Else If TreeView1.Current.Text = "Hospital Mortality" And If TreeView1.Current.ParentKey = "Summary of Indoor Services" Then
+      Else If TreeView1.Current.ParentKey = "Hospital Mortality" Then
         UploadInpatientDiagnosis("Hospital Mortality")
+
+      Else If TreeView1.Current.Text = "Nutritional & Metabolic Disorder" And If TreeView1.Current.ParentKey = "New Outpatient Morbidity" Then
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD1")
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD2")
+      Else If TreeView1.Current.Text = "Mental Health related problems" And If TreeView1.Current.ParentKey = "New Outpatient Morbidity" Then
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD3")
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD4")
+      Else If TreeView1.Current.Text = "Orthopaedic Problems" And If TreeView1.Current.ParentKey = "New Outpatient Morbidity" Then
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD4")
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD5")
+
       Else
-        If TreeView1.Current.Text = "Obstetric Complications" And If TreeView1.Current.ParentKey = "Safe Motherhood Programme" Then
-          xVar = modHMISTag.GetDHISJsonSecond($DHISVar, xGridData)
+        If TreeView1.Current.Text = "Obstetric Complications" And If TreeView1.Current.ParentKey = "Maternal And New-born Health" Then
+          aVar = modHMISTag.GetDHISJsonSecond($DHISVar, xGridData)
         Else
-          xVar = modHMISTag.GetDHISJson($DHISVar, xGridData)
+          aVar = modHMISTag.GetDHISJson($DHISVar, xGridData)
         Endif
-        hForm = New CDHISapi(xVar, modHMISTag.$APIMonth)
-        xstatus = hForm.GetAPIOutput()
-        If xstatus Then
-          Message.Info(xstatus, "OK")
+        If $LoadZero = "Disable" Then
+          xVar = RemoveNullHMISVar(aVar)
+        Else
+          xVar = aVar
+        Endif
+
+        xDataSet = modHMISTag.GetHMISDataSetValue(TreeView1.Current.ParentKey, TreeView1.Current.Text)
+        If xDataSet Then
+          hForm = New CDHISapi(xVar, modHMISTag.$APIMonth, xDataSet)
+          xstatus = hForm.GetAPIOutput()
+          If xstatus Then
+            If xstatus = "SUCCESS" Then
+              Message.Info(xstatus, "OK")
+            Else
+              xmsg = MessageHtml("API Response", xstatus, ["OK"])
+            Endif
+          Endif
         Endif
       Endif
 
@@ -369,28 +416,96 @@ Public Sub btndhis_Click()
 
 End
 
+Private Sub UploadOutPatientMorbiditySelected(sHeading As String, xPage As String)
+
+  Dim codLst As String[]
+  Dim xDataSet As String
+  Dim xcoll As String[]
+  Dim xDHISVar As Variant[]
+
+  Dim xVar As Variant[]
+  Dim aVar As Variant[]
+  Dim hForm As CDHISapi
+  Dim xstatus As String
+  Dim xmsg As String
+
+  codLst = modHMISRep.GetOPDMorbidityCodes(sHeading, xPage)
+  If codLst.Count Then
+    xDHISVar = New Variant[]
+    For Each xcoll In $DHISVar
+      If codLst.Exist(xcoll[0]) = True Then
+        xDHISVar.Add(xcoll)
+      Endif
+    Next
+
+    aVar = modHMISTag.GetDHISJson(xDHISVar, xGridData)
+    If $LoadZero = "Disable" Then
+      xVar = RemoveNullHMISVar(aVar)
+    Else
+      xVar = aVar
+    Endif
+    xDataSet = modHMISTag.GetHMISDataSetValue("New Outpatient Morbidity", sHeading, xPage)
+    If xDataSet Then
+      hForm = New CDHISapi(xVar, modHMISTag.$APIMonth, xDataSet)
+      xstatus = hForm.GetAPIOutput()
+      If xstatus Then
+        If xstatus = "SUCCESS" Then
+          Message.Info(xstatus, "OK")
+        Else
+          xmsg = MessageHtml("API Response", xstatus, ["OK"])
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
 Private Sub UploadInpatientDiagnosis(sCategory As String)
 
   Dim sColl As Collection
   Dim xGrid As Variant[]
+
   Dim xVar As Variant[]
+  Dim aVar As Variant[]
   Dim hForm As CDHISapi
   Dim xstatus As String
   Dim xdiagno As String
+  Dim xDataSet As String
+  Dim xmsg As String
+  Dim xlstmsg As String
 
+  xDataSet = modHMISTag.GetHMISDataSetValue(sCategory, "")
+  Inc Application.Busy
   For Each sColl In xGridData
     xGrid = New Variant[]
     xGrid.Add(sColl)
-    xdiagno = modHMISRep.GetICDCodeHash(sColl[0])
+    xdiagno = modString.GetValueFromCSV(sColl[0], modHelpVariable.$docsDirectory &/ "ICD11_DHIS2UIDs.csv", 1, 0, ";")
     If xdiagno Then
-      xVar = modHMISTag.GetDHISJsonDiagno($DHISVar, xGrid)
-      hForm = New CDHISapi(xVar, modHMISTag.$APIMonth, xdiagno)
+      aVar = modHMISTag.GetDHISJsonDiagno($DHISVar, xGrid)
+      If $LoadZero = "Disable" Then
+        xVar = RemoveNullHMISVar(aVar)
+      Else
+        xVar = aVar
+      Endif
+      hForm = New CDHISapi(xVar, modHMISTag.$APIMonth, xDataSet, xdiagno)
       xstatus = hForm.GetAPIOutput()
       If xstatus Then
-        Message.Info(xstatus, "OK")
+        If xstatus = "SUCCESS" Then
+          xmsg = ""
+        Else
+          xmsg = xmsg & xstatus & gb.NewLine
+        Endif
       Endif
     Endif
   Next
+  Dec Application.Busy
+
+  If Trim(xmsg) Then
+    xlstmsg = MessageHtml("API Response", xmsg, ["OK"])
+  Else
+    Message.Info("SUCCESS", "OK")
+  Endif
 
 End
 
@@ -885,24 +1000,32 @@ Public Sub btnall_Click()
     Inc Application.Busy
     $ProgressBar1 = New ProgressBar(Me)
 
-    If chapList.Exist("Summary of Services") = True Then
+    If chapList.Exist("Hospital Summary Dataset") = True Then
       CForm.SummaryOfServicesTotal()
 
     Endif
 
-    If chapList.Exist("Summary of Indoor Services") = True Then
+    If chapList.Exist("Hospital Indoor Service") = True Then
       CForm.SummaryOfIndoorServicesTotal()
     Endif
 
-    If chapList.Exist("Safe Motherhood Programme") = True Then
+    If chapList.Exist("Inpatient Morbidity") = True Then
+      CForm.InpatientMorbidity()
+    Endif
+
+    If chapList.Exist("Hospital Mortality") = True Then
+      CForm.HospitalMortality()
+    Endif
+
+    If chapList.Exist("Maternal And New-born Health") = True Then
       CForm.SafeMotherhoodTotal()
     Endif
 
-    If chapList.Exist("Newborn Care") = True Then
+    If chapList.Exist("New Born Care") = True Then
       CForm.NewBornCareTotal()
     Endif
 
-    If chapList.Exist("Non-Communicable Diseases") = True Then
+    If chapList.Exist("Non Communicable Disease") = True Then
       CForm.NonCommunicableDiseaseTotal()
     Endif
 
@@ -1308,13 +1431,15 @@ Private Sub GetCostExemptionReport()
 
 End
 
-Private Sub GetAgeWiseMorbidity(sType As String)
+Private Sub GetAgeWiseMorbidity(sType As String, sChapter As String)
 
   Dim ageList As String[]
   Dim xage As String
   Dim digList As String[]
   Dim itmList As String[]
   Dim i As Integer
+  Dim j As Integer
+  Dim strItem As String[]
   Dim stit As String[]
 
   Dim xFinal As Variant[]
@@ -1324,10 +1449,14 @@ Private Sub GetAgeWiseMorbidity(sType As String)
   Else
     ageList = modMedReports.AgeGroupGenderList()
   Endif
+  strItem = modControlSub.GetDirectFillresult(modDatabase.$icdConn.Exec("select fldicdcode from tblicddisease where fldicdchpter=&1", sChapter))
+  For j = 0 To strItem.Count - 1
+    strItem[j] = "'" & strItem[j] & "'"
+  Next
   If sType = "InPatient" Then
-    digList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldcodenew) as col from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldencounterval in(select fldencounterval from tblencounter where flddod IS NOT NULL)" & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text), modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Final Diagnosis", True))
+    digList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldcodenew) as col from tblpatfindings where fldcodenew in(" & strItem.Join(",") & ") and fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldencounterval in(select fldencounterval from tblencounter where flddod IS NOT NULL)" & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text), modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Final Diagnosis", True))
   Else If sType = "Mortality" Then
-    digList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldcodenew) as col from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldencounterval in(select fldencounterval from tblencounter where fldadmission=&5)" & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text), modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Final Diagnosis", True, "Death"))
+    digList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldcodenew) as col from tblpatfindings where fldcodenew in(" & strItem.Join(",") & ") and fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldencounterval in(select fldencounterval from tblencounter where fldadmission=&5)" & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text), modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Final Diagnosis", True, "Death"))
   Endif
   itmList = modHMISRep.ConvertDiagnosisToHMIS(digList)
 
