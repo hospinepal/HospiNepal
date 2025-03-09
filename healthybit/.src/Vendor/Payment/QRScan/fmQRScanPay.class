@@ -1,0 +1,153 @@
+' Gambas class file
+
+Private $encid As String
+Private $sIndex As String
+Private $QRProvider As String
+Private $sTart As Date
+Private $sValue As String
+
+Public Sub Run(encid As String, sIndex As String, sText As String, sProvider As String) As String
+
+  $encid = encid
+  $sIndex = sIndex
+  $QRProvider = sProvider
+
+  $sTart = Now()
+  ShowQRImage(sText)
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Public Sub Form_Open()
+
+  Me.Title = Application.Title
+  lblname.Text = "NAME : " & modPatient.GetPatientNameByEnc($encid)
+  lbltransid.Text = "CODE : " & $sIndex & Space(5) & "TOTAL : " & CStr(GetScanAMount())
+  lblstatus.Text = "Please Wait . . ."
+  $sValue = ""
+
+  ResizeImages()
+
+End
+
+Private Sub ResizeImages()
+
+  Dim xheadpath As String
+  Dim xheadht As String
+  Dim xfootpath As String
+  Dim xfootht As String
+
+  xheadpath = modSettings.ShowSettingFromFIle("QRScan/HeaderPath")
+  If xheadpath And If Exist(xheadpath) Then
+    xheadht = modSettings.ShowSettingFromFIle("QRScan/HeaderHeight")
+    If xheadht Then
+      pctop.Height = CInt(xheadht)
+      pctop.Picture = Image.Load(xheadpath).Stretch(pctop.Width, pctop.Height).Picture
+    Endif
+  Else
+    pctop.Height = 1
+  Endif
+
+  xfootpath = modSettings.ShowSettingFromFIle("QRScan/FooterPath")
+  If xfootpath And If Exist(xfootpath) Then
+    xfootht = modSettings.ShowSettingFromFIle("QRScan/FooterHeight")
+    If xfootht Then
+      pctbottom.Height = CInt(xfootht)
+      pctbottom.Picture = Image.Load(xfootpath).Stretch(pctbottom.Width, pctbottom.Height).Picture
+    Endif
+  Else
+    pctbottom.Height = 1
+  Endif
+
+End
+
+Private Sub ShowQRImage(sText As String)
+
+  Dim sPath As String
+
+  sPath = modDevAll.MakeQRCode(sText)
+  PictureBox1.Picture = Picture[sPath]
+
+End
+
+Public Sub Timer1_Timer()
+
+  Dim xx As String
+  Dim res As Result
+  Dim hForm As CQrNepalCheck
+  Dim xColl As Collection
+
+  If DateDiff($sTart, Now(), gb.Second) > 30 Then
+    If $QRProvider = "nepalpay" Then
+      hForm = New CQrNepalCheck($sIndex)
+      xx = hForm.GetResponseText()
+      If Len(Trim(xx)) Then
+        xColl = JSON.Decode(xx)
+        res = modDatabase.$myConn.Edit("tbladvreceiptdetail", "fldencounterval=&1 and fldreference=&2", $encid, $sIndex)
+        If res.Available Then
+          res["fldverify"] = xColl["responseBody"][0]["merchantTxnRef"]
+          res["fldstatus"] = "Completed"
+          res.Update
+          modQRNepalPay.AddNepalPayTransResponse($encid, $sIndex, xColl)
+          $sValue = $sIndex
+          Timer1.Enabled = False
+          btnclose.Enabled = True
+          lblstatus.Text = "Verified"
+          Me.Border = False
+        Endif
+      Endif
+
+    Else If $QRProvider = "fonepay" Then
+    Else
+      xx = modQRDbase.GetProcedureValue($sIndex)
+      If Len(xx) Then
+        res = modDatabase.$myConn.Edit("tbladvreceiptdetail", "fldencounterval=&1 and fldreference=&2", $encid, $sIndex)
+        If res.Available Then
+          res["fldverify"] = xx
+          res["fldstatus"] = "Completed"
+          res.Update
+          $sValue = $sIndex
+          Timer1.Enabled = False
+          btnclose.Enabled = True
+          lblstatus.Text = "Verified"
+          Me.Border = False
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnclose_Click()
+
+  If $sValue Then
+    Me.Close(True)
+  Endif
+
+End
+
+Private Function GetScanAMount() As Float
+
+  Dim res As Result
+  Dim xval As Float
+
+  res = modDatabase.$myConn.Exec("select fldreceivedamt from tbladvreceiptdetail where fldreference=&1 and fldencounterval=&2", $sIndex, $encid)
+  If res.Available Then
+    If res["fldreceivedamt"] Then
+      xval = res["fldreceivedamt"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.F12 Then Stop Event
+
+End

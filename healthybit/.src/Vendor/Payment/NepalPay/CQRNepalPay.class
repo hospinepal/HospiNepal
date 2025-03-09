@@ -1,0 +1,166 @@
+' Gambas class file
+
+Private $encid As String
+Private $sReceipt As String
+Private $sTotal As Float
+Private $xbillType As String
+Private $xLedgerCode As String
+
+Private $TrsnsFee As Float
+Private $xLocation As String
+Private $xUserID As String
+Private $xmobileNo As String
+Private $xComment As String
+Private $xCompId As String
+
+Private $QRScanURL As String
+Private $QRScanUser As String
+Private $QRScanPass As String
+Private $QRScanQuote As String
+Private $QRScanStr As String
+Private $QRScanID As String
+
+Public Sub _new(encid As String, sReceipt As String, sTotal As Float, sBillType As String, LedgerCode As String)
+
+  $encid = encid
+  $sReceipt = sReceipt
+  $sTotal = sTotal
+  $xbillType = sBillType
+  $xLedgerCode = LedgerCode
+
+  modQRNepalPay.GetQRParameters()
+  $QRScanUser = modQRNepalPay.QRScanUser
+  $QRScanPass = modQRNepalPay.QRScanPass
+  $QRScanURL = modQRNepalPay.QRScanURL
+  $QRScanQuote = modQRNepalPay.QRScanQuote
+  modQRNepalPay.GetMerchantParameters($xLedgerCode)
+  ExecuteAPI()
+
+End
+
+Private Sub ExecuteAPI()
+
+  Dim xcmd As String
+  Dim xauth As String
+  Dim xcontent As String
+  Dim xurl As String
+  Dim xcoll As Collection
+  Dim xoutput As String
+  Dim aColl As Collection
+
+  xurl = Trim($QRScanURL)
+  If $QRScanQuote = "Yes" Then
+    xauth = "'" & $QRScanUser & ":" & $QRScanPass & "'"
+  Else
+    xauth = $QRScanUser & ":" & $QRScanPass
+  Endif
+  ' xauth = "Authorization:Basic " & Base64($QRScanUser & ":" & $QRScanPass)
+  xcontent = "Content-Type: application/json"
+  xcoll = GetQRScanJson()
+
+  If $QRScanUser Then
+    xcmd = "curl -u " & xauth & " -H " & Quote(xcontent) & " -d '" & JSON.Encode(xcoll) & "' -L " & xurl
+  Else
+    xcmd = "curl" & " -H " & Quote(xcontent) & " -d '" & JSON.Encode(xcoll) & "' -L " & xurl
+  Endif
+  ' xcmd = "curl" & " --header " & Quote(xcontent) & " --header " & Quote(xauth) & " --data '" & JSON.Encode(xcoll) & "' --location " & xurl
+  modBasic.DebugAPIString("Execute " & Replace(xcmd, $QRScanPass, "***"))
+  Shell xcmd To xoutput
+  modBasic.DebugAPIString("Response: " & xoutput)
+
+  If xoutput Then
+    Try aColl = JSON.Decode(xoutput)
+    If aColl Then
+      $QRScanStr = aColl["data"]["qrString"]
+      $QRScanID = aColl["data"]["validationTraceId"]
+    Endif
+  Endif
+
+End
+
+Public Function QRScanOutput() As String
+
+  Return $QRScanStr
+
+End
+
+Public Function QRScanOutID() As String
+
+  Return $QRScanID
+
+End
+
+Private Function GetQRScanJson() As Collection
+
+  Dim aColl As Collection
+  Dim sToken As String
+
+  $TrsnsFee = 0
+  $xLocation = modHelpVariable.$MACAddress
+  $xUserID = modBasic.$lbluser
+  $xCompId = modBasic.$compID
+  $xmobileNo = modPatient.GetPatientContactByEnc($encid)
+  If Not $xmobileNo Then
+    $xmobileNo = Null
+  Endif
+  $xComment = Null
+
+  sToken = GetTokenHash()
+
+  aColl = New JSONCollection
+  aColl.Add(12, "pointOfInitialization")  ''12 for dynamic and 11 for static QR code
+  aColl.Add(modQRNepalPay.$AcquirerId, "acquirerId")
+  aColl.Add(modQRNepalPay.$MerchantCode, "merchantId")
+  aColl.Add(modQRNepalPay.$MerchantName, "merchantName")
+  aColl.Add(modQRNepalPay.$MerchantCategory, "merchantCategoryCode")
+  aColl.Add(modQRNepalPay.$MerchantCountry, "merchantCountry")
+  aColl.Add(modQRNepalPay.$MerchantCity, "merchantCity")
+  aColl.Add(modQRNepalPay.$MerchantPostal, "merchantPostalCode")
+  aColl.Add(modQRNepalPay.$MerchantLanguage, "merchantLanguage")
+  aColl.Add(CInt(modQRNepalPay.$TransactionCurr), "transactionCurrency")
+  aColl.Add(Format($sTotal, gb.Fixed), "transactionAmount")
+  aColl.Add(Format($TrsnsFee, gb.Fixed), "valueOfConvenienceFeeFixed")
+  aColl.Add($sReceipt, "billNumber")
+  aColl.Add($encid, "referenceLabel")
+  aColl.Add($xmobileNo, "mobileNo")
+  aColl.Add(modQRNepalPay.$TransactionStore, "storeLabel")
+  aColl.Add($xLocation, "terminalLabel")
+  aColl.Add($xbillType, "purposeOfTransaction")
+  aColl.Add($xComment, "additionalConsumerDataRequest")
+  aColl.Add(Null, "loyaltyNumber")
+  aColl.Add($xUserID, "addnField1")
+  aColl.Add($xCompId, "addnField2")
+  aColl.Add(sToken, "token")
+
+  Return aColl
+
+End
+
+Private Function GetTokenHash() As String
+
+  Dim asx As String[]
+  Dim arcmd As String[]
+  Dim sval As String
+
+  asx = New String[]
+  asx.Add(modQRNepalPay.$AcquirerId)
+  asx.Add(modQRNepalPay.$MerchantCode)
+  asx.Add(modQRNepalPay.$MerchantCategory)
+  asx.Add(modQRNepalPay.$TransactionCurr)
+  asx.Add(Format($sTotal, gb.Fixed))
+  asx.Add($sReceipt)
+  asx.Add(modQRNepalPay.$TransactionUserId)
+
+  asx.Add(modQRNepalPay.QRScanKeyPath)
+  asx.Add(modQRNepalPay.QRScanKeyPass)
+
+  arcmd = ["python", modHelpVariable.$scriptDirectory &/ "nepalpay.py", asx.Join(",")]
+  modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+  Shell arcmd.Join(Space(1)) To sval
+  modBasic.DebugAPIString("Response: " & sval)
+
+  sval = Replace(sval, "Base64-encoded Signature:", "")
+  sval = Trim(sval)
+  Return sval
+
+End

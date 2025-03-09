@@ -1,0 +1,124 @@
+' Gambas class file
+
+Private $encid As String
+Private $DepoAmt As Float
+Private $PatStatus As String
+
+Private $QRProvider As String
+Private $AdvReceiptNo As String
+Private $QRString As String
+Private $QRCodeID As String
+Private $TransDone As String
+
+Public Sub _new(encid As String, xDepoAmt As Float, xStatus As String)
+
+  $encid = encid
+  $DepoAmt = xDepoAmt
+  $PatStatus = xStatus
+  $QRProvider = modSettings.ShowSettingFromFIle("QRScan/Provider")
+
+  $TransDone = ""
+  GetQRCodeScan()
+
+End
+
+Public Function GetTransactionDone() As String
+
+  Return $TransDone
+
+End
+
+Private Sub GetQRCodeScan()
+
+  $AdvReceiptNo = ""
+  If $encid Then
+    SaveAdvanceDeposit()
+    UploadForQRScan()
+  Endif
+
+End
+
+Private Sub SaveAdvanceDeposit()
+
+  Dim billed As Boolean
+  Dim txttitle As String
+  Dim $billno As String
+
+  Dim hForm As CQRscanPay
+  Dim hForm1 As CQRNepalPay
+  Dim idLock As Boolean
+
+  txttitle = "CASH DEPOSIT (ONLINE)"
+  billed = True
+  idLock = modBillLock.LockTableForID("TempBill")
+  If idLock = True Then
+    modDatabase.$myConn.Begin
+
+    $billno = modBillLock.GetWebReceiptValue("QR")
+    If $billno Then
+      billed = False
+
+      If $DepoAmt > 0 Then
+        modBillings.InsertAdvRecptDeposit(modDatabase.$myConn, $encid, $billno, $DepoAmt, $PatStatus)
+
+        If $QRProvider = "nepalpay" Then
+          hForm1 = New CQRNepalPay($encid, $billno, $DepoAmt, "CashDeposit", "")
+          Wait
+          $QRString = hForm1.QRScanOutput()
+          $QRCodeID = hForm1.QRScanOutID()
+        Else If $QRProvider = "fonepay" Then
+        Else
+          hForm = New CQRscanPay($encid, $billno, $DepoAmt, "CashDeposit")
+          Wait
+          $QRString = hForm.QRScanOutput()
+          $QRCodeID = hForm.QRScanOutID()
+        Endif
+
+        If $QRString And If $QRCodeID Then
+          modDatabase.$myConn.Commit
+          modBillLock.ReleaseLockTable("TempBill")
+          $AdvReceiptNo = $billno
+          billed = True
+        Else
+          modDatabase.$myConn.Rollback
+          modBillLock.ReleaseLockTable("TempBill")
+          $AdvReceiptNo = ""
+        Endif
+      Else
+        modDatabase.$myConn.Rollback
+        modBillLock.ReleaseLockTable("TempBill")
+        $AdvReceiptNo = ""
+      Endif
+
+    Else
+      modDatabase.$myConn.Rollback
+      modBillLock.ReleaseLockTable("TempBill")
+      $AdvReceiptNo = ""
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("TempBill")
+  Endif
+  $AdvReceiptNo = ""
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub UploadForQRScan()
+
+  Dim res As Result
+
+  If $AdvReceiptNo Then
+    res = modDatabase.$myConn.Edit("tbladvreceiptdetail", "fldencounterval=&1 and fldbillno=&2", $encid, $AdvReceiptNo)
+    res["fldreference"] = $QRCodeID
+    res.Update
+
+    $TransDone = FQRScanPay($encid, $QRCodeID, $QRString, $QRProvider)
+  Else
+    Message.Warning("Unable to get QR String", "OK")
+  Endif
+
+End

@@ -1,0 +1,243 @@
+' Gambas class file
+
+Private $encid As String
+Private $billtype As String
+Private $ACLedger As String
+Private $ACReference As String
+Private $PatStatus As String
+Private $LockToComp As Boolean
+
+Private $QRProvider As String
+Private $AdvReceiptNo As String
+Private $QRString As String
+Private $QRCodeID As String
+Private $TransDone As String
+
+Public Sub _new(encid As String, sbillType As String, xLedger As String, xRefNo As String, xStatus As String, xLockComp As String)
+
+  $encid = encid
+  $billtype = sbillType
+  $ACLedger = xLedger
+  $ACReference = xRefNo
+  $PatStatus = xStatus
+  $LockToComp = xLockComp
+  $QRProvider = modSettings.ShowSettingFromFIle("QRScan/Provider")
+
+  $TransDone = ""
+  GetQRCodeScan()
+
+End
+
+Public Function GetTransactionDone() As String
+
+  Return $TransDone
+
+End
+
+Private Sub GetQRCodeScan()
+
+  $AdvReceiptNo = ""
+  If $encid Then
+    SaveAdvancePayment($ACReference, $ACLedger)
+    UploadForQRScan()
+  Endif
+
+End
+
+Private Function GetPharmTarget(sRoute As String) As String
+
+  Dim xtarg As String
+
+  Select sRoute
+    Case "msurg"
+      xtarg = modBasic.$BillTargetSurgical
+    Case "suture"
+      xtarg = modBasic.$BillTargetSutures
+    Case "ortho"
+      xtarg = modBasic.$BillTargetOrthopedics
+    Case "extra"
+      xtarg = modBasic.$BillTargetExtras
+    Case Else
+      xtarg = modBasic.$BillTargetMedicine
+  End Select
+
+  Return xtarg
+
+End
+
+Private Sub SaveAdvancePayment(scheq As String, sbank As String)
+
+  Dim billed As Boolean
+  Dim res As Result
+  Dim rex As Result
+  Dim txttitle As String
+  Dim $billno As String
+  Dim res1 As Result
+  Dim rex2 As Result
+  Dim ycomp As String
+
+  Dim due As Float
+  Dim disc As Float
+  Dim tax As Float
+  Dim xdue As Float
+  Dim xdisc As Float
+  Dim xtax As Float
+  Dim xtotal As Float
+
+  Dim hForm As CQRscanPay
+  Dim hForm1 As CQRNepalPay
+  Dim idLock As Boolean
+
+  If $LockToComp = True Then
+    ycomp = modBasic.$compID
+  Else
+    ycomp = "%"
+  Endif
+
+  txttitle = "ADVANCE RECEIPT (ONLINE)"
+  If $billtype = "CashBilling" Then
+    res = modDatabase.$myConn.Exec("select fldid,flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldordcomp like &4 and fldbilltype=&5 and flditemqty>&6 and fldacledger=&7 and fldbillno IS NULL and fldextracol IS NULL", $encid, False, False, ycomp, "Cash", 0, $ACLedger)
+    If modBasic.$BillTargetMedicine Then
+      rex = modDatabase.$myConn.Exec("select fldid,fldfixrate,fldqtydisp,fldtaxper,flddiscper,fldbillingmode,fldroute,flditem,flddays from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldcomp_order like &3 and fldbilltype=&4 and fldqtydisp>&5 and fldacledger=&6 and flduserid IS NULL and fldextracol IS NULL", $encid, False, ycomp, "Cash", 0, $ACLedger)
+    Endif
+
+  Else If $billtype = "PharmBilling" Then
+    rex = modDatabase.$myConn.Exec("select fldid,fldfixrate,fldqtydisp,fldtaxper,flddiscper,fldbillingmode,fldroute,flditem,flddays from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldcomp_order like &3 and fldbilltype=&4 and fldqtydisp>&5 and fldacledger=&6 and flduserid IS NULL and fldextracol IS NULL", $encid, False, ycomp, "Cash", 0, $ACLedger)
+    ' res = modDatabase.$myConn.Exec("select fldid,flditemrate,flditemqty,fldtaxper,flddiscper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldordcomp like &4 and (flditemtype=&5 or flditemtype=&6 or flditemtype=&7) and fldbilltype=&8 and flditemqty>&9 and fldbillno IS NULL and fldextracol IS NULL", $encid, False, False, ycomp, "Medicines", "Surgicals", "Extra Items", "Cash", 0)
+
+  Else If $billtype = "InvoiceClearance" Then
+    res = modDatabase.$myConn.Exec("select fldid,flditemrate,flditemqty,fldtaxper,flddiscper From tblduebilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldbilltype=&4 and flditemtype=&5 and fldstatus=&6 and fldacledger=&7", $encid, False, False, "Cash", "InvoiceClearance", "Punched", $ACLedger)
+
+  Else If $billtype = "ReceiptClearance" Then
+    res = modDatabase.$myConn.Exec("select fldid,flditemrate,flditemqty,fldtaxper,flddiscper from tblduebilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldbilltype=&4 and flditemtype=&5 and fldstatus=&6 and fldacledger=&7", $encid, False, False, "Cash", "ReceiptClearance", "Punched", $ACLedger)
+
+  Endif
+
+  billed = True
+  xtotal = 0
+
+  idLock = modBillLock.LockTableForID("TempBill")
+  If idLock = True Then
+    modDatabase.$myConn.Begin
+
+    $billno = modBillLock.GetWebReceiptValue("QR")
+    If $billno Then
+      billed = False
+      due = 0
+      disc = 0
+      tax = 0
+
+      ''service items
+      If res And If res.Available Then
+        For Each res
+          xdue = 0
+          xdisc = 0
+          xtax = 0
+          xdue = res["flditemrate"] * res["flditemqty"]
+          xdisc = xdue * res["flddiscper"] / 100
+          xtax = (xdue - xdisc) * res["fldtaxper"] / 100
+
+          If $billtype = "CashBilling" Then
+            res1 = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", res["fldid"])
+          Else If $billtype = "InvoiceClearance" Then
+            res1 = modDatabase.$myConn.Edit("tblduebilling", "fldid=&1", res["fldid"])
+          Else If $billtype = "ReceiptClearance" Then
+            res1 = modDatabase.$myConn.Edit("tblduebilling", "fldid=&1", res["fldid"])
+          Endif
+          res1["fldextracol"] = $billno
+          res1.Update
+          due = due + xdue
+          disc = disc + xdisc
+          tax = tax + xtax
+        Next
+      Endif
+      ''pharmacy items
+      If rex And If rex.Available Then
+        For Each rex
+          xdue = 0
+          xdisc = 0
+          xtax = 0
+          If $billtype = "CashBilling" Then
+            xdue = modStock.GetToDispenseCostOneComp(rex["fldbillingmode"], rex["flditem"], GetPharmTarget(rex["fldroute"]), CFloat(rex["flddays"]), CFloat(rex["fldqtydisp"]))
+          Else If $billtype = "PharmBilling" Then
+            xdue = modStock.GetToDispenseCostOneComp(rex["fldbillingmode"], rex["flditem"], modBasic.$compID, CFloat(rex["flddays"]), CFloat(rex["fldqtydisp"]))
+          Endif
+          xdisc = xdue * rex["flddiscper"] / 100
+          xtax = (xdue - xdisc) * rex["fldtaxper"] / 100
+
+          rex2 = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1", rex["fldid"])
+          rex2["fldextracol"] = $billno
+          rex2.Update
+          due = due + xdue
+          disc = disc + xdisc
+          tax = tax + xtax
+        Next
+      Endif
+
+      xtotal = due + tax - disc
+
+      If xtotal Then
+        modBillings.InsertAdvRecptDetail(modDatabase.$myConn, $encid, $billno, $billtype, due, tax, disc, xtotal, xtotal, scheq, sbank, $PatStatus, "QR Scan", "Pending")
+
+        If $QRProvider = "nepalpay" Then
+          hForm1 = New CQRNepalPay($encid, $billno, xtotal, $billtype, modNonMedical.GetLedgerAccountCode(sbank))
+          Wait
+          $QRString = hForm1.QRScanOutput()
+          $QRCodeID = hForm1.QRScanOutID()
+        Else If $QRProvider = "fonepay" Then
+        Else
+          hForm = New CQRscanPay($encid, $billno, xtotal, $billtype)
+          Wait
+          $QRString = hForm.QRScanOutput()
+          $QRCodeID = hForm.QRScanOutID()
+        Endif
+
+        If $QRString And If $QRCodeID Then
+          modDatabase.$myConn.Commit
+          modBillLock.ReleaseLockTable("TempBill")
+          $AdvReceiptNo = $billno
+          billed = True
+        Else
+          modDatabase.$myConn.Rollback
+          modBillLock.ReleaseLockTable("TempBill")
+          $AdvReceiptNo = ""
+        Endif
+      Else
+        modDatabase.$myConn.Rollback
+        modBillLock.ReleaseLockTable("TempBill")
+        $AdvReceiptNo = ""
+      Endif
+
+    Else
+      modDatabase.$myConn.Rollback
+      modBillLock.ReleaseLockTable("TempBill")
+      $AdvReceiptNo = ""
+    Endif
+
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("TempBill")
+  Endif
+  $AdvReceiptNo = ""
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub UploadForQRScan()
+
+  Dim res As Result
+
+  If $AdvReceiptNo Then
+    res = modDatabase.$myConn.Edit("tbladvreceiptdetail", "fldencounterval=&1 and fldbillno=&2", $encid, $AdvReceiptNo)
+    res["fldreference"] = $QRCodeID
+    res.Update
+
+    $TransDone = FQRScanPay($encid, $QRCodeID, $QRString, $QRProvider)
+  Else
+    Message.Warning("Unable to get QR String", "OK")
+  Endif
+
+End
