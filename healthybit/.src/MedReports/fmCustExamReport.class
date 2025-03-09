@@ -6,6 +6,9 @@ Private $ProgressBar1 As ProgressBar
 Private $SSQLFields As String[]
 Private $RepoStr As String
 
+Private $ColCount As Integer
+Private $newColumn As String[]
+
 Public Sub Form_Open()
 
   Dim xhospfld As String
@@ -108,6 +111,23 @@ Public Sub cmbcategory_Click()
 
 End
 
+Private Function GetSQLColumns() As String[]
+
+  Dim xFldList As String[]
+  Dim i As Integer
+
+  modCustPatient.FillNewCOlumnCollection(Me.Tag)
+  $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+  xFldList = $SSQLFields.Copy()
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      xFldList.Add("fldencounterval")
+    Next
+  Endif
+  Return xFldList
+
+End
+
 Private Function ExecuteQuery(xFldList As String[], Optional sGroup As String) As Result
 
   Dim sql As String
@@ -136,6 +156,7 @@ End
 Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
 
   Dim xxx As Variant
+  Dim i As Integer
 
   If Column = 2 Then
     xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
@@ -154,15 +175,27 @@ Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Va
   Else
     xxx = xVariable
   Endif
+
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      If Column = $ColCount + i Then
+        xxx = modCustPatient.NewColValue(Me.Tag, $newColumn[i], xVariable)
+      Endif
+    Next
+  Endif
+
   Return xxx
 
 End
 
 Public Sub btnrefresh_Click()
 
+  Dim xFldList As String[]
+
   TabStrip1.Index = 0
   Inc Application.Busy
-  $rData = ExecuteQuery($SSQLFields.Copy())
+  xFldList = GetSQLColumns()
+  $rData = ExecuteQuery(xFldList)
 
   If chkgrid.Value = True Then
     FillPatGrid()
@@ -178,8 +211,12 @@ End
 
 Public Sub FillPatGrid()
 
+  Dim i As Integer
+
   $aMyFields = New String[]
   modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  $ColCount = $SSQLFields.Count
+
   With GridView1
     .Columns[0].Width = 1
     .Columns[1].Width = 125 * modBasic.$AppWidthRatio
@@ -200,6 +237,13 @@ Public Sub FillPatGrid()
     .Columns[6].Text = "DateTime"
     .Columns[7].Text = "Examination"
     .Columns[9].Text = "Observation"
+
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        .Columns[$ColCount + i].Text = $newColumn[i]
+        .Columns[$ColCount + i].Width = 150 * modBasic.$AppWidthRatio
+      Next
+    Endif
   End With
 
 End
@@ -217,7 +261,11 @@ Public Sub GridView1_Data(Row As Integer, Column As Integer)
       GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.RichText, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
     Endif
   Else
-    GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+    If Column > $SSQLFields.Count - 1 Then
+      GridView1.Data.RichText = modString.TextToHTML(GetGridViewValue(Column, $rData[$aMyFields[Column]]))
+    Else
+      GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+    Endif
   Endif
   GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
   GridView1.Data.WordWrap = True
@@ -284,6 +332,7 @@ Public Sub btnexpo_Click()
   Dim xparam1 As String
   Dim xparam2 As String
   Dim encColumn As Integer
+  Dim xFldList As String[]
 
   If MMain.$IsGUIApp = True Then
     $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
@@ -305,10 +354,12 @@ Public Sub btnexpo_Click()
   $hGridExportTable = New CExportResult(Me.Tag, xHeader, xhide, xparam1, xparam2, encColumn)
 
   Inc Application.Busy
+  xFldList = GetSQLColumns()
+
   For Each $rData
     xCollRow = New Collection
-    For xColum = 0 To $SSQLFields.Count - 1
-      xCollRow.Add(GetGridViewValue(xColum, $rData[$SSQLFields[xColum]]), CStr(xColum))
+    For xColum = 0 To xFldList.Count - 1
+      xCollRow.Add(GetGridViewValue(xColum, $rData[xFldList[xColum]]), CStr(xColum))
     Next
     $hGridExportTable.Add($rData.Index, xCollRow)
 
@@ -353,12 +404,14 @@ Public Sub mnuenchart_Click()
   Dim xval As Variant
   Dim hFile As CUnivariate
   Dim sOrder As String[]
+  Dim xFldList As String[]
 
   Dim hUniv As FmAnalyzeSett
 
   hUniv = New FmAnalyzeSett("Univariate", modGridView.GetGridViewColumns(GridView1))
   hUniv.ShowModal
 
+  xFldList = GetSQLColumns()
   If MMain.$IsGUIApp = True Then
     $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
     $ProgressBar1.Visible = True
@@ -368,7 +421,7 @@ Public Sub mnuenchart_Click()
   hFile = New CUnivariate
 
   Column = modCustPatient.GetUnivariateColumn(1)
-  xField = $SSQLFields[Column]
+  xField = xFldList[Column]
   res = ExecuteQuery([xField])
 
   If res.Available Then
@@ -409,6 +462,7 @@ Public Sub mnucross_Click()
   Dim res As Result
   Dim xval As Variant
   Dim yval As Variant
+  Dim xFldList As String[]
 
   Dim hFile As CBivariate
   Dim sOrder As String[]
@@ -417,6 +471,7 @@ Public Sub mnucross_Click()
   hBivar = New FmAnalyzeSett("Bivariate", modGridView.GetGridViewColumns(GridView1))
   hBivar.ShowModal
 
+  xFldList = GetSQLColumns()
   If MMain.$IsGUIApp = True Then
     $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
     $ProgressBar1.Visible = True
@@ -426,9 +481,9 @@ Public Sub mnucross_Click()
   Inc Application.Busy
   hFile = New CBivariate
   Row = modCustPatient.GetCrossVarRow(1)
-  xFieRow = $SSQLFields[Row]
+  xFieRow = xFldList[Row]
   Column = modCustPatient.GetCrossVarColumn(1)
-  xFieColm = $SSQLFields[Column]
+  xFieColm = xFldList[Column]
   res = ExecuteQuery([xFieRow, xFieColm])
 
   If res.Available Then
@@ -469,6 +524,7 @@ Public Sub mnucrotab_Click()
   Dim res As Result
   Dim xval As Variant
   Dim yval As Variant
+  Dim xFldList As String[]
 
   Dim hForm As FmGridCrossTab
   Dim xForm As CCrossTab
@@ -477,6 +533,7 @@ Public Sub mnucrotab_Click()
   hGdChr = New FmAnalyzeSett("GridCrossTab", modGridView.GetGridViewColumns(GridView1))
   hGdChr.ShowModal
 
+  xFldList = GetSQLColumns()
   If MMain.$IsGUIApp = True Then
     $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
     $ProgressBar1.Visible = True
@@ -487,9 +544,9 @@ Public Sub mnucrotab_Click()
     xForm = New CCrossTab
     Inc Application.Busy
     Row = CInt(modCustPatient.$TabRowColumn) - 1
-    xFieRow = $SSQLFields[Row]
+    xFieRow = xFldList[Row]
     Column = CInt(modCustPatient.$TabFieldColumn) - 1
-    xFieColm = $SSQLFields[Column]
+    xFieColm = xFldList[Column]
     res = ExecuteQuery([xFieRow, xFieColm])
 
     If res.Available Then
@@ -530,6 +587,7 @@ Public Sub mnugridsummary_Click()
   Dim res As Result
   Dim valCol As String
   Dim xFieldList As String[]
+  Dim xFldList As String[]
 
   Dim xFinList As Variant[]
   Dim xrowVar As Variant[]
@@ -543,13 +601,15 @@ Public Sub mnugridsummary_Click()
   hGdSum.ShowModal
 
   Inc Application.Busy
+  xFldList = GetSQLColumns()
+
   xFieldList = New String[]
   If modCustPatient.$SumChapterColumn Then
-    ChapCol = $SSQLFields[modCustPatient.$SumChapterColumn - 1]
+    ChapCol = xFldList[modCustPatient.$SumChapterColumn - 1]
     xFieldList.Add(ChapCol)
   Endif
-  GropCol = $SSQLFields[modCustPatient.$SumGroupColumn - 1]
-  valCol = $SSQLFields[modCustPatient.$SumValueColumn - 1]
+  GropCol = xFldList[modCustPatient.$SumGroupColumn - 1]
+  valCol = xFldList[modCustPatient.$SumValueColumn - 1]
   xFieldList.Add(GropCol)
   xFieldList.Add(valCol)
 
@@ -691,39 +751,64 @@ End
 
 Private Sub ExportCustExamDetail()
 
-  Dim $BillingReport As CReportHTML
+  Dim $BillingReport As CReportHTMLGroup
   Dim asx As New String[0]
-  Dim hdr As String[]
-  Dim antlist As String[]
-  Dim antname As String
+  Dim hdr As Collection
   Dim res As Result
   Dim i As Integer
 
-  antlist = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldhead) as col from tblstructexam where fldsubclass like &1 and fldcategory like &2 ORDER BY flditemid", cmbsubclass.Text, cmbcategory.Text))
-  If antlist.Count Then
-    hdr = New String[]
-    hdr.Add("SNo")
-    hdr.Add("EncID")
-    hdr.Add("Name")
-    hdr.Add("Gender")
-    hdr.Add("Age")
+  Dim categLst As String[]
+  Dim xcateg As String
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim sHeadColl As Collection
+  Dim sHeadLst As String[]
+  Dim antname As String
 
-    For Each antname In antlist
-      hdr.Add(antname)
+  hdr = New Collection
+  hdr.Add(["SNo", "EncID", "Name", "Gender", "Age"], "Demographics")
+
+  sHeadColl = New Collection
+  If cmbcategory.Text = "%" Then
+    categLst = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldcategory) as col from tblstructexam where fldsubclass like &1", cmbsubclass.Text))
+  Else
+    categLst = [cmbcategory.Text]
+  Endif
+  If categLst.Count Then
+    For Each xcateg In categLst
+
+      res1 = modDatabase.$syConn.Exec("select distinct(flditem) as flditem from tblstructexam where fldsubclass like &1 and fldcategory like &2 ORDER BY flditemid,fldheadid", cmbsubclass.Text, xcateg)
+      If res1.Available Then
+        For Each res1
+
+          sHeadLst = New String[]
+          res2 = modDatabase.$syConn.Exec("select fldhead,fldheadcode from tblstructexam where fldsubclass like &1 and fldcategory like &2 and flditem=&3 ORDER BY fldheadid", cmbsubclass.Text, xcateg, res1["flditem"])
+          If res2.Available Then
+            For Each res2
+              sHeadLst.Add(res2["fldhead"])
+              sHeadColl.Add(res2["fldhead"], res2["fldheadcode"])
+            Next
+          Endif
+          hdr.Add(sHeadLst, xcateg & " : " & res1["flditem"])
+
+        Next
+      Endif
+
     Next
+  Endif
 
+  If sHeadColl.Count Then
     $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
     $ProgressBar1.Tag = "Const"
 
     Inc Application.Busy
-    $BillingReport = New CReportHTML(hdr, "", "")
+    $BillingReport = New CReportHTMLGroup(hdr, "", "")
     $BillingReport.UserData.Add("EXAMINATION REPORT:: Chapter: " & cmbsubclass.Text & "  Category: " & cmbcategory.Text, "PARAM1")
     $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate), "PARAM2")
     $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
 
     res = modDatabase.$syConn.Exec("select distinct(fldencounterval) from tblpatientexam where fldmethod=&1 and fldtime>=&2 and fldtime<=&3 and fldserialval in(select fldheadcode from tblstructexam where fldsubclass like &4 and fldcategory like &5)" & $RepoStr, cmbsubclass.Text, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), cmbsubclass.Text, cmbcategory.Text)
     If res.Available Then
-      i = 1
       For Each res
 
         With asx
@@ -733,8 +818,8 @@ Private Sub ExportCustExamDetail()
           .Add(modPatient.GetPatientSex(res["fldencounterval"], modDatabase.$syConn))
           .Add(modPatient.GetPatientAgeString(res["fldencounterval"], modPatient.GetRecordDate(res["fldencounterval"])))
 
-          For Each antname In antlist
-            .Add(GetCustExamValue(res["fldencounterval"], antname))
+          For Each antname In sHeadColl
+            .Add(GetCustExamValue(res["fldencounterval"], sHeadColl.Key))
           Next
         End With
         $BillingReport.Add(asx)
@@ -745,19 +830,19 @@ Private Sub ExportCustExamDetail()
 
       Next
     Endif
+    Dec Application.Busy
   Endif
 
-  Dec Application.Busy
   modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
 
 End
 
-Private Function GetCustExamValue(encid As String, sHead As String) As String
+Private Function GetCustExamValue(encid As String, sHeadCode As String) As String
 
   Dim res As Result
   Dim xx As String
 
-  res = modDatabase.$syConn.Exec("select fldrepquali from tblpatientexam where fldencounterval=&1 and fldmethod=&2 and fldhead=&3 and fldtime>=&4 and fldtime<=&5 and fldserialval in(select fldheadcode from tblstructexam where fldsubclass like &6 and fldcategory like &7)", encid, cmbsubclass.Text, sHead, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), cmbsubclass.Text, cmbcategory.Text)
+  res = modDatabase.$syConn.Exec("select fldrepquali from tblpatientexam where fldencounterval=&1 and fldmethod=&2 and fldserialval=&3 and fldtime>=&4 and fldtime<=&5", encid, cmbsubclass.Text, sHeadCode, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value))
   If res.Available Then
     res.MoveLast
     If res["fldrepquali"] Then
@@ -792,7 +877,7 @@ Public Sub mnucountuni_Click()
 
   Column = ListIndex("Column Index", modGridView.GetGridViewColumns(GridView1))
   If Column + 1 > 0 Then
-    xFldList = $SSQLFields
+    xFldList = GetSQLColumns()
     If MMain.$IsGUIApp = True Then
       $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
       $ProgressBar1.Visible = True
@@ -841,6 +926,15 @@ Public Sub mnuexpocolumn_Click()
   Dim hForm As FmCustColumnSet
 
   hForm = New FmCustColumnSet(Me.Tag)
+  hForm.ShowModal
+
+End
+
+Public Sub mnuaddcolumn_Click()
+
+  Dim hForm As FmAddNewColumn
+
+  hForm = New FmAddNewColumn(Me.Tag)
   hForm.ShowModal
 
 End
