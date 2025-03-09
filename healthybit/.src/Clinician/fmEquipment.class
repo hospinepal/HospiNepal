@@ -26,6 +26,11 @@ Public Sub Form_Open()
   Dim xstatus As String
 
   modGeneralMain.ArrangeFormCentre(Me, "False")
+  cmbdisctype.List = modBasic.$BillDiscountCash
+  If cmbdisctype.List.Count = 0 Then
+    cmbdisctype.Add($sPackage)
+  Endif
+  cmbdisctype.Text = $sPackage
   txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
   txtgender.Text = modPatient.GetPatientSex($encid)
   txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
@@ -52,7 +57,7 @@ Public Sub Form_Open()
   If $xFinClear = True Then
     btnadd.Enabled = False
   Endif
-  cmbequip.SetFocus
+  cmbdisctype.SetFocus
 
 End
 
@@ -61,6 +66,25 @@ Public Sub Form_KeyRelease()
   If Key.Code = Key.Esc Then
     Me.Close
   Endif
+
+End
+
+Public Sub cmbdisctype_Click()
+
+  If cmbdisctype.Text Then
+    $BillMode = modNonMedical.GetDiscBindBillMode(cmbdisctype.Text)
+    If Not $BillMode Then
+      $BillMode = modpatient.GetPatBillingMode($encid)
+    Endif
+    cmbequip.List = modNonMedical.NonStockBillActiveItemArray("Equipment", $BillMode)
+  Endif
+
+End
+
+Public Sub cmbdisctype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdisctype)
+  modFillContainer.RestrictComboToContent(cmbdisctype)
 
 End
 
@@ -165,10 +189,11 @@ End
 Public Sub StartButton_Click()
 
   Dim j As Integer
+  Dim xidno As Long
 
   j = Last.Tag
   aObj2[j].Text = modReportVar.GetDateTimeReport(Now(), gb.GeneralDate)
-  modPatientGeneral.AddPatientTableFirstTime($encid, "Equipment", $sPackage, aObj1[j].Text, "", Now())
+  xidno = modPatientGeneral.AddPatientTableFirstTime($encid, "Equipment", cmbdisctype.Text, aObj1[j].Text, "", Now())
   aObj2[j].Enabled = False
   aObj3[j].Enabled = True
 
@@ -180,6 +205,7 @@ Public Sub StopButton_Click()
   Dim hr As Float
   Dim autobil As String
   Dim unitrate As String
+  Dim res As Result
 
   Dim xrefer As String
   Dim xpayble As String
@@ -193,26 +219,24 @@ Public Sub StopButton_Click()
 
   Inc Application.Busy
   j = Last.Tag
-  aObj3[j].Text = modReportVar.GetDateTimeReport(Now(), gb.GeneralDate)
-
-  modDatabase.$myConn.Begin
   autobil = modBasic.$AutoBillEquipment
-  If aObj4[j].Value = 0 Then
-    modPatientGeneral.UpdatePatientTableEndTime($encid, "Equipment", aObj1[j].Text, "")
-  Else If aObj4[j].Value > 0 Then
+  If aObj4[j].Value > 0 Then
+    aObj3[j].Text = modReportVar.GetDateTimeReport(Now(), gb.GeneralDate)
+
+    modDatabase.$myConn.Begin
     modPatientGeneral.UpdatePatientTableSecondTime(aObj4[j].Value, "")
+    unitrate = modNonMedical.GetBillingTargeDept(aObj1[j].Text, "Equipment")
+    res = modDatabase.$myConn.Exec("select flditem,fldfirsttime,fldsecondtime,flddisctype from tblpattiming where fldid=&1", aObj4[j].Value)
+    hr = modPatPatho.GetServiceUseDuration($encid, "Equipment", aObj1[j].Text, unitrate, res["fldfirsttime"], res["fldsecondtime"])
+
+    If autobil = "Yes" Or If autobil = "Full" Or If autobil = "Partial" Then
+      modBillings.EnterBillingForInterval(autobil, "Equipment", $encid, res["flddisctype"], aObj1[j].Text, hr, aObj4[j].Value, xpayble, xrefer)
+    Endif
+    modDatabase.$myConn.Commit
+
+    aObj3[j].Enabled = False
+    aObj2[j].Enabled = True
   Endif
-
-  unitrate = modNonMedical.GetBillingTargeDept(aObj1[j].Text, "Equipment")
-  hr = modPatPatho.GetServiceUseDuration($encid, "Equipment", aObj1[j].Text, unitrate, Val(aObj2[j].Text), Now())
-
-  If autobil = "Yes" Or If autobil = "Full" Or If autobil = "Partial" Then
-    modBillings.EnterBillingForInterval(autobil, "Equipment", $encid, $sPackage, aObj1[j].Text, hr, aObj4[j].Value, xpayble, xrefer)
-  Endif
-  modDatabase.$myConn.Commit
-
-  aObj3[j].Enabled = False
-  aObj2[j].Enabled = True
   Dec Application.Busy
   CompleteGrid()
 
@@ -239,6 +263,9 @@ Public Sub btnrefer_Click()
   If xMedUser And If xMedUser.Count Then
     btnrefer.Tag = xMedUser[0]
     btnrefer.Text = xMedUser[1]
+  Else
+    btnrefer.Tag = ""
+    btnrefer.Text = ""
   Endif
 
 End
@@ -247,7 +274,7 @@ Private Sub CompleteGrid()
 
   Dim sql As String
 
-  sql = "select fldid,flditem,fldfirsttime,fldsecondtime,fldid from tblpattiming where fldencounterval=&1 and fldtype=&2"
+  sql = "select fldid,flditem,fldfirsttime,fldsecondtime,fldid,fldfirstuserid,fldseconduserid from tblpattiming where fldencounterval=&1 and fldtype=&2"
   $rData = modDatabase.$myConn.Exec(sql, $encid, "Equipment")
   $aMyFields = New String[]
   modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
@@ -258,11 +285,15 @@ Private Sub CompleteGrid()
     .Columns[2].Width = 175 * modBasic.$AppWidthRatio
     .Columns[3].Width = 175 * modBasic.$AppWidthRatio
     .Columns[4].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
 
     .Columns[1].Text = "Equipment"
-    .Columns[2].Text = "StartTime"
-    .Columns[3].Text = "EndTime"
+    .Columns[2].Text = "Start"
+    .Columns[3].Text = "Close"
     .Columns[4].Text = "Interval"
+    .Columns[5].Text = "User1"
+    .Columns[6].Text = "User2"
   End With
 
 End

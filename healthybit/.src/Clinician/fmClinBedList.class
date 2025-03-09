@@ -2,6 +2,8 @@
 
 Private $ExamLst As String[]
 Private $UserRestrict As String[]
+Private $ClinicianLst As String[]
+
 Private $rData As Result
 Private $aMyFields As String[]
 Private $ProgressBar1 As ProgressBar
@@ -44,8 +46,17 @@ Public Sub Form_Open()
       mnucustforms.Enabled = True
       mnuformatexam.Enabled = True
   End Select
+  If MMain.$CustomFormat = "Patan" Then
+    btnautopharm.Visible = True
+  Endif
+
   $UserRestrict = modBasic.$ClinicDisableCompo
-  cmbdept.List = modBasic.$IPDDepartmentsAll
+  $ClinicianLst = modGeneral.GetClinicianCodeList()
+  If modBasic.$ClinDepartFormat = "Service" Then
+    cmbdept.List = modBasic.$IPDServDepartments
+  Else
+    cmbdept.List = modBasic.$IPDDepartmentsAll
+  Endif
   cmbdept.Add("Unallocated")
   cmbdept.Add("Free Beds")
   cmbdept.Add("%")
@@ -174,21 +185,27 @@ End
 
 Public Sub btnrefresh_Click()
 
-  Dim bedcount As Integer
-
   If cmbdept.Text Then
     Inc Application.Busy
     FillBedGrid()
     modSettings.SaveSettingsToFile("IPClinic/DefaultDepart", cmbdept.Text)
-    bedcount = modGeneral.GetWardBedCount(cmbdept.Text)
-    If bedcount Then
-      ProgressBar1.Value = $rData.Count / bedcount
-    Else
-      ProgressBar1.Value = 0
-    Endif
+    ShowOccupancy()
     Dec Application.Busy
 
     GridView1.SetFocus
+  Endif
+
+End
+
+Private Sub ShowOccupancy()
+
+  Dim bedcount As Integer
+
+  bedcount = modGeneral.GetWardBedCount(cmbdept.Text)
+  If bedcount Then
+    ProgressBar1.Value = $rData.Count / bedcount
+  Else
+    ProgressBar1.Value = 0
   Endif
 
 End
@@ -207,11 +224,11 @@ Private Function GetFieldsList()
 
   xhospfld = modDataRepo.HospitalField()
   If cmbdept.Text = "Unallocated" Then
-    $SSQLFields = ["fldencounterval", "fldcurrlocat", "fldcurrlocat", "fldcurrlocat", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval"]
+    $SSQLFields = ["fldencounterval", "fldcurrlocat", "fldcurrlocat", "fldcurrlocat", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval"]
   Else If cmbdept.Text = "Free Beds" Then
-    $SSQLFields = ["fldencounterval", "fldoxyport", "fldventilator", "fldbed", "fldencounterval", "fldencounterval", "flddept", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval"]
+    $SSQLFields = ["fldencounterval", "fldoxyport", "fldventilator", "fldbed", "fldencounterval", "fldencounterval", "flddept", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldstatus"]
   Else
-    $SSQLFields = ["fldencounterval", "fldoxyport", "fldventilator", "fldbed", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval"]
+    $SSQLFields = ["fldencounterval", "fldoxyport", "fldventilator", "fldbed", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldstatus"]
   Endif
   If xhospfld Then
     $SSQLFields.Add(xhospfld)
@@ -264,14 +281,18 @@ Private Function ExecuteQuery(xFldList As String[]) As Result
     sql = "select " & xFldList.Join(",") & " from tblencounter where fldadmission=&1 and (fldcurrlocat IS NULL or fldcurrlocat NOT IN(select fldbed from tbldepartmentbed))" & xencid & $RepoStr
     res = modDatabase.$myConn.Exec(sql, "Admitted")
   Else If cmbdept.Text = "Free Beds" Then
-    sql = "select " & xFldList.Join(",") & " from tbldepartmentbed where fldencounterval IS NULL" & $RepoStr & " ORDER BY fldbed ASC"                       ''
-    res = modDatabase.$myConn.Exec(sql)
+    sql = "select " & xFldList.Join(",") & " from tbldepartmentbed where (fldstatus IS NULL or fldstatus=&1) and fldencounterval IS NULL" & $RepoStr & " ORDER BY fldbed ASC"                       ''
+    res = modDatabase.$myConn.Exec(sql, "Active")
   Else
     If rball.Value = True Then
-      sql = "select " & xFldList.Join(",") & " from tbldepartmentbed where flddept=&1" & xencid & xcolor & $RepoStr & " ORDER BY fldbed ASC"                       ''
-      res = modDatabase.$myConn.Exec(sql, cmbdept.Text)
+      sql = "select " & xFldList.Join(",") & " from tbldepartmentbed where flddept=&1 and (fldstatus IS NULL or fldstatus<>&2)" & xencid & xcolor & $RepoStr & " ORDER BY fldbed ASC"                       ''
+      res = modDatabase.$myConn.Exec(sql, cmbdept.Text, "Inactive")
     Else
-      sql = "select " & xFldList.Join(",") & " from tbldepartmentbed where fldencounterval like &1 and flddept=&2" & xencid & xcolor & $RepoStr & "ORDER BY fldbed ASC"                       ''
+      If modBasic.$ClinDepartFormat = "Service" Then
+        sql = "select " & xFldList.Join(",") & " from tbldepartmentbed where fldencounterval like &1 and (fldservice=&2 or fldaddservice=&2)" & xencid & xcolor & $RepoStr & "ORDER BY fldbed ASC"
+      Else
+        sql = "select " & xFldList.Join(",") & " from tbldepartmentbed where fldencounterval like &1 and flddept=&2" & xencid & xcolor & $RepoStr & "ORDER BY fldbed ASC"                       ''
+      Endif
       res = modDatabase.$myConn.Exec(sql, "%", cmbdept.Text)
     Endif
   Endif
@@ -410,7 +431,7 @@ Private Sub ResizeGrid()
     .Columns[0].Width = 15 * modBasic.$AppWidthRatio
     .Columns[1].Width = 35 * modBasic.$AppWidthRatio
     .Columns[2].Width = 35 * modBasic.$AppWidthRatio
-    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
     .Columns[4].Width = 125 * modBasic.$AppWidthRatio
     .Columns[5].Width = 175 * modBasic.$AppWidthRatio
     .Columns[6].Width = 125 * modBasic.$AppWidthRatio
@@ -418,6 +439,11 @@ Private Sub ResizeGrid()
     .Columns[8].Width = 200 * modBasic.$AppWidthRatio
     .Columns[9].Width = 125 * modBasic.$AppWidthRatio
     .Columns[10].Width = 150 * modBasic.$AppWidthRatio
+    If cmbdept.Text = "Unallocated" Then
+      .Columns[11].Width = 1
+    Else
+      .Columns[11].Width = 100 * modBasic.$AppWidthRatio
+    Endif
 
     .Columns[3].Text = "Bed"
     .Columns[4].Text = "EncID"
@@ -493,7 +519,29 @@ End
 
 Public Sub GridView1_Click()
 
-  If GridView1.Rows.Selection.Count Then
+  Dim res As Result
+  Dim xList As String[] = ["Active", "Maintenance", "Day Use"]
+  Dim xval As String
+
+  If GridView1.Column = 11 Then
+    If cmbdept.Text = "%" Then
+    Else If cmbdept.Text = "Unallocated" Then
+    Else If cmbdept.Text = "Free Beds" Then
+    Else
+      If rball.Value = True Then
+
+        xval = InputCombo("Select State of Bed", "Alter State", xList, GridView1[GridView1.Row, 11].Text, True)
+        If xval Then
+          res = modDatabase.$myConn.Edit("tbldepartmentbed", "fldbed=&1", GridView1[GridView1.Row, 3].Text)
+          res["fldstatus"] = xval
+          res.Update
+          FillBedGrid()
+          ShowOccupancy()
+        Endif
+
+      Endif
+    Endif
+  Else
     SHowPatIndicators(GridView1[GridView1.Row, 4].Text)
   Endif
 
@@ -596,6 +644,23 @@ Public Sub btnexpo_Click()
     $ProgressBar1.Visible = False
   Endif
   modControlSub.DisplayReportExport($hGridExportTable.HTMLPath())
+
+End
+
+Public Sub mnudashboard_Click()
+
+  Dim xPath As String
+  Dim xdate As Date[]
+
+  If cmbdept.Text Then
+    xdate = DoubleDates("Select Dates", "IP Summary", [Now(), Now()])
+    If xdate Then
+      Inc Application.Busy
+      xPath = modCHTMLDate.GetIPEventsReport(modDatabase.$syConn, xdate[0], xdate[1], cmbdept.Text, cmblocation.Text, cmbvalue.Text)
+      Dec Application.Busy
+      modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+  Endif
 
 End
 
@@ -1080,12 +1145,18 @@ End
 Public Sub btnmobilediagno_Click()
 
   Dim sName As String[]
+  Dim xGroup As String
 
   If GridView1.Rows.Selection.Count Then
     If MMain.$Ayurveda = "Yes" Then
       sName = AyurvedicDiagnosis(modAMISRep.$AyurvedicDiagnosis)
     Else
-      sName = ICDTree(modDatabase.$icdConn, "Disease", modBasic.$ClinDiagnoSelectGrouped, modBasic.$ClinDiagnoSelectERGroup, modBasic.$ClinDiagnoChapterGrouped)
+      xGroup = modPathoSub.GetDiagnoGroupForService(GridView1[GridView1.Row, 3].Text)
+      If xGroup Then
+        sName = ICDTree(modDatabase.$icdConn, "Disease", modBasic.$ClinDiagnoSelectGrouped, modBasic.$ClinDiagnoSelectERGroup, modBasic.$ClinDiagnoChapterGrouped, xGroup)
+      Else
+        sName = ICDTree(modDatabase.$icdConn, "Disease", modBasic.$ClinDiagnoSelectGrouped, modBasic.$ClinDiagnoSelectERGroup, modBasic.$ClinDiagnoChapterGrouped, modBasic.$DefaultDiagnoGroup)
+      Endif
     Endif
     If sName Then
       If sName[1] And If sName[0] Then
@@ -1180,8 +1251,11 @@ Public Sub btnpharm_Click()
 
   If GridView1.Rows.Selection.Count Then
     If modNonMedical.AllowEntryWithDeposit(GridView1[GridView1.Row, 4].Text, "Pharmacy") = True Then
-      hForm12 = New FmMedOrder(GridView1[GridView1.Row, 4].Text, "Admitted", modNonMedical.GetAutoIPBillingPack("Pharmacy", GridView1[GridView1.Row, 4].Text))
-      hForm12.ShowModal
+      If modBasic.$MedRequestForm = "Separate" Then
+      Else
+        hForm12 = New FmMedOrder(GridView1[GridView1.Row, 4].Text, "Admitted", modNonMedical.GetAutoIPBillingPack("Pharmacy", GridView1[GridView1.Row, 4].Text))
+        hForm12.ShowModal
+      Endif
       SHowPatIndicators(GridView1[GridView1.Row, 4].Text)
     Endif
   Endif
@@ -1343,9 +1417,15 @@ End
 Public Sub btnmobbill_Click()
 
   Dim hForm14 As FmMiniService
+  Dim xservmode As String
+  Dim xprocmode As String
+  Dim xothermode As String
 
   If GridView1.Rows.Selection.Count Then
-    hForm14 = New FmMiniService(GridView1[GridView1.Row, 4].Text, modNonMedical.GetAutoIPBillingPack("Service", GridView1[GridView1.Row, 4].Text))
+    xservmode = modNonMedical.GetAutoIPBillingPack("Service", GridView1[GridView1.Row, 4].Text)
+    xprocmode = modNonMedical.GetAutoIPBillingPack("Procedure", GridView1[GridView1.Row, 4].Text)
+    xothermode = modNonMedical.GetAutoIPBillingPack("Others", GridView1[GridView1.Row, 4].Text)
+    hForm14 = New FmMiniService(GridView1[GridView1.Row, 4].Text, xservmode, xprocmode, xothermode)
     hForm14.ShowModal
   Endif
 
@@ -1355,13 +1435,14 @@ Public Sub btndraw_Click()
 
   Dim sPath As String
   Dim xxx As String[]
+  Dim xval As String
 
   If GridView1.Rows.Selection.Count Then
     xxx = CustomDraw()
     If xxx Then
       sPath = xxx[0]
       If sPath Then
-        modImage.SaveClinicScreenDraw(GridView1[GridView1.Row, 4].Text, xxx[1], sPath)
+        xval = modImage.SaveClinicScreenDraw(GridView1[GridView1.Row, 4].Text, xxx[1], sPath)
       Endif
     Endif
   Endif
@@ -2248,6 +2329,23 @@ Public Sub mnurec10_Click()
 End
 
 ''---------------- services --------------
+Public Sub mnusetservice_Click()
+
+  Dim xservice As String
+
+  If GridView1.Rows.Selection.Count Then
+    If cmbdept.Text = "Unallocated" Then
+    Else If cmbdept.Text = "Free Beds" Then
+    Else
+      xservice = GridViewNew("Select Service to assign", modBasic.$IPDServDepartments, False)
+      If xservice Then
+        modPatientSub.SetPatientBedService(GridView1[GridView1.Row, 3].Text, xservice)
+      Endif
+    Endif
+  Endif
+
+End
+
 Public Sub mnugenviolence_Click()
 
   Dim hForm As FmGenViolence
@@ -2275,7 +2373,7 @@ Public Sub mnureqconsult_Click()
   Dim hForm As FmMiniConsult
 
   If GridView1.Rows.Selection.Count Then
-    hForm = New FmMiniConsult(GridView1[GridView1.Row, 4].Text, modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 4].Text, modBasic.$compID))
+    hForm = New FmMiniConsult(GridView1[GridView1.Row, 4].Text, modNonMedical.GetAutoIPBillingPack("Service", GridView1[GridView1.Row, 4].Text))
     hForm.ShowModal
   Endif
 
@@ -2286,7 +2384,7 @@ Public Sub mnuscanner_Click()
   Dim hForm As FmScanForm
 
   If GridView1.Rows.Selection.Count Then
-    hForm = New FmScanForm(GridView1[GridView1.Row, 4].Text, "Scanned Images")
+    hForm = New FmScanForm(GridView1[GridView1.Row, 4].Text, "Scanned Images", "")
     hForm.ShowModal
   Endif
 
@@ -2519,5 +2617,79 @@ Public Sub mnuexpocolumn_Click()
 
   hForm = New FmCustColumnSet(Me.Tag)
   hForm.ShowModal
+
+End
+
+Public Sub btnautopharm_Click()
+
+  Dim Row As Integer
+  Dim xroute As String
+  Dim xList As String[]
+
+  xList = GridListView("Select Route of Administration", modMedicine.ClinicalRoute())
+  If xList And If xList.Count Then
+    Inc Application.Busy
+    For Row = 0 To GridView1.Rows.Count - 1
+      For Each xroute In xList
+        AddMedicineRequest(GridView1[Row, 4].Text, xroute, "Admitted")
+      Next
+    Next
+    Dec Application.Busy
+    btnautopharm.Enabled = False
+    Message.Info("Medicine Request copied", "OK")
+  Endif
+
+End
+
+Private Sub AddMedicineRequest(encid As String, sRoute As String, sStatus As String)
+
+  Dim sql As String
+  Dim res As Result
+
+  Dim txprescriber As String
+  Dim txpresno As String
+
+  Dim xtax As Float
+  Dim xdisc As Float
+  Dim itemtype As String
+  Dim xfixrate As Float
+  Dim xfixname As String
+  Dim itemmode As String
+  Dim xcurVal As String
+  Dim xnarcotic As String[]
+  Dim CPharmFix As CFixRatePharmacy
+
+  If modBasic.$DispRequestStatus = "Reserve" Then
+    xcurVal = "Reserve"
+  Else
+    xcurVal = "Continue"
+  Endif
+
+  sql = "select flditemtype,fldroute,flditem,flddose,fldfreq,flddays,flddirection,fldqtydisp,fldbillingmode,flddisctype,fldacledger,fldbilltype from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldstarttime<=&3 and fldendtime>=&4 and flditemtype=&5 and fldcurval=&6 and flddays=&7 and fldroute=&8"
+  res = modDatabase.$myConn.Exec(sql, encid, True, modDate.StartSqlDate(Now()), modDate.StartSqlDate(Now()), "Medicines", "Continue", 1, sRoute)
+  If res.Available Then
+    For Each res
+
+      If modMedConstant.GetNarcoticType(res["flditem"]) = "Yes" Then
+        xnarcotic = DualGridValue(("Select Narcotic Prescriber"), $ClinicianLst, False)
+        If xnarcotic Then
+          txprescriber = xnarcotic[1]
+          txpresno = xnarcotic[0]
+        Endif
+      Else
+        txprescriber = ""
+        txpresno = ""
+      Endif
+      itemtype = modNonMedical.GetBillItemCategoryFromCombo(res["fldroute"])
+      CPharmFix = New CFixRatePharmacy(itemtype, res["flditem"], res["fldbillingmode"])
+      xfixrate = CPharmFix.GetFixRate()
+      xfixname = CPharmFix.GetFixItem()
+      itemmode = res["fldbillingmode"]
+      xtax = modNonMedical.ShowTaxValues(itemtype, res["flditem"])
+      xdisc = modNonMedical.DiscPercentForCategoryValue(encid, res["flddisctype"], itemtype, res["flditem"], itemmode)
+      modPharmSub.InsertDosingEntry(encid, res["fldbilltype"], res["fldbillingmode"], res["flddisctype"], res["fldacledger"], res["fldroute"], res["flditem"], res["flddose"], res["fldfreq"], res["flddays"], res["fldqtydisp"], sStatus, txprescriber, txpresno, 0, xtax, xdisc, xfixname, xfixrate, "Request", "IPD", res["flddirection"], 0, xcurVal)                     '
+
+    Next
+  Endif
 
 End

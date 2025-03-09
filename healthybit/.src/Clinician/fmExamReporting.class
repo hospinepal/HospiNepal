@@ -2,6 +2,8 @@
 
 Private $rData As Result
 Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
 Private $focus As Boolean
 Private $UserRestrict As String[]
 
@@ -14,10 +16,26 @@ End
 
 Public Sub Form_Open()
 
+  Dim def As String
+
   modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
   Me.Icon = Picture[modGeneralMain.$strLogo]
   cmbpatheightunit.List = ["cm", "inch", "foot"]
   $UserRestrict = modBasic.$ClinicDisableCompo
+
+  def = modSettings.ShowSettingFromFIle("Examination/Format")
+  If def Then
+    If def = "Category" Then
+      rbcateg.Value = True
+    Else If def = "Group" Then
+      rbgroup.Value = True
+    Else If def = "Department" Then
+      rbdepart.Value = True
+    Endif
+  Else
+    rbdepart.Value = True
+  Endif
+
   If txtencid.Text Then
     GetEncounterValue()
   Else
@@ -104,6 +122,7 @@ Private Sub GetEncounterValue()
       Else
         txtpatientname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
         If txtpatientname.Text Then
+          Panel6.Enabled = True
           txtgender.Text = modPatient.GetPatientSex(Trim(txtencid.Text))
           txtpatientaddress.Text = modPatient.GetPatientAddressByEnc(Trim(txtencid.Text))
           dtdob.Value = modPatient.GetPatientBirthDay(Trim(txtencid.Text))
@@ -122,10 +141,15 @@ Private Sub GetEncounterValue()
           If modPatientSub.AllowEncIDHistory(Trim(txtencid.Text), modDatabase.$myConn) = True Then
             BlockDCButton()
             ButtonControl()
-            FillLabtable()
             txtencid.ReadOnly = True
             modImage.ShowPhotoSplash("Patient", modPatient.GetPatientNoByEnc(Trim(txtencid.Text)))
-            cmbexamname.List = GetExamCategoryAll()
+            If rbcateg.Value = True Then
+              rbcateg_Click()
+            Else If rbgroup.Value = True Then
+              rbgroup_Click()
+            Else If rbdepart.Value = True Then
+              rbdepart_Click()
+            Endif
             $focus = False
             cmbexamname.SetFocus
           Else
@@ -251,6 +275,9 @@ Public Sub btnconsult_Click()
   If xMedUser And If xMedUser.Count Then
     btnconsult.Tag = xMedUser[0]
     btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
   Endif
   If btnconsult.Tag And If txtencid.Text Then
     modPatientSub.UpdateAttendingConsultant(Trim(txtencid.Text), btnconsult.Tag)
@@ -335,7 +362,6 @@ Private Sub ButtonControl()
   xx = modPatient.EnableClinicForm(txtnow.Text)
   TreeView1.Enabled = xx
   GridView1.Enabled = xx
-
   If $UserRestrict Then
     UserAccessRestrict()
   Endif
@@ -385,18 +411,52 @@ Public Sub Form_KeyRelease()
 End
 
 ''----------------------------------------- Exam list ---------------------------------------------------
+Public Sub rbcateg_Click()
+
+  cmbexamname.Text = ""
+  modSettings.SaveSettingsToFile("Examination/Format", "Category")
+  cmbexamname.List = GetExamCategoryAll()
+
+End
+
+Public Sub rbgroup_Click()
+
+  cmbexamname.Text = ""
+  modSettings.SaveSettingsToFile("Examination/Format", "Group")
+  cmbexamname.List = GetExamCategoryAll()
+
+End
+
+Public Sub rbdepart_Click()
+
+  cmbexamname.Text = ""
+  modSettings.SaveSettingsToFile("Examination/Format", "Department")
+  cmbexamname.List = GetExamCategoryAll()
+
+End
+
 Private Function GetExamCategoryAll() As String[]
 
   Dim xxx As String[]
 
-  xxx = modMedicine.FillExamCategoryCombo("%")
+  If rbcateg.Value = True Then
+    xxx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldcategory) as col from tblexam where fldstatus=&1", "Active"))
+  Else If rbgroup.Value = True Then
+    xxx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldgroupname) as col from tblgroupexam where fldcomp=&1 or fldcomp=&2", modBasic.$compID, "%"))
+  Else If rbdepart.Value = True Then
+    xxx = ["Triage Examinations", "Essential Examinations", "Physician Examinations", "Nursing Examinations", "Discharge Examinations"]
+  Endif
+
   Return xxx
 
 End
 
 Public Sub cmbexamname_Click()
 
-  ShowOrderTree()
+  If cmbexamname.Text Then
+    ShowOrderTree()
+    FillLabtable(cmbexamname.Text)
+  Endif
 
 End
 
@@ -414,26 +474,22 @@ Private Sub ShowOrderTree()
   Dim fld As ResultField
 
   If cmbexamname.Text Then
-    res = modDatabase.$myConn.Exec("select fldexamid,fldtype,fldoption from tblexam where fldcategory=&1 and fldstatus=&2", cmbexamname.Text, "Active")
-    TreeView1.Clear
-    TreeView1.Columns.Count = res.Fields.Count
-    TreeView1.Rows.Count = res.Count
-
-    For Each res
-      Column = 0
-      For Each fld In res.Fields
-        modGeneralMain.GridExplicitDecoration(TreeView1, res.Index, Column)
-        TreeView1[res.Index, Column].Text = res[fld.Name]
-        Column = Column + 1
-      Next
-    Next
-    TreeView1.Row = 0
+    If rbcateg.Value = True Then
+      $rData1 = modDatabase.$myConn.Exec("select fldexamid,fldtype,fldoption,fldsysconst from tblexam where fldcategory=&1 and fldstatus=&2", cmbexamname.Text, "Active")
+    Else If rbgroup.Value = True Then
+      $rData1 = modDatabase.$myConn.Exec("select tblgroupexam.fldexamid as fldexamid,tblexam.fldtype as fldtype,tblexam.fldoption as fldoption,tblexam.fldsysconst as fldsysconst from tblgroupexam inner join tblexam on tblgroupexam.fldexamid=tblexam.fldexamid where tblgroupexam.fldgroupname=&1 and (tblgroupexam.fldcomp=&2 or tblgroupexam.fldcomp=&3)", cmbexamname.Text, modBasic.$compID, "%")                      '
+    Else If rbdepart.Value = True Then
+      $rData1 = modDatabase.$myConn.Exec("select tblcompexam.fldexamid as fldexamid,tblexam.fldtype as fldtype,tblexam.fldoption as fldoption,tblexam.fldsysconst as fldsysconst from tblcompexam inner join tblexam on tblcompexam.fldexamid=tblexam.fldexamid where tblcompexam.fldcategory=&1 and (tblcompexam.fldcomp=&2 or tblcompexam.fldcomp=&3)", cmbexamname.Text, modBasic.$compID, "%")                      '
+    Endif
+    $aMyFields1 = New String[]
+    modGridView.ReadSmallData(TreeView1, $rData1, $aMyFields1)
 
     With TreeView1
       .Rows.Height = modBasic.$AppGridRowHeight
-      .Columns[0].Width = 250 * modBasic.$AppWidthRatio
+      .Columns[0].Width = 300 * modBasic.$AppWidthRatio
       .Columns[1].Width = 1
       .Columns[2].Width = 1
+      .Columns[3].Width = 1
 
       .Columns[0].Text = "Test Name"
     End With
@@ -442,24 +498,11 @@ Private Sub ShowOrderTree()
 
 End
 
-Public Sub TreeView1_Menu()
+Public Sub TreeView1_Data(Row As Integer, Column As Integer)
 
-  mnufile.Popup
-
-End
-
-Public Sub mnuadd_Click()
-
-  If TreeView1.Rows.Selection.Count > 0 Then
-    If txtencid.Text Then
-      If TreeView1[TreeView1.Row, 1].Text = "Qualitative" Then
-        modClinSub.AddQualiData(Trim(txtencid.Text), "", TreeView1[TreeView1.Row, 0].Text, "", False, "Physician Examinations", "")
-      Else If TreeView1[TreeView1.Row, 1].Text = "Quantitative" Then
-        modClinSub.AddQuantiData(Trim(txtencid.Text), "", TreeView1[TreeView1.Row, 0].Text, 0, False, "Physician Examinations", "")
-      Endif
-      FillLabtable()
-    Endif
-  Endif
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(TreeView1, Row)
+  TreeView1.Data.Text = $rData1[$aMyFields1[Column]]
 
 End
 
@@ -468,8 +511,10 @@ Public Sub TreeView1_KeyRelease()
   If Key.Code = Key.Right Then
     GridView1.SetFocus
   Else If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
-    modExamOption.AddExamSelection(Trim(txtencid.Text), TreeView1[TreeView1.Row, 0].Text, TreeView1[TreeView1.Row, 1].Text, TreeView1[TreeView1.Row, 2].Text)
-    FillLabtable()
+    If cmbexamname.Text Then
+      modExamOption.AddExamSelection(Trim(txtencid.Text), TreeView1[TreeView1.Row, 0].Text, TreeView1[TreeView1.Row, 1].Text, TreeView1[TreeView1.Row, 2].Text, TreeView1[TreeView1.Row, 3].Text, cmbexamname.Text)
+      FillLabtable(cmbexamname.Text)
+    Endif
   Endif
 
 End
@@ -477,19 +522,21 @@ End
 Public Sub TreeView1_Click()
 
   If TreeView1.Rows.Selection.Count Then
-    modExamOption.AddExamSelection(Trim(txtencid.Text), TreeView1[TreeView1.Row, 0].Text, TreeView1[TreeView1.Row, 1].Text, TreeView1[TreeView1.Row, 2].Text)
-    FillLabtable()
+    If cmbexamname.Text Then
+      modExamOption.AddExamSelection(Trim(txtencid.Text), TreeView1[TreeView1.Row, 0].Text, TreeView1[TreeView1.Row, 1].Text, TreeView1[TreeView1.Row, 2].Text, TreeView1[TreeView1.Row, 3].Text, cmbexamname.Text)
+      FillLabtable(cmbexamname.Text)
+    Endif
   Endif
 
 End
 
 ''---------------------------------------- Patient data -----------------------------------------------------
-Public Sub FillLabtable()
+Public Sub FillLabtable(sParam As String)
 
   If chkallexam.Value = True Then
     $rData = modDatabase.$myConn.Exec("select fldid,fldtype,fldhead,fldabnormal,fldid,fldid,fldtime,fldencounterval,fldrepquali,flduserid,fldcomp from tblpatientexam where fldencounterval=&1 and fldsave=&2", Trim(txtencid.Text), True)
   Else If chkallexam.Value = False
-    $rData = modDatabase.$myConn.Exec("select fldid,fldtype,fldhead,fldabnormal,fldid,fldid,fldtime,fldencounterval,fldrepquali,flduserid,fldcomp from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldsave=&3", Trim(txtencid.Text), "Physician Examinations", True)                                  ''
+    $rData = modDatabase.$myConn.Exec("select fldid,fldtype,fldhead,fldabnormal,fldid,fldid,fldtime,fldencounterval,fldrepquali,flduserid,fldcomp from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldsave=&3", Trim(txtencid.Text), sParam, True)                                  ''
   Endif
 
   $aMyFields = New String[]
@@ -579,14 +626,18 @@ Public Sub GridView1_Click()
 
   Row = GridView1.Row
   If GridView1.Column = 4 Then
-    modExamOption.UpdateExamSelection(GridView1[GridView1.Row, 0].Text, GridView1[GridView1.Row, 7].Text, GridView1[GridView1.Row, 1].Text, GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 8].Text)
-    FillLabtable()
+    If cmbexamname.Text Then
+      modExamOption.UpdateExamSelection(GridView1[GridView1.Row, 0].Text, GridView1[GridView1.Row, 7].Text, GridView1[GridView1.Row, 1].Text, GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 8].Text)
+      FillLabtable(cmbexamname.Text)
+    Endif
 
   Else If GridView1.Column = 3 Then
-    xx = InputCombo("Select Flag for the observation", "Change Flag", ["Normal", "Abnormal"], modMisc.GetIconValue(GridView1[GridView1.Row, 3].Picture), True)
-    If xx Then
-      modClinSub.UpdateExamFlag(GridView1[GridView1.Row, 0].Text, xx)
-      FillLabtable()
+    If cmbexamname.Text Then
+      xx = InputCombo("Select Flag for the observation", "Change Flag", ["Normal", "Abnormal"], modMisc.GetIconValue(GridView1[GridView1.Row, 3].Picture), True)
+      If xx Then
+        modClinSub.UpdateExamFlag(GridView1[GridView1.Row, 0].Text, xx)
+        FillLabtable(cmbexamname.Text)
+      Endif
     Endif
 
   Else If GridView1.Column = 5 Then
@@ -597,7 +648,9 @@ Public Sub GridView1_Click()
           res["fldsave"] = False
           res["flduserid"] = modBasic.$lbluser
           res.Update
-          FillLabtable()
+          If cmbexamname.Text Then
+            FillLabtable(cmbexamname.Text)
+          Endif
         Else
           Message.Warning("Authorization with " & res["flduserid"], ("OK"))
         Endif
@@ -623,7 +676,9 @@ End
 
 Public Sub btnrefresh_Click()
 
-  FillLabtable()
+  If cmbexamname.Text Then
+    FillLabtable(cmbexamname.Text)
+  Endif
 
 End
 
@@ -633,10 +688,8 @@ Public Sub btnrepo_Click()
 
   If txtencid.Text Then
     Inc Application.Busy
-    If chkallexam.Value = True Then
-      xPath = modCHTMLPatient.ShowPatientExaminationReportAll(Trim(txtencid.Text), "%")
-    Else If chkallexam.Value = False Then
-      xPath = modCHTMLPatient.ShowPatientExaminationReportAll(Trim(txtencid.Text), "Examination")
+    If cmbexamname.Text Then
+      xPath = modCHTMLPatient.ShowPatientExaminationReportAll(Trim(txtencid.Text), cmbexamname.Text)
     Endif
     Dec Application.Busy
     modControlSub.OpenHTMLPreview(Trim(txtencid.Text), xPath, "ReportSize")
