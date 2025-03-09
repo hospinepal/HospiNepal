@@ -160,7 +160,7 @@ Private Function GetUserFieldVal(sTest As String, xSampID As String) As String
 End
 
 ''use only from command line... connection closes at end
-Public Sub SyncInterfacingData()
+Public Sub SyncInterfacingData(xdebug As Boolean)
 
   Dim res As Result
   Dim res1 As Result
@@ -173,6 +173,11 @@ Public Sub SyncInterfacingData()
   Dim res2 As Result
   Dim xnew As String
   Dim xfinl As String
+
+  If xdebug = True Then
+    modBasic.$DebugMode = True
+    db.Debug = True
+  Endif
 
   modInterface.GetInterfaceConn()
   If $machineCon.Opened = True Then
@@ -192,6 +197,8 @@ Public Sub SyncInterfacingData()
                 If res1.Available Then
                   res1.MoveFirst
 
+                  xnew = ""
+                  xfinl = ""
                   If res["ResultValue"] Like "<" & "*" Then
                     xnew = Trim(Replace(res["ResultValue"], "<", ""))
                     xfinl = CStr(CFloat(xnew) - 1)
@@ -218,7 +225,7 @@ Public Sub SyncInterfacingData()
                     res1["fldreportquali"] = res["ResultValue"]
                     res1["fldreportquanti"] = CFloat(xfinl)
                     res1["fldstatus"] = "Reported"
-                    res1["fldtime_start"] = res["ResultTransferDtTm"]
+                    ' res1["fldtime_start"] = res["ResultTransferDtTm"]
                     res1["flduserid_report"] = $IntfaceVendor
                     If modBasic.$LabInterfaceCompDate = "Yes" Then
                       res1["fldtime_report"] = Now()
@@ -250,7 +257,7 @@ Public Sub SyncInterfacingData()
                         res1["fldreportquali"] = ""
                         res1["fldreportquanti"] = 0
                         res1["fldstatus"] = "Reported"
-                        res1["fldtime_start"] = res["ResultTransferDtTm"]
+                        ' res1["fldtime_start"] = res["ResultTransferDtTm"]
                         res1["flduserid_report"] = $IntfaceVendor
                         If modBasic.$LabInterfaceCompDate = "Yes" Then
                           res1["fldtime_report"] = Now()
@@ -275,7 +282,169 @@ Public Sub SyncInterfacingData()
                     res1["fldreportquali"] = res["ResultValue"]
                     res1["fldreportquanti"] = 0
                     res1["fldstatus"] = "Reported"
-                    res1["fldtime_start"] = res["ResultTransferDtTm"]
+                    ' res1["fldtime_start"] = res["ResultTransferDtTm"]
+                    res1["flduserid_report"] = $IntfaceVendor
+                    If modBasic.$LabInterfaceCompDate = "Yes" Then
+                      res1["fldtime_report"] = Now()
+                    Else
+                      res1["fldtime_report"] = res["ResultAnalysisDtTm"]
+                    Endif
+                    res1["fldcomp_report"] = modBasic.$compID
+                    res1["fldsave_report"] = True
+                    res1["fldabnormal"] = abn
+                    res1["fldtestunit"] = $IntfaceUnit
+                    res1["xyz"] = False
+                    res1.Update
+                    xgo = True
+                  Endif
+                Endif
+
+              Endif
+
+              If xgo = True Then
+                res["IsResultValueRead"] = True
+                res.Update
+                Print "Data Imported from Machine for " & res["LIMSTestParam"] & " with Samp ID of " & res["SampleNo"]
+              Endif
+            Endif
+          Endif
+        Endif
+      Next
+    Endif
+
+    Try $machineCon.Close()
+    If modDatabase.$myConn.Opened = True Then
+      Try modDatabase.$myConn.Close()
+    Endif
+  Endif
+
+End
+
+''daily
+Public Sub SyncInterfacingDataDaily(xdebug As Boolean)
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim abn As Boolean
+  Dim xType As String
+  Dim xrange As Float[]
+  Dim xgo As Boolean
+  Dim xusercol As String
+
+  Dim res2 As Result
+  Dim xnew As String
+  Dim xfinl As String
+
+  If xdebug = True Then
+    modBasic.$DebugMode = True
+    db.Debug = True
+  Endif
+
+  modInterface.GetInterfaceConn()
+  If $machineCon.Opened = True Then
+
+    ' res = $machineCon.Edit("Analyzer_ResultDetail", "IsResultValueRead=&1", False)
+    res = $machineCon.Edit("Analyzer_ResultDetail", "IsResultValueRead=&1 and ResultTransferDtTm>=&2", False, DateAdd(Now(), gb.Hour, -24))
+    If res.Available Then
+      For Each res
+        If res["ResultValue"] Then
+          If res["ResultValue"] <> "NA" Then
+            xgo = False
+            xusercol = GetUserFieldVal(res["LIMSTestParam"], res["SampleNo"])
+
+            If xusercol Then
+              xType = modFixLab.GetLabTestType(xusercol)
+              If xType = "Quantitative" Then
+                res1 = modDatabase.$myConn.Edit("tblpatlabtest", "fldsampleid=&1 and fldtestid=&2 and fldstatus=&3", res["SampleNo"], res["LIMSTestParam"], "Sampled")
+                If res1.Available Then
+                  res1.MoveFirst
+
+                  xnew = ""
+                  xfinl = ""
+                  If res["ResultValue"] Like "<" & "*" Then
+                    xnew = Trim(Replace(res["ResultValue"], "<", ""))
+                    xfinl = CStr(CFloat(xnew) - 1)
+                  Else If res["ResultValue"] Like ">" & "*" Then
+                    xnew = Trim(Replace(res["ResultValue"], ">", ""))
+                    xfinl = CStr(CFloat(xnew) + 1)
+                  Else
+                    If IsNumber(res["ResultValue"]) Then
+                      xfinl = res["ResultValue"]
+                    Endif
+                  Endif
+                  If xfinl Then
+                    xrange = modLabTest.LabBothLimitValue(res["LIMSTestParam"], res1["fldencounterval"], $IntfaceUnit, res1["fldmethod"])
+                    If xrange[0] = xrange[1] Then
+                      abn = False
+                    Else
+                      If CFloat(xfinl) < xrange[0] Or If CFloat(xfinl) > xrange[1] Then
+                        abn = True
+                      Else
+                        abn = False
+                      Endif
+                    Endif
+
+                    res1["fldreportquali"] = res["ResultValue"]
+                    res1["fldreportquanti"] = CFloat(xfinl)
+                    res1["fldstatus"] = "Reported"
+                    ' res1["fldtime_start"] = res["ResultTransferDtTm"]
+                    res1["flduserid_report"] = $IntfaceVendor
+                    If modBasic.$LabInterfaceCompDate = "Yes" Then
+                      res1["fldtime_report"] = Now()
+                    Else
+                      res1["fldtime_report"] = res["ResultAnalysisDtTm"]
+                    Endif
+                    res1["fldcomp_report"] = modBasic.$compID
+                    res1["fldsave_report"] = True
+                    res1["fldabnormal"] = abn
+                    res1["fldtestunit"] = $IntfaceUnit
+                    res1["xyz"] = False
+                    res1.Update
+                    xgo = True
+                  Endif
+                Endif
+
+              Else
+                If modFixLab.GetLabTestOptionType(xusercol) = "Fixed Components" Then
+                  res1 = modDatabase.$myConn.Edit("tblpatlabtest", "fldsampleid=&1 and fldtestid=&2", res["SampleNo"], xusercol)
+                  If res1.Available Then
+                    res1.MoveFirst
+                    res2 = modDatabase.$myConn.Edit("tblpatlabsubtest", "fldsubtest=&1 and fldparent=&2 and fldtestid=&3", res["LIMSTestParam"], xusercol, res1["fldid"])
+                    If res2.Available Then
+                      res2["fldreport"] = res["ResultValue"]
+                      res2["fldsave"] = True
+                      res2["xyz"] = False
+                      res2.Update
+                      If res1["fldstatus"] = "Sampled" Then
+                        res1["fldreportquali"] = ""
+                        res1["fldreportquanti"] = 0
+                        res1["fldstatus"] = "Reported"
+                        ' res1["fldtime_start"] = res["ResultTransferDtTm"]
+                        res1["flduserid_report"] = $IntfaceVendor
+                        If modBasic.$LabInterfaceCompDate = "Yes" Then
+                          res1["fldtime_report"] = Now()
+                        Else
+                          res1["fldtime_report"] = res["ResultAnalysisDtTm"]
+                        Endif
+                        res1["fldcomp_report"] = modBasic.$compID
+                        res1["fldsave_report"] = True
+                        res1["fldabnormal"] = abn
+                        res1["fldtestunit"] = $IntfaceUnit
+                        res1["xyz"] = False
+                        res1.Update
+                      Endif
+                      xgo = True
+                    Endif
+                  Endif
+
+                Else
+                  res1 = modDatabase.$myConn.Edit("tblpatlabtest", "fldsampleid=&1 and fldtestid=&2 and fldstatus=&3", res["SampleNo"], res["LIMSTestParam"], "Sampled")
+                  If res1.Available Then
+                    res1.MoveFirst
+                    res1["fldreportquali"] = res["ResultValue"]
+                    res1["fldreportquanti"] = 0
+                    res1["fldstatus"] = "Reported"
+                    ' res1["fldtime_start"] = res["ResultTransferDtTm"]
                     res1["flduserid_report"] = $IntfaceVendor
                     If modBasic.$LabInterfaceCompDate = "Yes" Then
                       res1["fldtime_report"] = Now()
@@ -346,6 +515,8 @@ Public Sub SyncInterfacingSelectedData(sampleList As String[])
                   If res1.Available Then
                     res1.MoveFirst
 
+                    xnew = ""
+                    xfinl = ""
                     If res["ResultValue"] Like "<" & "*" Then
                       xnew = Trim(Replace(res["ResultValue"], "<", ""))
                       xfinl = CStr(CFloat(xnew) - 1)
@@ -372,7 +543,7 @@ Public Sub SyncInterfacingSelectedData(sampleList As String[])
                       res1["fldreportquali"] = res["ResultValue"]
                       res1["fldreportquanti"] = CFloat(xfinl)
                       res1["fldstatus"] = "Reported"
-                      res1["fldtime_start"] = res["ResultTransferDtTm"]
+                      ' res1["fldtime_start"] = res["ResultTransferDtTm"]
                       res1["flduserid_report"] = $IntfaceVendor
                       If modBasic.$LabInterfaceCompDate = "Yes" Then
                         res1["fldtime_report"] = Now()
@@ -404,7 +575,7 @@ Public Sub SyncInterfacingSelectedData(sampleList As String[])
                           res1["fldreportquali"] = ""
                           res1["fldreportquanti"] = 0
                           res1["fldstatus"] = "Reported"
-                          res1["fldtime_start"] = res["ResultTransferDtTm"]
+                          ' res1["fldtime_start"] = res["ResultTransferDtTm"]
                           res1["flduserid_report"] = $IntfaceVendor
                           If modBasic.$LabInterfaceCompDate = "Yes" Then
                             res1["fldtime_report"] = Now()
@@ -429,7 +600,7 @@ Public Sub SyncInterfacingSelectedData(sampleList As String[])
                       res1["fldreportquali"] = res["ResultValue"]
                       res1["fldreportquanti"] = 0
                       res1["fldstatus"] = "Reported"
-                      res1["fldtime_start"] = res["ResultTransferDtTm"]
+                      ' res1["fldtime_start"] = res["ResultTransferDtTm"]
                       res1["flduserid_report"] = $IntfaceVendor
                       If modBasic.$LabInterfaceCompDate = "Yes" Then
                         res1["fldtime_report"] = Now()

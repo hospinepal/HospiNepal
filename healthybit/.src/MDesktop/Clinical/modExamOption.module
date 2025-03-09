@@ -23,7 +23,7 @@ Public Function GetVisualDataExamVal(sExam As String) As String
   Dim sPath As String
   Dim xval As String
 
-  sPath = modImage.DisplayVisualData(sExam, "", "Visual Input")
+  sPath = modImage.DisplayVisualData("Exam", sExam, "", "Visual Input")
   If sPath Then
     xval = CVisualValue(sExam, sPath, "")
   Endif
@@ -244,8 +244,11 @@ Public Sub EnterDeptFixedComponents(encid As String, sType As String, sID As Lon
   Dim res As Result
   Dim xData As Variant[]
   Dim hForm2 As FmEnterMultiple
+  Dim hFormTwo As FmEnterMultipleTwo
+  Dim hForm22 As FmEnterMultipleVer
+  Dim xType As String
 
-  If modClinic.GetSubExamBool(sID) = False Then
+  If modClinic.GetSubExamBool(sID, encid) = False Then
     yyy = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldanswer as col from tbldeptexamoption where fldexamid=&1 and flddept=&2", examname, sType))
     If yyy.Count Then
       modClinSub.InsertExamSubExam(encid, sID, examname, yyy)
@@ -254,13 +257,24 @@ Public Sub EnterDeptFixedComponents(encid As String, sType As String, sID As Lon
 
   res = modDatabase.$myConn.Exec("select fldid,fldsubtexam,fldreport,fldtanswertype,fldabnormal,fldindex from tblpatientsubexam where fldheadid=&1", sID)
   If res.Available = True Then
+    xType = modAllExam.GetVariableOptionType("Exam", examname)
     xData = New Variant[]
     For Each res
       xData.Add([res["fldsubtexam"], res["fldreport"], res["fldid"], res["fldtanswertype"], res["fldabnormal"], res["fldindex"]])
     Next
     xData.Add(["Final Impression", sValue, 0, "RichText Area", False, ""])
-    hForm2 = New FmEnterMultiple(sID, "Exam", examname, xData, "", "Current")
-    hForm2.ShowModal
+    If xType = "Left/Right Components" Then
+      hFormTwo = New FmEnterMultipleTwo(sID, "Exam", examname, xData, "", "Current")
+      hFormTwo.ShowModal
+    Else
+      If modBasic.$FactorForm = "Vertical" Then
+        hForm22 = New FmEnterMultipleVer(sID, "Exam", examname, xData, "", "Current")
+        hForm22.ShowModal
+      Else
+        hForm2 = New FmEnterMultiple(sID, "Exam", examname, xData, "", "Current")
+        hForm2.ShowModal
+      Endif
+    Endif
   Endif
 
 End
@@ -360,29 +374,77 @@ Public Function GetQualiExamOptionValue(sExam As String, sOption As String) As V
 
 End
 
-Public Sub AddExamSelection(encid As String, sExam As String, sType As String, sOption As String)
+Public Sub AddExamSelection(encid As String, sExam As String, sType As String, OptionType As String, sysConst As String, ExamParam As String)
 
   Dim xquantival As Variant[]
   Dim yqualival As Variant[]
-  Dim sysConst As String
   Dim xlimit As Float[]
+  Dim xhash As String
+  Dim sIndex As Long
 
-  sysConst = modFixClinic.SysConstFromGetExamID(sExam)
+  Dim yyy As String[]
+  Dim hForm2 As FmEnterMultiple
+  Dim hFormTwo As FmEnterMultipleTwo
+  Dim hForm22 As FmEnterMultipleVer
+  Dim res As Result
+  Dim xData As Variant[]
+
   If sType = "Quantitative" Then
     xlimit = modClinic.GetBothQuantiExamVal(sExam, encid)
     xquantival = GetQuantiValues("Exam", encid, sExam, xlimit[0], xlimit[1], 0)
     If xquantival Then
-      modClinSub.AddQuantiData(encid, "", sExam, xquantival[0], xquantival[1], "Examination", sysConst)
+      modClinSub.AddQuantiData(encid, "", sExam, OptionType, xquantival[0], xquantival[1], ExamParam, sysConst)
     Endif
   Else
-    yqualival = GetQualiExamOptionValue(sExam, sOption)
-    If yqualival Then
-      If yqualival.Count = 3 Then
-        modClinSub.AddClinicExam(encid, "", sExam, yqualival[0], CFloat(yqualival[2]), yqualival[1], "Examination", sysConst, "Regular")
-      Else
-        modClinSub.AddClinicExam(encid, "", sExam, yqualival[0], 0, yqualival[1], "Examination", sysConst, "Regular")
+    If OptionType = "Fixed Components" Or If OptionType = "Left/Right Components" Then
+      ''insert main test
+      xhash = encid & ":" & sExam & ":" & modMisc.GetWebIndexStr(modString.GetDateString(Now()))
+      modClinSub.AddClinicExam(encid, "", sExam, OptionType, "", 0, False, ExamParam, sysConst, "Regular", xhash)
+      sIndex = modClinic.GetExamIndexFromFilePath(xhash, encid)
+      If sIndex Then
+        ''insert components
+        If modClinic.GetSubExamBool(sIndex, encid) = False Then
+          yyy = modFixClinic.GetSubExamArray(sExam)  'modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldsubexam as col from tblexamquali where fldexamid=&1", sExam))
+          If yyy.Count Then
+            modClinSub.InsertExamSubExam(encid, sIndex, sExam, yyy)
+          Endif
+        Endif
+        Wait
+
+        ''check and open form
+        res = modDatabase.$myConn.Exec("select fldid,fldsubtexam,fldreport,fldtanswertype,fldabnormal,fldindex from tblpatientsubexam where fldheadid=&1", sIndex)
+        If res.Available Then
+          xData = New Variant[]
+          For Each res
+            xData.Add([res["fldsubtexam"], res["fldreport"], res["fldid"], res["fldtanswertype"], res["fldabnormal"], res["fldindex"]])
+          Next
+          xData.Add(["Final Impression", "", 0, "RichText Area", False, ""])
+          If OptionType = "Left/Right Components" Then
+            hFormTwo = New FmEnterMultipleTwo(sIndex, "Exam", sExam, xData, "", "Current")
+            hFormTwo.ShowModal
+          Else
+            If modBasic.$FactorForm = "Vertical" Then
+              hForm22 = New FmEnterMultipleVer(sIndex, "Exam", sExam, xData, "", "Current")
+              hForm22.ShowModal
+            Else
+              hForm2 = New FmEnterMultiple(sIndex, "Exam", sExam, xData, "", "Current")
+              hForm2.ShowModal
+            Endif
+          Endif
+        Endif
       Endif
-    Endif
+
+    Else
+      yqualival = GetQualiExamOptionValue(sExam, OptionType)
+      If yqualival Then
+        If yqualival.Count = 3 Then
+          modClinSub.AddClinicExam(encid, "", sExam, OptionType, yqualival[0], CFloat(yqualival[2]), yqualival[1], ExamParam, sysConst, "Regular")
+        Else
+          modClinSub.AddClinicExam(encid, "", sExam, OptionType, yqualival[0], 0, yqualival[1], ExamParam, sysConst, "Regular")
+        Endif
+      Endif
+
+    Endif  ''if components
   Endif ''quali or quanti
 
 End
@@ -390,6 +452,8 @@ End
 Public Sub UpdateExamSelection(sid As Long, encid As String, sType As String, sExam As String, sValue As String)
 
   Dim hForm2 As FmEnterMultiple
+  Dim hFormTwo As FmEnterMultipleTwo
+  Dim hForm22 As FmEnterMultipleVer
   Dim res As Result
   Dim xData As Variant[]
   Dim yyy As String[]
@@ -403,8 +467,8 @@ Public Sub UpdateExamSelection(sid As Long, encid As String, sType As String, sE
 
   If sType = "Qualitative" Then
     xType = modFixClinic.GetExamtOptionType(sExam)
-    If modClinic.GetSubExamBool(sid) = False Then
-      If xType = "Fixed Components" Then
+    If modClinic.GetSubExamBool(sid, encid) = False Then
+      If xType = "Fixed Components" Or If xType = "Left/Right Components" Then
         yyy = modFixClinic.GetSubExamArray(sExam)  'modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldsubexam as col from tblexamquali where fldexamid=&1", sExam))
         If yyy.Count Then
           modClinSub.InsertExamSubExam(encid, sid, sExam, yyy)
@@ -453,8 +517,18 @@ Public Sub UpdateExamSelection(sid As Long, encid As String, sType As String, sE
         xData.Add([res["fldsubtexam"], res["fldreport"], res["fldid"], res["fldtanswertype"], res["fldabnormal"], res["fldindex"]])
       Next
       xData.Add(["Final Impression", sValue, 0, "RichText Area", False, ""])
-      hForm2 = New FmEnterMultiple(sid, "Exam", sExam, xData, "", "Current")
-      hForm2.ShowModal
+      If xType = "Left/Right Components" Then
+        hFormTwo = New FmEnterMultipleTwo(sid, "Exam", sExam, xData, "", "Current")
+        hFormTwo.ShowModal
+      Else
+        If modBasic.$FactorForm = "Vertical" Then
+          hForm22 = New FmEnterMultipleVer(sid, "Exam", sExam, xData, "", "Current")
+          hForm22.ShowModal
+        Else
+          hForm2 = New FmEnterMultiple(sid, "Exam", sExam, xData, "", "Current")
+          hForm2.ShowModal
+        Endif
+      Endif
     Endif
 
   Else If sType = "Quantitative" Then
@@ -547,7 +621,7 @@ Public Function OpenQualidataOption(sName As String, sTag As String) As String
       Endif
 
     Else If rsn["fldanswertype"] = "Visual Input" Then
-      sPath = modImage.DisplayVisualData(sName, "", rsn["fldanswertype"])
+      sPath = modImage.DisplayVisualData(sTag, sName, "", rsn["fldanswertype"])
       If sPath Then
         xval = CVisualValue(sName, sPath, sText)
         If xval Then
