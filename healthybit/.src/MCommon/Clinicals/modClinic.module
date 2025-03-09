@@ -2,13 +2,40 @@
 
 Public $tblpatientexam As String
 
-Public Function GetSubExamBool(pttestid As Long) As Boolean
+Public Function GetSubExamBool(sIndex As Long, Optional encid As String) As Boolean
 
   Dim rs As Result
   Dim xx As Boolean
 
-  rs = modDatabase.$myConn.Exec("select fldid,fldsubtexam from tblpatientsubexam where fldheadid=&1", pttestid)
+  If encid Then
+    rs = modDatabase.$myConn.Exec("select fldid,fldsubtexam from tblpatientsubexam where fldheadid=&1 and fldencounterval=&2", sIndex, encid)
+  Else
+    rs = modDatabase.$myConn.Exec("select fldid,fldsubtexam from tblpatientsubexam where fldheadid=&1", sIndex)
+  Endif
   xx = rs.Available
+  Return xx
+
+End
+
+Public Function GetExamIndexFromFilePath(sPath As String, Optional encid As String) As Long
+
+  Dim res As Result
+  Dim xx As Long
+
+  If encid Then
+    res = modDatabase.$myConn.Exec("select fldid from tblpatientexam where fldfilepath=&1 and fldencounterval=&2", sPath, encid)
+  Else
+    res = modDatabase.$myConn.Exec("select fldid from tblpatientexam where fldfilepath=&1", sPath)
+  Endif
+  If res.Available Then
+    If res["fldid"] Then
+      xx = res["fldid"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
   Return xx
 
 End
@@ -352,7 +379,7 @@ Public Function GetExamClinValuePosition(encid As String, sExam As String, sType
   Dim xx As String[]
 
   xx = New String[]
-  sql = "select fldid,fldtime from tblpatientexam where fldencounterval=&1 and fldhead=&2 and fldsave=&3"
+  sql = "select fldid,fldtime,flduserid from tblpatientexam where fldencounterval=&1 and fldhead=&2 and fldsave=&3"
   res = modDatabase.$syConn.Exec(sql, encid, sExam, True)
   If res.Available Then
     If sType = "FitsrVal" Then
@@ -362,7 +389,9 @@ Public Function GetExamClinValuePosition(encid As String, sExam As String, sType
     Endif
     xx.Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.GeneralDate))
     xx.Add(modClinic.GetExamValueSubString(res["fldid"]))
+    xx.Add(res["flduserid"])
   Else
+    xx.Add("")
     xx.Add("")
     xx.Add("")
   Endif
@@ -376,7 +405,7 @@ Public Function GetExamValueSubString(id As Variant) As String
   Dim res1 As Result
   Dim sql As String
   Dim xx As String
-  Dim xquali As String
+  Dim xquali As String[]
   Dim xType As String
   Dim xunit As String
 
@@ -400,8 +429,8 @@ Public Function GetExamValueSubString(id As Variant) As String
       Endif
 
     Else
+      xType = res["fldoption"]
       If res["fldrepquali"] Then
-        xType = res["fldoption"]
         If xType = "Clinical Scale" Then
           If modBasic.$ShowScaleMedFormat = "GroupWise" Then
             xx = modString.GetJSONToDualHTMLTable(Trim(res["fldrepquali"]))
@@ -410,6 +439,8 @@ Public Function GetExamValueSubString(id As Variant) As String
           Endif
         Else If xType = "Left and Right" Then
           xx = modString.GetJSONToDualHTMLTable(Trim(res["fldrepquali"]))
+        Else If xType = "Left/Right Components" Then
+          xx = modString.GetJSONToDualHTMLTable(Trim(res["fldrepquali"]))
         Else
           xx = Trim(res["fldrepquali"])
         Endif
@@ -417,44 +448,63 @@ Public Function GetExamValueSubString(id As Variant) As String
         xx = ""
       Endif
 
+      xquali = New String[]
       If MMain.$WebEntry = True Then ''remoteoptimized
         res1 = modDatabase.$myConn.Exec("select fldsubtexam,fldreport,fldid,fldheadid,fldtanswertype,fldhospcode from tblpatientsubexam where fldheadid=&1 and fldencounterval=&2 and fldhospcode=&3", res["fldid"], res["fldencounterval"], res["fldhospcode"])
         If res1.Available = True Then
-          xquali = ""
           For Each res1
-            If res1["fldtanswertype"] = "Multiple Selection" Or If res1["fldtanswertype"] = "Single Column" Then
-              xquali = xquali & res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"], res1["fldhospcode"]) & gb.NewLine & gb.NewLine
-            Else If res1["fldtanswertype"] = "Text Table" Then
-              xquali = xquali & res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"], res1["fldhospcode"]) & gb.NewLine & gb.NewLine
-            Else If res1["fldtanswertype"] = "Dual Columns" Then
-              xquali = xquali & res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamDualTableString(res1["fldheadid"], res1["fldid"], res1["fldhospcode"]) & gb.NewLine & gb.NewLine
+            If xType = "Left/Right Components" Then
+              xquali.Add(modString.GetLeftRightTableValue(res1["fldreport"], res1["fldsubtexam"]))
             Else
-              If res1["fldreport"] Then
-                xquali = xquali & res1["fldsubtexam"] & " : " & res1["fldreport"] & gb.NewLine
+              If res1["fldtanswertype"] = "Multiple Selection" Or If res1["fldtanswertype"] = "Single Column" Then
+                xquali.Add(res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"], res1["fldhospcode"]) & gb.NewLine)
+              Else If res1["fldtanswertype"] = "Text Table" Then
+                xquali.Add(res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"], res1["fldhospcode"]) & gb.NewLine)
+              Else If res1["fldtanswertype"] = "Dual Columns" Then
+                xquali.Add(res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamDualTableString(res1["fldheadid"], res1["fldid"], res1["fldhospcode"]) & gb.NewLine)
+              Else
+                If res1["fldreport"] Then
+                  xquali.Add(res1["fldsubtexam"] & " : " & res1["fldreport"])
+                Endif
               Endif
             Endif
           Next
-          xx = xx & gb.NewLine & xquali
+          If xquali.Count Then
+            If xType = "Left/Right Components" Then
+              xx = xx & modString.GetLeftRightTableHeader(True) & xquali.Join(gb.NewLine)
+            Else
+              xx = xx & gb.NewLine & xquali.Join(gb.NewLine)
+            Endif
+          Endif
         Endif
 
       Else
         res1 = modDatabase.$myConn.Exec("select fldsubtexam,fldreport,fldid,fldheadid,fldtanswertype from tblpatientsubexam where fldheadid=&1 and fldencounterval=&2", res["fldid"], res["fldencounterval"])
         If res1.Available = True Then
-          xquali = ""
           For Each res1
-            If res1["fldtanswertype"] = "Multiple Selection" Or If res1["fldtanswertype"] = "Single Column" Then
-              xquali = xquali & res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"]) & gb.NewLine & gb.NewLine
-            Else If res1["fldtanswertype"] = "Text Table" Then
-              xquali = xquali & res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"]) & gb.NewLine & gb.NewLine
-            Else If res1["fldtanswertype"] = "Dual Columns" Then
-              xquali = xquali & res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamDualTableString(res1["fldheadid"], res1["fldid"]) & gb.NewLine & gb.NewLine
+            If xType = "Left/Right Components" Then
+              xquali.Add(modString.GetLeftRightTableValue(res1["fldreport"], res1["fldsubtexam"]))
             Else
-              If res1["fldreport"] Then
-                xquali = xquali & res1["fldsubtexam"] & " : " & res1["fldreport"] & gb.NewLine
+              If res1["fldtanswertype"] = "Multiple Selection" Or If res1["fldtanswertype"] = "Single Column" Then
+                xquali.Add(res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"]) & gb.NewLine)
+              Else If res1["fldtanswertype"] = "Text Table" Then
+                xquali.Add(res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamTableReportString(res1["fldheadid"], res1["fldid"]) & gb.NewLine)
+              Else If res1["fldtanswertype"] = "Dual Columns" Then
+                xquali.Add(res1["fldsubtexam"] & " : " & gb.NewLine & GetSubExamDualTableString(res1["fldheadid"], res1["fldid"]) & gb.NewLine)
+              Else
+                If res1["fldreport"] Then
+                  xquali.Add(res1["fldsubtexam"] & " : " & res1["fldreport"])
+                Endif
               Endif
             Endif
           Next
-          xx = xx & gb.NewLine & xquali
+          If xquali.Count Then
+            If xType = "Left/Right Components" Then
+              xx = xx & modString.GetLeftRightTableHeader(True) & xquali.Join(gb.NewLine)
+            Else
+              xx = xx & gb.NewLine & xquali.Join(gb.NewLine)
+            Endif
+          Endif
         Endif
 
       Endif
@@ -503,14 +553,18 @@ Public Function GetExamValueString(encid As String, id As Long, sReport As Boole
           Else
             xval = CStr(res["fldrepquanti"])
           Endif
-
         Else If xType = "Left and Right" Then
           If sReport = True Then
             xval = modString.GetJSONToDualHTMLTable(Trim(res["fldrepquali"]))
           Else
             xval = Trim(res["fldrepquali"])
           Endif
-
+        Else If xType = "Left/Right Components" Then
+          If sReport = True Then
+            xval = modString.GetJSONToDualHTMLTable(Trim(res["fldrepquali"]))
+          Else
+            xval = Trim(res["fldrepquali"])
+          Endif
         Else
           xval = Trim(res["fldrepquali"])
         Endif
@@ -538,32 +592,48 @@ Public Function GetExamValueString(encid As String, id As Long, sReport As Boole
 
 End
 
-Public Function GetSubExamQualiList(encid As String, pttestid As Long) As String[]
+Public Function GetSubExamQualiList(encid As String, xType As String, pttestid As Long) As String
 
   Dim res As Result
   Dim xx As String[]
+  Dim xtable As String
   Dim xquali As String
 
   xx = New String[]
   res = modDatabase.$myConn.Exec("select fldsubtexam,fldreport,fldtanswertype,fldid,fldheadid from tblpatientsubexam where fldheadid=&1 and fldencounterval=&2", pttestid, encid)
   If res.Available = True Then
     For Each res
-      If res["fldtanswertype"] = "Multiple Selection" Or If res["fldtanswertype"] = "Single Column" Then
-        xquali = gb.NewLine & GetSubExamTableReportString(res["fldheadid"], res["fldid"])
-      Else If res["fldtanswertype"] = "Text Table" Then
-        xquali = gb.NewLine & GetSubExamTableReportString(res["fldheadid"], res["fldid"])
-      Else If res["fldtanswertype"] = "Dual Columns" Then
-        xquali = gb.NewLine & GetSubExamDualTableString(res["fldheadid"], res["fldid"])
+      If xType = "Left/Right Components" Then
+        xx.Add(modString.GetLeftRightTableValue(res["fldreport"], res["fldsubtexam"]))
       Else
-        xquali = Trim(res["fldreport"])
-      Endif
-      If res["fldsubtexam"] Then
-        xx.Add(res["fldsubtexam"] & " : " & xquali)
+        If res["fldtanswertype"] = "Multiple Selection" Or If res["fldtanswertype"] = "Single Column" Then
+          xquali = gb.NewLine & GetSubExamTableReportString(res["fldheadid"], res["fldid"])
+        Else If res["fldtanswertype"] = "Text Table" Then
+          xquali = gb.NewLine & GetSubExamTableReportString(res["fldheadid"], res["fldid"])
+        Else If res["fldtanswertype"] = "Dual Columns" Then
+          xquali = gb.NewLine & GetSubExamDualTableString(res["fldheadid"], res["fldid"])
+        Else
+          xquali = Trim(res["fldreport"])
+        Endif
+        If res["fldsubtexam"] Then
+          xx.Add(res["fldsubtexam"] & " : " & xquali)
+        Endif
       Endif
     Next
+
+    If xx.Count Then
+      If xType = "Left/Right Components" Then
+        xtable = modString.GetLeftRightTableHeader(True) & xx.Join(gb.NewLine)
+      Else
+        xtable = modString.GetHTMLListFormat(xx)
+      Endif
+    Else
+      xtable = ""
+    Endif
+
   Endif
 
-  Return xx
+  Return xtable
 
 End
 
@@ -923,11 +993,11 @@ Public Function GetALLReportExamSelString(encid As String, exam As String, sDate
   Dim sql As String
   Dim res As Result
   Dim xx As String
-  Dim yy As String[]
+  Dim yy As String
   Dim xList As String[]
 
   xList = New String[]
-  sql = "select fldid,fldtime,fldrepquali,fldrepquanti,fldtype from tblpatientexam where fldencounterval=&1 and fldhead=&2 and fldsave=&3 and fldinput=&4 and fldtime>=&5 and fldtime<=&6"
+  sql = "select fldid,fldtime,fldrepquali,fldrepquanti,fldtype,fldoption from tblpatientexam where fldencounterval=&1 and fldhead=&2 and fldsave=&3 and fldinput=&4 and fldtime>=&5 and fldtime<=&6"
   res = modDatabase.$syConn.Exec(sql, encid, exam, True, "Examination", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate))
   If res.Available = True Then
     For Each res
@@ -942,9 +1012,9 @@ Public Function GetALLReportExamSelString(encid As String, exam As String, sDate
 
       Else
         xx = "[ " & modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime) & " ] " & " : " & Trim(res["fldrepquali"])
-        yy = modClinic.GetSubExamQualiList(encid, res["fldid"])
-        If yy.Count Then
-          xx = xx & modString.GetHTMLListFormat(yy)
+        yy = modClinic.GetSubExamQualiList(encid, res["fldoption"], res["fldid"])
+        If yy Then
+          xx = xx & yy
         Endif
 
       Endif
@@ -1010,6 +1080,42 @@ Public Function GetCurrExamTimeValueSysConst(encid As String, xSysConst As Strin
   Dim xType As String
 
   res = modDatabase.$myConn.Exec("select fldid,fldhead,fldrepquanti,fldrepquali,fldtype from tblpatientexam where fldencounterval=&1 and fldsave=&2 and fldinput=&3 and fldhead in(select fldexamid from tblexam where fldsysconst=&4) and fldrepquali IS NOT &5", encid, True, sType, xSysConst, Null)
+  If res.Available Then
+    res.MoveLast
+    If res["fldtype"] = "Quantitative" Then
+      If res["fldrepquanti"] Then
+        xx = CStr(res["fldrepquanti"])
+      Else
+        xx = ""
+      Endif
+    Else
+      If res["fldrepquali"] Then
+        xType = modFixClinic.GetExamtOptionType(res["fldhead"])
+        If xType = "Clinical Scale" Then
+          xx = CStr(res["fldrepquanti"])
+        Else
+          xx = Trim(res["fldrepquali"])
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else
+    xx = ""
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetCurrExamTimeValueStructured(encid As String, xConstVal As String) As String
+
+  Dim xx As String
+  Dim res As Result
+  Dim xType As String
+
+  res = modDatabase.$myConn.Exec("select fldid,fldhead,fldrepquanti,fldrepquali,fldtype from tblpatientexam where fldencounterval=&1 and fldsave=&2 and fldserialval=&3 and fldrepquali IS NOT &4", encid, True, xConstVal, Null)
   If res.Available Then
     res.MoveLast
     If res["fldtype"] = "Quantitative" Then

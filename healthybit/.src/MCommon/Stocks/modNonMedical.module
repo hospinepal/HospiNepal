@@ -1393,6 +1393,25 @@ Public Function GetOffspringPackage(sPackage As String) As String
 
 End
 
+Public Function GetLedgerAccountCode(sLedger As String) As String
+
+  Dim xbank As String
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select fldledgerid from tblacledger where fldacledger=&1", sLedger)
+  If res.Available Then
+    If res["fldledgerid"] Then
+      xbank = res["fldledgerid"]
+    Else
+      xbank = ""
+    Endif
+  Else
+    xbank = ""
+  Endif
+  Return xbank
+
+End
+
 Public Function GetCurrConvertAmount(sAmt As Float, sUnit As String) As Float
 
   Dim res As Result
@@ -1733,12 +1752,102 @@ Public Function GetItemTypeFrombillID(xid As Long) As String
 
 End
 
-Public Function GetPatientItemSalesPackage(encid As String, sItem As String, sPackage As String) As Float
+Public Function GetPatientItemAllSalesPackage(encid As String, sItem As String, sPackage As String) As Float
 
   Dim res As Result
   Dim xval As Float
 
   res = modDatabase.$myConn.Exec("select sum(flditemqty) as flditemqty from tblpatbilling where fldencounterval=&1 and flditemname=&2 and fldsave=&3 and flddisctype like &4", encid, sItem, True, sPackage)
+  If res.Available Then
+    If res["flditemqty"] Then
+      xval = res["flditemqty"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetPatientItemSavedSalesPackage(encid As String, sItem As String, sPackage As String) As Float
+
+  Dim res As Result
+  Dim xval As Float
+
+  res = modDatabase.$myConn.Exec("select sum(flditemqty) as flditemqty from tblpatbilling where fldencounterval=&1 and flditemname=&2 and fldsave=&3 and fldprint=&4 and flddisctype like &4", encid, sItem, True, False, sPackage)
+  If res.Available Then
+    If res["flditemqty"] Then
+      xval = res["flditemqty"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetPatientItemYearlySalesPackage(encid As String, sItem As String, sPackage As String) As Float
+
+  Dim res As Result
+  Dim xpatno As String
+  Dim xstart As Date
+  Dim xval As Float
+
+  xpatno = modPatient.GetPatientNoByEnc(encid)
+  xstart = DateAdd(Now(), gb.Year, -1)
+  res = modDatabase.$myConn.Exec("select sum(flditemqty) as flditemqty from tblpatbilling where fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&1) and flditemname=&2 and fldsave=&3 and flddisctype like &4 and fldtime>=&5", xpatno, sItem, True, sPackage, xstart)
+  If res.Available Then
+    If res["flditemqty"] Then
+      xval = res["flditemqty"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetPatientItemFiscalSalesPackage(encid As String, sItem As String, sPackage As String) As Float
+
+  Dim res As Result
+  Dim xpatno As String
+  Dim xstart As Date
+  Dim xval As Float
+
+  xpatno = modPatient.GetPatientNoByEnc(encid)
+  xstart = modDate.GetNepaliFiscalYarStart(Now())
+  res = modDatabase.$myConn.Exec("select sum(flditemqty) as flditemqty from tblpatbilling where fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&1) and flditemname=&2 and fldsave=&3 and flddisctype like &4 and fldtime>=&5", xpatno, sItem, True, sPackage, xstart)
+  If res.Available Then
+    If res["flditemqty"] Then
+      xval = res["flditemqty"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetTotalItemFiscalSalesPackage(sItem As String, sPackage As String) As Float
+
+  Dim res As Result
+  Dim xstart As Date
+  Dim xval As Float
+
+  xstart = modDate.GetNepaliFiscalYarStart(Now())
+  res = modDatabase.$myConn.Exec("select sum(flditemqty) as flditemqty from tblpatbilling where flditemname=&1 and fldsave=&2 and flddisctype like &3 and fldtime>=&4", sItem, True, sPackage, xstart)
   If res.Available Then
     If res["flditemqty"] Then
       xval = res["flditemqty"]
@@ -2853,43 +2962,74 @@ Public Function GeCreditUsedCurYear(patno As String, DiscType As String, xStartD
 
 End
 
-Public Function AllowProceedBilling(encid As String, DiscType As String, DiscAmt As Float, TotAmt As Float, billType As String, xcshCrd As Float) As Boolean
+Public Function AllowProceedBilling(encid As String, DiscType As String, DiscAmt As Float, TotAmt As Float, billType As String, xcshCrd As Float, xItemType As String, xItemName As String, xQty As Integer) As Boolean
 
   Dim xx As Boolean
+  Dim yy As Boolean
   Dim xval As Float
   Dim patno As String
   Dim xcharity As Float
   Dim xremamt As Float
   Dim xvalid As Date
   Dim resx As Result
+  Dim xusedQty As Float
+  Dim xmaxQty As Float
 
-  resx = modDatabase.$myConn.Exec("select fldbilltype,fldbillingmode,fldamount,fldcredit,fldreference,fldlimit,fldyear from tbldiscount where fldtype=&1", DiscType)
-  If resx.Available And If resx["fldlimit"] Then
-    xvalid = modPatient.ShowDiscValidityEnc(encid)
-    If xvalid And If xvalid >= Date() Then
-
-      If resx["fldlimit"] = "PatientDiscount" Then
-        xcharity = GetPatCharityLimit(encid)
-        If xcharity Then
-          xremamt = xcharity - modNonMedical.GetTotalDiscByEnc(encid)
-          If xremamt > DiscAmt Then
-            xx = True
+  resx = modDatabase.$myConn.Exec("select fldbilltype,fldbillingmode,fldamount,fldcredit,fldreference,fldlimit,fldyear,fldqtylimit,fldqtylab,fldqtyradio,fldqtyproc,fldqtyequip,fldqtyservice,fldqtyother,fldqtymedicine,fldqtysurgical,fldqtyextra from tbldiscount where fldtype=&1", DiscType)
+  If resx.Available Then
+    ''qty check
+    If resx["fldqtylimit"] Then
+      If resx["fldqtylimit"] = "Item/Fiscal Year" Then
+        If modNonMedical.GetPatientItemFiscalSalesPackage(encid, xItemName, DiscType) >= 1 Then
+          yy = False
+        Else
+          xmaxQty = modNonMedical.GetItemQtyLimitForCategory(DiscType, xItemType, xItemName)
+          If xmaxQty Then
+            xusedQty = modNonMedical.GetTotalItemFiscalSalesPackage(xItemName, DiscType)
+            If xmaxQty >= xusedQty + xQty Then
+              yy = True
+            Else
+              yy = False
+            Endif
           Else
-            xx = False
+            yy = True
+          Endif
+        Endif
+
+      Else
+        xmaxQty = modNonMedical.GetItemQtyLimitForCategory(DiscType, xItemType, xItemName)
+        If xmaxQty Then
+          If resx["fldqtylimit"] = "Encounter" Then
+            xusedQty = modNonMedical.GetPatientItemAllSalesPackage(encid, xItemName, DiscType)
+          Else If resx["fldqtylimit"] = "Year Interval" Then
+            xusedQty = modNonMedical.GetPatientItemYearlySalesPackage(encid, xItemName, DiscType)
+          Else If resx["fldqtylimit"] = "Fiscal Year" Then
+            xusedQty = modNonMedical.GetPatientItemFiscalSalesPackage(encid, xItemName, DiscType)
+          Endif
+          If xmaxQty >= xusedQty + xQty Then
+            yy = True
+          Else
+            yy = False
           Endif
         Else
-          xx = True
+          yy = True
         Endif
+      Endif
 
-      Else If resx["fldlimit"] = "PatientCreditAMT" Then
-        If Not billType Then
-          billType = resx["fldbilltype"]
-        Endif
-        If billType And If billType = "Credit" Then
-          xcharity = ShowCreditLimitEnc(encid)
+    Else
+      yy = True
+    Endif
+
+    ''discount check
+    If resx["fldlimit"] Then
+      xvalid = modPatient.ShowDiscValidityEnc(encid)
+      If xvalid And If xvalid >= Date() Then
+
+        If resx["fldlimit"] = "PatientDiscount" Then
+          xcharity = GetPatCharityLimit(encid)
           If xcharity Then
-            xremamt = xcharity - TotalSavedCreditExpensebyPatient(modDatabase.$myConn, encid)
-            If xremamt > TotAmt * (1 - xcshCrd / 100) Then
+            xremamt = xcharity - modNonMedical.GetTotalDiscByEnc(encid)
+            If xremamt > DiscAmt Then
               xx = True
             Else
               xx = False
@@ -2897,37 +3037,33 @@ Public Function AllowProceedBilling(encid As String, DiscType As String, DiscAmt
           Else
             xx = True
           Endif
-        Else   ''cash
-          xx = True
-        Endif
 
-      Else If resx["fldlimit"] = "YearlyDiscount" Then
-        If resx["fldyear"] Then
-          If resx["fldyear"] <= Now() And If Now() < DateAdd(resx["fldyear"], gb.Year, 1) Then
-            patno = modPatient.GetPatientNoByEnc(encid)
-            xval = resx["fldamount"] - GetDiscUsedCurYear(patno, DiscType, resx["fldyear"], DateAdd(resx["fldyear"], gb.Year, 1))
-            If xval > DiscAmt Then
-              xx = True
-            Else
-              xx = False
-            Endif
-          Else
-            xx = False
+        Else If resx["fldlimit"] = "PatientCreditAMT" Then
+          If Not billType Then
+            billType = resx["fldbilltype"]
           Endif
-        Else
-          xx = False
-        Endif
+          If billType And If billType = "Credit" Then
+            xcharity = ShowCreditLimitEnc(encid)
+            If xcharity Then
+              xremamt = xcharity - TotalSavedCreditExpensebyPatient(modDatabase.$myConn, encid)
+              If xremamt > TotAmt * (1 - xcshCrd / 100) Then
+                xx = True
+              Else
+                xx = False
+              Endif
+            Else
+              xx = True
+            Endif
+          Else   ''cash
+            xx = True
+          Endif
 
-      Else If resx["fldlimit"] = "YearlyCreditAMT" Then
-        If Not billType Then
-          billType = resx["fldbilltype"]
-        Endif
-        If billType And If billType = "Credit" Then
+        Else If resx["fldlimit"] = "YearlyDiscount" Then
           If resx["fldyear"] Then
             If resx["fldyear"] <= Now() And If Now() < DateAdd(resx["fldyear"], gb.Year, 1) Then
               patno = modPatient.GetPatientNoByEnc(encid)
-              xremamt = resx["fldcredit"] - GeCreditUsedCurYear(patno, DiscType, resx["fldyear"], DateAdd(resx["fldyear"], gb.Year, 1))
-              If xremamt > TotAmt * (1 - xcshCrd / 100) Then
+              xval = resx["fldamount"] - GetDiscUsedCurYear(patno, DiscType, resx["fldyear"], DateAdd(resx["fldyear"], gb.Year, 1))
+              If xval > DiscAmt Then
                 xx = True
               Else
                 xx = False
@@ -2938,26 +3074,53 @@ Public Function AllowProceedBilling(encid As String, DiscType As String, DiscAmt
           Else
             xx = False
           Endif
-        Else   ''cash
+
+        Else If resx["fldlimit"] = "YearlyCreditAMT" Then
+          If Not billType Then
+            billType = resx["fldbilltype"]
+          Endif
+          If billType And If billType = "Credit" Then
+            If resx["fldyear"] Then
+              If resx["fldyear"] <= Now() And If Now() < DateAdd(resx["fldyear"], gb.Year, 1) Then
+                patno = modPatient.GetPatientNoByEnc(encid)
+                xremamt = resx["fldcredit"] - GeCreditUsedCurYear(patno, DiscType, resx["fldyear"], DateAdd(resx["fldyear"], gb.Year, 1))
+                If xremamt > TotAmt * (1 - xcshCrd / 100) Then
+                  xx = True
+                Else
+                  xx = False
+                Endif
+              Else
+                xx = False
+              Endif
+            Else
+              xx = False
+            Endif
+          Else   ''cash
+            xx = True
+          Endif
+
+        Else   ''None limitation format
           xx = True
         Endif
 
-      Else   ''None limitation format
+      Else   ''validity not set
         xx = True
       Endif
-
-    Else   ''validity not set
+    Else   ''if no limitation format
       xx = True
     Endif
-  Else   ''if no limitation format
-    xx = True
+
   Endif
 
-  Return xx
+  If xx = True And If yy = True Then
+    Return True
+  Else
+    Return False
+  Endif
 
 End
 
-Public Function AllowProceedPreBill(encid As String, DiscType As String, xQty As Float, xrate As Variant, xdisc As Float, billType As String, xcshCrd As Float) As Boolean
+Public Function AllowPharmProceedPreBill(encid As String, DiscType As String, xQty As Float, xrate As Variant, xdisc As Float, billType As String, xcshCrd As Float, xItemType As String, xItemName As String) As Boolean
 
   Dim xval As Boolean
   Dim sRate As Float
@@ -2970,7 +3133,7 @@ Public Function AllowProceedPreBill(encid As String, DiscType As String, xQty As
     sRate = 0
   Endif
   xtot = xQty * sRate
-  xval = modNonMedical.AllowProceedBilling(encid, DiscType, xtot * (xdisc / 100), xtot * (1 - xdisc / 100), billType, xcshCrd)
+  xval = modNonMedical.AllowProceedBilling(encid, DiscType, xtot * (xdisc / 100), xtot * (1 - xdisc / 100), billType, xcshCrd, xItemType, xItemName, xQty)
 
   Return xval
 
@@ -4035,6 +4198,69 @@ Public Function GetSSFCLaimCode(encid As String) As String
     Endif
   Else
     xx = ""
+  Endif
+
+  Return xx
+
+End
+
+''------------------- QTY Limit ----------------------
+Public Function GetItemQtyLimitForCategory(DiscPackage As String, sType As String, sItem As String) As Float
+
+  Dim xx As Float
+  Dim res As Result
+  Dim res1 As Result
+
+  res = modDatabase.$myConn.Exec("select fldqtylab,fldqtyradio,fldqtyproc,fldqtyequip,fldqtyservice,fldqtyother,fldqtymedicine,fldqtysurgical,fldqtyextra from tbldiscount where fldtype=&1", DiscPackage)
+  If res.Available Then
+
+    res1 = modDatabase.$myConn.Exec("select fldmaxqty from tblcustquantity where fldtype=&1 and flditemname=&2 and flditemtype=&3", DiscPackage, sItem, sType)
+    If res1.Available Then  ''take from exception table
+      If res1["fldmaxqty"] Then
+        xx = res1["fldmaxqty"]
+      Endif
+
+    Else   ''take from fixed value table
+      If sType = "Medicines" Then
+        If res["fldqtymedicine"] Then
+          xx = res["fldqtymedicine"]
+        Endif
+      Else If sType = "Surgicals" Then
+        If res["fldqtysurgical"] Then
+          xx = res["fldqtysurgical"]
+        Endif
+      Else If sType = "Extra Items" Then
+        If res["fldqtyextra"] Then
+          xx = res["fldqtyextra"]
+        Endif
+      Else If sType = "Diagnostic Tests" Then
+        If res["fldqtylab"] Then
+          xx = res["fldqtylab"]
+        Endif
+      Else If sType = "Radio Diagnostics" Then
+        If res["fldqtyradio"] Then
+          xx = res["fldqtyradio"]
+        Endif
+      Else If sType = "General Services" Then
+        If res["fldqtyservice"] Then
+          xx = res["fldqtyservice"]
+        Endif
+      Else If sType = "Procedures" Then
+        If res["fldqtyproc"] Then
+          xx = res["fldqtyproc"]
+        Endif
+      Else If sType = "Equipment" Then
+        If res["fldqtyequip"] Then
+          xx = res["fldqtyequip"]
+        Endif
+      Else If sType = "Other Items" Then
+        If res["fldqtyother"] Then
+          xx = res["fldqtyother"]
+        Endif
+      Endif
+
+    Endif
+
   Endif
 
   Return xx
