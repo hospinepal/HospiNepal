@@ -95,7 +95,7 @@ Public Sub mnuscanimage_Click()
   Dim hForm As FmScanForm
 
   If txtencid.Text Then
-    hForm = New FmScanForm(Trim(txtencid.Text), "Scanned Images")
+    hForm = New FmScanForm(Trim(txtencid.Text), "Scanned Images", "")
     hForm.ShowModal
   Endif
 
@@ -103,15 +103,7 @@ End
 
 Public Sub mnucamera_Click()
 
-  Dim sPath As String
-  Dim sLongID As String
-
-  If txtencid.Text Then
-    sPath = modImage.GetWebCamValue(modDevice.WebCamDevice())
-    If sPath Then
-      sLongID = modImage.SavePatientFileGeneral(Trim(txtencid.Text), "Scanned Images", "Scanned Images:" & modString.GetDateString(Now()), sPath, False)
-    Endif
-  Endif
+  modImage.ArchiveScannedMultiImage(Trim(txtencid.Text))
 
 End
 
@@ -233,24 +225,23 @@ Public Sub btnshow_Click()
         txtpatlocation.Text = modPatient.GetLocationSetting(Trim(txtencid.Text), $Status)
         $xFinClear = modNonMedical.GetFinanceClearance(Trim(txtencid.Text))
         $ClaimStr = modNonMedical.GetFixedReference(Trim(txtencid.Text))
-        If $ClaimStr = "Claim Code" Then
-          chkclaim.Value = True
-        Else If $ClaimStr = "Accident SSF" Then
-          chkclaim.Value = True
-        Else If $ClaimStr = "Medical SSF" Then
-          chkclaim.Value = True
-        Else
-          chkclaim.Value = False
-        Endif
+        Select $ClaimStr
+          Case "Claim Code"
+            txtclaim.Text = modClaim.GetCurrentClaimCodePrint(Trim(txtencid.Text))
+            chkclaim.Value = True
+          Case "Accident SSF", "Critical SSF", "Medical SSF"
+            txtclaim.Text = modSSF.GetSSFClaimVIewMedical(Trim(txtencid.Text), $ClaimStr)
+            chkclaim.Value = True
+          Case Else
+            chkclaim.Value = False
+        End Select
 
         txtcreditamt.Value = modNonMedical.GetTotalCreditInvoice(modDatabase.$myConn, Trim(txtencid.Text))
         txtdeposit.Value = modNonMedical.GetPatientDeposit(modDatabase.$myConn, Trim(txtencid.Text))
         txtexpense.Value = Round(modNonMedical.TotalExpenseAmountbyPatient(modDatabase.$myConn, Trim(txtencid.Text)), -2)
         txtpayment.Value = Round(modNonMedical.TotalPaidAmountbyPatient(modDatabase.$myConn, Trim(txtencid.Text)), -2)
 
-        txtclaim.Text = modClaim.GetCurrentClaimCodePrint(Trim(txtencid.Text))
         cmbsource.Text = modPatient.GetDemographAccountValue(Trim(txtencid.Text), "Admission Source")
-
         txtcredlimit.Value = modNonMedical.ShowCreditLimitEnc(Trim(txtencid.Text))
         txtdisclimit.Value = modNonMedical.GetPatCharityLimit(Trim(txtencid.Text))
 
@@ -753,6 +744,9 @@ Public Sub btnconsult_Click()
   If xMedUser And If xMedUser.Count Then
     btnconsult.Tag = xMedUser[0]
     btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
   Endif
 
 End
@@ -818,6 +812,7 @@ Public Sub btnokadmit_Click()
   Dim xval As Integer
   Dim xpayval As Float
   Dim xPolicy As String
+  Dim xstate As String
 
   If Not txtfileno.Text Then
     If modBasic.$DiaryAutoInc = "Yes" Then
@@ -915,10 +910,27 @@ Public Sub btnokadmit_Click()
                       txtclaim.Text = modClaim.GetClaimCidePatient(Trim(txtencid.Text))
                     Endif
                   Endif
+
                 Else If $ClaimStr = "Accident SSF" Then
                   txtclaim.Text = modSSF.GetSSFClaimCodePatient(Trim(txtencid.Text), "Accident SSF")
+
+                Else If $ClaimStr = "Critical SSF" Then
+                  xstate = modSSF.GetCtiticalSSFStatus(Trim(txtencid.Text))
+                  txtclaim.Text = modSSF.GetSSFClaimCodePatient(Trim(txtencid.Text), "Critical SSF", xstate)
+                  If xstate = "Post Diagnosis" Then
+                    hCElig = New CssfAPIEligible($PatientCode)
+                    xmedipd = hCElig.GetPostDiagnoAmt()
+                    If xmedipd > 0 Then
+                      xcashper = modNonMedical.GetCashinCreditFixPercent(modBasic.$SSFCritical)
+                      res = modDatabase.$myConn.Edit("tblencounter", "fldencounterval=&1", Trim(txtencid.Text))
+                      res["fldcashcredit"] = xmedipd * (100 - xcashper) / 100
+                      res.Update
+                    Endif
+                  Endif
+
                 Else If $ClaimStr = "Medical SSF" Then
-                  txtclaim.Text = modSSF.GetSSFClaimCodePatient(Trim(txtencid.Text), "Medical SSF")
+                  xstate = modSSF.GetSSFClaimStatus(Trim(txtencid.Text))
+                  txtclaim.Text = modSSF.GetSSFClaimCodePatient(Trim(txtencid.Text), "Medical SSF", xstate)
                   hCElig = New CssfAPIEligible($PatientCode)
                   xmedopd = hCElig.GetMedicalOPDAmt()
                   xmedipd = hCElig.GetMedicalIPDAmt()
@@ -928,6 +940,7 @@ Public Sub btnokadmit_Click()
                     res["fldcashcredit"] = (xmedopd + xmedipd) * (100 - xcashper) / 100
                     res.Update
                   Endif
+
                 Endif
               Endif
               modDatabase.$myConn.Commit
@@ -970,6 +983,12 @@ Catch
   modDatabase.$myConn.Rollback
   Dec Application.Busy
   modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub cmbsource_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbsource)
 
 End
 
