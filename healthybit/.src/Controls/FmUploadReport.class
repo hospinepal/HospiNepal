@@ -1,0 +1,221 @@
+' Gambas class file
+
+Private $encid As String
+Private $sExtra As String
+Private $sPath As String
+Private $hPDF As PdfDocument
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $tblpatreport As String
+
+Public Sub _new(encid As String, sExtra As String)
+
+  $encid = encid
+  If sExtra Then
+    $sExtra = sExtra
+    btnupload.Visible = True
+  Else
+    $sExtra = ""
+    btnupload.Visible = False
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  rbpending.Value = True
+  modAccount.PasInvoiceSetting(cmbfiscal, False)
+  LoadTableNames()
+  ShowDocuments()
+  $sPath = ""
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatreport = "tblpatreport"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatreport from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatreport"] Then
+        $tblpatreport = res["fldpatreport"]
+      Else
+        $tblpatreport = "tblpatreport"
+      Endif
+    Else
+      $tblpatreport = "tblpatreport"
+    Endif
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["U"] And If Key.Control Then
+    btnupload_Click()
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub rbpending_Click()
+
+  ShowDocuments()
+  $sPath = ""
+
+End
+
+Public Sub rbanystate_Click()
+
+  ShowDocuments()
+  $sPath = ""
+
+End
+
+Private Sub ShowDocuments()
+
+  If rbpending.Value = True Then
+    $rData = modDatabase.$syConn.Exec("select fldid,fldtime,fldcateg,fldtitle,flddetail,fldsave,fldlink,fldencounterval from " & $tblpatreport & " where fldencounterval like &1 and (fldcateg like &2 or fldcateg like &3) and (fldflag=&4 or fldflag IS NULL) and (flvisible=&5 or flvisible IS NULL)", $encid, "General Reports", "Scanned Images", False, "Visible")
+  Else If rbanystate.Value = True Then
+    $rData = modDatabase.$syConn.Exec("select fldid,fldtime,fldcateg,fldtitle,flddetail,fldsave,fldlink,fldencounterval from " & $tblpatreport & " where fldencounterval like &1 and (fldcateg like &2 or fldcateg like &3) and (flvisible=&4 or flvisible IS NULL)", $encid, "General Reports", "Scanned Images", "Visible")
+  Endif
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 1
+    .Columns[7].Width = 1
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Category"
+    .Columns[3].Text = "Title"
+    .Columns[4].Text = "Comment"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub btnupload_Click()
+
+  Dim xPath As String
+
+  Dim asx As String[]
+  Dim aOutPath As String
+
+  Inc Application.Busy
+  xPath = $sPath
+  If Exist(xPath) Then
+    asx = Split($sExtra, "|")
+    If asx[1] Then
+      If asx[0] = modBasic.$HIPackage Or If asx[0] = modBasic.$HIPackageER Then
+        aOutPath = modClaimAPI.UploadImagesFilesClaimServerHI(asx[1], xPath, modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory))
+      Else If asx[0] = modBasic.$SSFAccident Or If asx[0] = modBasic.$SSFMedical Or If asx[0] = modBasic.$SSFCritical Then
+
+      Endif
+    Endif
+    If aOutPath Then
+      LCDLabel1.Text = "UPLOADED"
+    Endif
+  Endif
+  Dec Application.Busy
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close()
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    $sPath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+    If Exist($sPath) Then
+
+      Select Case Lower(File.Ext($sPath))
+        Case "bmp", "jpg", "jpeg", "png", "gif", "svg", "tiff"
+          DisplayImage($sPath)
+        Case Else
+          DisplayPDF($sPath)
+      End Select
+
+    Endif
+  Endif
+
+End
+
+Private Sub DisplayImage(sPath As String)
+
+  docviewleft.Visible = False
+  DocumentView1.Visible = False
+  modImage.StretchtPictureToBox(PictureBox1, sPath)
+
+End
+
+Private Sub DisplayPDF(sPath As String)
+
+  PictureBox1.Visible = False
+  If $hPDF And If $hPDF.Count Then
+    $hPDF.Close()
+  Endif
+
+  $hPDF = New PdfDocument
+  $hPDF.Open(sPath)
+  DocumentView1.Count = $hPDF.Count
+  docviewleft.Count = 0
+  docviewleft.DocHeight = $hPDF[1].Height / 0.72
+  docviewleft.DocWidth = $hPDF[1].Width / 0.72
+  DocumentView1.DocWidth = $hPDF[1].Width / 0.72
+  DocumentView1.DocHeight = $hPDF[1].Height / 0.72
+
+  DocumentView1.Arrangement = 0
+  DocumentView1.Refresh()
+
+End
+
+Public Sub DocumentView1_Layout(Page As Integer)
+
+  Last.Layout.Height = $hPDF[Page + 1].Height / 0.72
+  Last.Layout.Width = $hPDF[Page + 1].Width / 0.72
+
+End
+
+Public Sub DocumentView1_Draw(Page As Integer, Width As Integer, Height As Integer)
+
+  If Page > $hPDF.Count - 1 Then Return
+
+  $hPDF.Zoom = Last.Zoom / 0.72
+  Draw.Image($hPDF[Page + 1].Image, 0, 0)
+
+End
+
+Public Sub DocumentView1_MouseDown()
+
+  Print DocumentView1.Find(Mouse.x, Mouse.y)
+
+End
