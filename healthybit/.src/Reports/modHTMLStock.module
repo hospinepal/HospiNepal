@@ -8,14 +8,16 @@ Public Function GetSupplierSummaryAmount(dtfir As Date, dtlast As Date, Optional
   Dim $BillingReport As CReportHTML
   Dim asx As New String[0]
   Dim res As Result
+  Dim rex As Result
 
+  Dim xsub As Float
   Dim xtot As Float
   Dim i As Integer
   Dim xstr As String
   Dim RepoStr As String
 
   RepoStr = modDataRepo.GetRepoLastStr()
-  $BillingReport = New CReportHTML([("SNo"), ("Date"), ("Supplier"), ("Invoice"), ("Reference"), ("Amount")], "", "")
+  $BillingReport = New CReportHTML([("SNo"), ("Date"), ("Pur Order"), ("Invoice"), ("Reference"), ("Amount")], "", "")
   If sComp Then
     $BillingReport.UserData.Add("PURCHASE SUMMARY : " & sComp, "PARAM1")
   Else
@@ -32,36 +34,68 @@ Public Function GetSupplierSummaryAmount(dtfir As Date, dtlast As Date, Optional
   Else
     xstr = ""
   Endif
-  xtot = 0
-  i = 1
-  res = modDatabase.$syConn.Exec("select fldpurdate,fldsuppname,fldbillno,fldreference,fldcredit from tblpurchasebill where fldpurdate>=&1 and fldpurdate<=&2 and fldcategory=&3" & xstr & RepoStr, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "PurEntry", sComp)
-  If res.Available Then
-    For Each res
-      xtot = xtot + res["fldcredit"]
-      With asx
-        .Add(CStr(i))
-        .Add(modReportVar.GetDateTimeReport(res["fldpurdate"], gb.MediumDate))
-        .Add(res["fldsuppname"])
-        .Add(res["fldbillno"])
-        .Add(res["fldreference"])
-        .Add(modReportVar.GetLocaleNumberFormat(res["fldcredit"], gb.Currency))
-      End With
-      $BillingReport.Add(asx)
-      asx.Clear()
-      i = i + 1
-    Next
 
-    With asx
-      .Add("")
-      .Add("TOTAL")
-      .Add("")
-      .Add("")
-      .Add("")
-      .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
-    End With
-    $BillingReport.Add(asx)
-    asx.Clear()
+  xtot = 0
+  rex = modDatabase.$syConn.Exec("select distinct(fldsuppname) as fldsuppname from tblpurchasebill where fldpurdate>=&1 and fldpurdate<=&2 and fldcategory=&3" & xstr & RepoStr & " ORDER BY fldsuppname", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "PurEntry", sComp)
+  If rex.Available Then
+    For Each rex
+      $BillingReport.AddChapter(rex["fldsuppname"])
+
+      i = 1
+      xsub = 0
+      res = modDatabase.$syConn.Exec("select fldpurdate,fldsuppname,fldpurorder,fldbillno,fldreference,fldcredit from tblpurchasebill where fldpurdate>=&1 and fldpurdate<=&2 and fldcategory=&3" & xstr & " and fldsuppname=&5" & RepoStr, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "PurEntry", sComp, rex["fldsuppname"])
+      If res.Available Then
+        For Each res
+          xsub = xsub + res["fldcredit"]
+          With asx
+            .Add(CStr(i))
+            .Add(modReportVar.GetDateTimeReport(res["fldpurdate"], gb.MediumDate))
+            .Add(res["fldpurorder"])
+            .Add(res["fldbillno"])
+            .Add(res["fldreference"])
+            .Add(modReportVar.GetLocaleNumberFormat(res["fldcredit"], gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next
+
+        ''sub total
+        xtot = xtot + xsub
+        With asx
+          .Add("")
+          .Add("SUBTOTAL")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(xsub, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
   Endif
+
+  With asx
+    .Add("")
+    .Add("<b>GRAND TOTAL</b>")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
 
   Return $BillingReport.NewHTMLPath()
 
@@ -907,28 +941,71 @@ Public Function GetDispenseSummaryReport(sType As String, dt1 As Date, dt2 As Da
 
   Dim $BillingReport As CReportHTML
   Dim asx As New String[0]
-  Dim res1 As Result
+  Dim res2 As Result
   Dim i As Integer
-  Dim xtot As Float
   Dim RepoStr As String
 
+  Dim xitot As Float
+  Dim xdsc As Float
+  Dim xtax As Float
+  Dim xcash As Float
+  Dim xcrdt As Float
+
+  Dim btot As Float
+  Dim bdsc As Float
+  Dim btax As Float
+  Dim bcash As Float
+  Dim bcrdt As Float
+
   RepoStr = modDataRepo.GetRepoLastStr()
-  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("QTY"), ("Rate"), ("Total")], "", "")
+  $BillingReport = New CReportHTML([("SNo"), ("PARTICULARS"), ("QTY"), ("GROSS"), ("DISCOUNT"), ("TAX"), ("CREDIT"), ("CASH")], "", "")
   $BillingReport.UserData.Add("DISPENSE SUMMARY : " & sType, "PARAM1")
   $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
 
   i = 1
-  xtot = 0
-  res1 = modDatabase.$syConn.Exec("select flditemname,AVG(flditemrate) as netcost,SUM(flditemqty) as qty,SUM(fldditemamt) as totamt from tblpatbilling where flditemtype=&1 and fldtime>=&2 and fldtime<=&3 and fldsave=&4 and fldcomp like &5" & RepoStr & " GROUP BY flditemname", sType, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True, cmbcomp)
-  If res1.Available Then
-    For Each res1
-      xtot = xtot + res1["totamt"]
+  btot = 0
+  bdsc = 0
+  btax = 0
+  bcash = 0
+  bcrdt = 0
+  res2 = modDatabase.$syConn.Exec("select flditemname,SUM(flditemqty) as qty," & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where flditemtype=&1 and fldtime>=&2 and fldtime<=&3 and fldsave=&4 and fldcomp like &5" & RepoStr & " GROUP BY flditemname", sType, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True, cmbcomp)
+  If res2.Available Then
+    For Each res2
+      xitot = 0
+      xdsc = 0
+      xtax = 0
+      xcash = 0
+      xcrdt = 0
+      If res2["duemt"] Then
+        xitot = res2["duemt"]
+      Endif
+      If res2["disctot"] Then
+        xdsc = res2["disctot"]
+      Endif
+      If res2["taxtot"] Then
+        xtax = res2["taxtot"]
+      Endif
+      If res2["xcredit"] Then
+        xcrdt = res2["xcredit"]
+      Endif
+      If res2["xcash"] Then
+        xcash = res2["xcash"]
+      Endif
+
+      btot = btot + xitot
+      bdsc = bdsc + xdsc
+      btax = btax + xtax
+      bcrdt = bcrdt + xcrdt
+      bcash = bcash + xcash
       With asx
         .Add(modReportVar.GetLocaleNumberFormat(i, 0))
-        .Add(res1["flditemname"])
-        .Add(modReportVar.GetLocaleNumberFormat(res1["qty"], -2))
-        .Add(modReportVar.GetLocaleNumberFormat(res1["netcost"], gb.Currency))
-        .Add(modReportVar.GetLocaleNumberFormat(res1["totamt"], gb.Currency))
+        .Add(res2["flditemname"])
+        .Add(modReportVar.GetLocaleNumberFormat(res2["qty"], -2))
+        .Add(modReportVar.GetLocaleNumberFormat(xitot, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xdsc, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xcrdt, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xcash, gb.Currency))
       End With
       $BillingReport.Add(asx)
       asx.Clear()
@@ -937,252 +1014,17 @@ Public Function GetDispenseSummaryReport(sType As String, dt1 As Date, dt2 As Da
 
     With asx
       .Add("")
-      .Add("****")
+      .Add("GRAND TOTAL")
       .Add("")
-      .Add("")
-      .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(btot, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(bdsc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(btax, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(bcrdt, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(bcash, gb.Currency))
     End With
     $BillingReport.Add(asx)
     asx.Clear()
   Endif
-
-  Return $BillingReport.NewHTMLPath()
-
-End
-
-''------------- Fixed Assets -----------------
-Public Function FixedAssetsReport(sType As String, sText As String, sLocaType As String, sLocation As String) As String
-
-  Dim $BillingReport As CReportHTML
-  Dim asx As New String[0]
-  Dim res1 As Result
-  Dim i As Integer
-  Dim xfld As String
-  Dim yfld As String
-  Dim xList As String[]
-  Dim xitem As String
-  Dim RepoStr As String
-
-  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
-  $BillingReport = New CReportHTML([("SNo"), ("Category"), ("Ledger"), ("Particulars"), ("Code"), ("Specs"), ("Mfg"), ("Model"), ("Serial"), ("PurDate"), ("Payment"), ("QTY"), ("Rate"), ("Disc"), ("Tax"), ("Extra"), ("Total"), ("Condition"), ("Remarks")], "", "")
-  $BillingReport.UserData.Add("FIXED ASSETS REPORT :" & sType, "PARAM1")
-  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(Now(), gb.MediumDate), "PARAM2")
-
-  If sType = "Category" Then
-    xfld = "fldgroup"
-    yfld = "fldcomp"
-  Else If sType = "Location" Then
-    xfld = "fldcomp"
-    yfld = "fldgroup"
-  Else If sType = "Invoice" Then
-    xfld = "fldbillno"
-    yfld = "fldgroup"
-  Endif
-  If sText = "%" Then
-    xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec(Subst("select distinct(&1) as col from tblassetsentry", xfld)))
-  Else
-    xList = New String[]
-    xList.Add(sText)
-  Endif
-
-  For Each xitem In xList
-    $BillingReport.AddSection(xitem, True)
-
-    i = 1
-    res1 = modDatabase.$syConn.Exec(Subst("select fldledger,fldcode,flditemname,fldspecs,fldmanufacturer,fldmodel,fldserial,fldpurdate,fldcondition,fldqty,fldunit,flditemrate,fldditemamt,fldpayment,fldtaxamt,flddiscamt,fldexpense,fldcomment,&1 as col2 from tblassetsentry where &2", yfld, xfld) & "=&1" & RepoStr, xitem)
-    If res1.Available Then
-      For Each res1
-        With asx
-          .Add(modReportVar.GetLocaleNumberFormat(i, 0))
-          .Add(res1["col2"])
-          .Add(res1["fldledger"])
-          .Add(res1["flditemname"])
-          .Add(res1["fldcode"])
-          .Add(res1["fldspecs"])
-          .Add(res1["fldmanufacturer"])
-          .Add(res1["fldmodel"])
-          .Add(res1["fldserial"])
-          .Add(modReportVar.GetDateTimeReport(res1["fldpurdate"], gb.MediumDate))
-          .Add(res1["fldpayment"])
-          If res1["fldqty"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldqty"], -2) & Space(1) & res1["fldunit"])
-          Else
-            .Add("")
-          Endif
-          If res1["flditemrate"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["flditemrate"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["flddiscamt"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["flddiscamt"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["fldtaxamt"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldtaxamt"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["fldexpense"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldexpense"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["fldditemamt"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldditemamt"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          .Add(res1["fldcondition"])
-          .Add(res1["fldcomment"])
-        End With
-        $BillingReport.Add(asx)
-        asx.Clear()
-        i = i + 1
-      Next
-      With asx
-        .Add("")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-      End With
-      $BillingReport.Add(asx)
-      asx.Clear()
-    Endif
-
-  Next
-
-  Return $BillingReport.NewHTMLPath()
-
-End
-
-Public Function FixedAssetsReportDate(sType As String, dt1 As Date, dt2 As Date, sLocaType As String, sLocation As String) As String
-
-  Dim $BillingReport As CReportHTML
-  Dim asx As New String[0]
-  Dim res1 As Result
-  Dim i As Integer
-  Dim xfld As String
-  Dim yfld As String
-  Dim xList As String[]
-  Dim xitem As String
-  Dim RepoStr As String
-
-  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
-  $BillingReport = New CReportHTML([("SNo"), ("Category"), ("Ledger"), ("Particulars"), ("Code"), ("Specs"), ("Mfg"), ("Model"), ("Serial"), ("PurDate"), ("Payment"), ("QTY"), ("Rate"), ("Disc"), ("Tax"), ("Extra"), ("Total"), ("Condition"), ("Remarks")], "", "")
-  $BillingReport.UserData.Add("FIXED ASSETS REPORT :" & sType, "PARAM1")
-  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(Now(), gb.MediumDate), "PARAM2")
-
-  If sType = "Category" Then
-    xfld = "fldgroup"
-    yfld = "fldcomp"
-  Else If sType = "Location" Then
-    xfld = "fldcomp"
-    yfld = "fldgroup"
-  Else If sType = "Invoice" Then
-    xfld = "fldbillno"
-    yfld = "fldgroup"
-  Endif
-  xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec(Subst("select distinct(&1) as col from tblassetsentry", xfld)))
-
-  For Each xitem In xList
-    $BillingReport.AddSection(xitem, True)
-
-    i = 1
-    res1 = modDatabase.$syConn.Exec(Subst("select fldledger,fldcode,flditemname,fldspecs,fldmanufacturer,fldmodel,fldserial,fldpurdate,fldcondition,fldqty,fldunit,flditemrate,fldditemamt,fldpayment,fldtaxamt,flddiscamt,fldexpense,fldcomment,&1 as col2 from tblassetsentry where &2", yfld, xfld) & "=&1 and fldpurdate>=&2 and fldpurdate<=&3" & RepoStr, xitem, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
-    If res1.Available Then
-      For Each res1
-        With asx
-          .Add(modReportVar.GetLocaleNumberFormat(i, 0))
-          .Add(res1["col2"])
-          .Add(res1["fldledger"])
-          .Add(res1["flditemname"])
-          .Add(res1["fldcode"])
-          .Add(res1["fldspecs"])
-          .Add(res1["fldmanufacturer"])
-          .Add(res1["fldmodel"])
-          .Add(res1["fldserial"])
-          .Add(modReportVar.GetDateTimeReport(res1["fldpurdate"], gb.MediumDate))
-          .Add(res1["fldpayment"])
-          If res1["fldqty"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldqty"], -2) & Space(1) & res1["fldunit"])
-          Else
-            .Add("")
-          Endif
-          If res1["flditemrate"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["flditemrate"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["flddiscamt"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["flddiscamt"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["fldtaxamt"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldtaxamt"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["fldexpense"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldexpense"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          If res1["fldditemamt"] Then
-            .Add(modReportVar.GetLocaleNumberFormat(res1["fldditemamt"], gb.Currency))
-          Else
-            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
-          Endif
-          .Add(res1["fldcondition"])
-          .Add(res1["fldcomment"])
-        End With
-        $BillingReport.Add(asx)
-        asx.Clear()
-        i = i + 1
-      Next
-      With asx
-        .Add("")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-        .Add("****")
-      End With
-      $BillingReport.Add(asx)
-      asx.Clear()
-    Endif
-
-  Next
 
   Return $BillingReport.NewHTMLPath()
 
@@ -1261,6 +1103,260 @@ Public Function GetIRDSalesBook(sType As String, dt1 As Date, dt2 As Date) As St
     $BillingReport.Add(asx)
     asx.Clear()
   Endif
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetDDANarcoticReport(medList As String[], dt1 As Date, dt2 As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xmedicine As String
+  Dim dtlst As Date[]
+  Dim xdate As Date
+  Dim RepoStr As String
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res1x As Result
+  Dim res2x As Result
+
+  RepoStr = modDataRepo.GetRepoLastStr()
+  $BillingReport = New CReportHTML([("Date"), ("Batch"), ("Expiry"), ("Pur QTY"), ("Supplier"), ("Patient"), ("Encounter"), ("Disp QTY"), ("Prescriber"), ("Regd No"), ("Dispensed By"), ("Coment")], "", "")
+  $BillingReport.UserData.Add("Narcotics and Psychotropic Medicines Record", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  dtlst = modDate.GetSelectDateArrayBetween(gb.Day, dt1, dt2)
+
+  For Each xmedicine In medList
+    res1x = modDatabase.$syConn.Exec("select fldid from tblpurchase where fldpurdate>=&1 and fldpurdate<&2 and fldstockid=&3 and fldsav=&4" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), xmedicine, False)
+    res2x = modDatabase.$syConn.Exec("select fldid from tblpatdosing where fldtime>=&1 and fldtime<&2 and flditem=&3 and fldsave=&4", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), xmedicine, True)
+    If res1x.Count Or If res2x.Count Then
+      $BillingReport.AddSection(xmedicine, True)
+
+      For Each xdate In dtlst
+
+        If res1x.Count Then
+          res1 = modDatabase.$syConn.Exec("select fldid,fldpurdate,fldsuppname,fldstockid,fldstockno,fldtotalqty from tblpurchase where fldpurdate>=&1 and fldpurdate<&2 and fldstockid=&3 and fldsav=&4" & RepoStr, modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate), xmedicine, False)
+          If res1.Available Then
+            For Each res1
+              With asx
+                .Add(modReportVar.GetDateTimeReport(res1["fldpurdate"], gb.MediumDate))
+                .Add(modStock.GetBatchFromStockNo(res1["fldstockno"]))
+                .Add(modReportVar.GetDateTimeReport(modStock.GetExpiryFromStockNo(res1["fldstockno"]), gb.MediumDate))
+                .Add(modReportVar.GetLocaleNumberFormat(res1["fldtotalqty"], -2))
+                .Add(res1["fldsuppname"])
+
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+            Next
+          Endif
+        Endif
+
+        If res2x.Count Then
+          res2 = modDatabase.$syConn.Exec("select fldid,fldtime,fldencounterval,flditem,fldqtydisp,fldprescriber,fldregno,flduserid from  tblpatdosing where fldtime>=&1 and fldtime<&2 and flditem=&3 and fldsave=&4", modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate), xmedicine, True)
+          If res2.Available Then
+            For Each res2
+              With asx
+                .Add(modReportVar.GetDateTimeReport(res2["fldtime"], gb.MediumDate))
+                .Add("")
+                .Add("")
+                .Add("")
+                .Add("")
+
+                .Add(modPatient.GetPatientNameByEnc(res2["fldencounterval"]))
+                .Add(res2["fldencounterval"])
+                .Add(modReportVar.GetLocaleNumberFormat(res2["fldqtydisp"], -2))
+                .Add(modGeneral.GetUserFullName(res2["fldprescriber"]))
+                .Add(res2["fldregno"])
+                .Add(modGeneral.GetUserFullName(res2["flduserid"]))
+                .Add("")
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+            Next
+          Endif
+        Endif
+
+      Next
+
+      With asx
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+'--------------------- Patan specific ----------------------------------
+Public Function GetTransferFromCompSummary(dtfir As Date, dtlast As Date, sComp As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim rex As Result
+  Dim deptot As Float
+  Dim totval As Float
+
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetRepoLastStr()
+  $BillingReport = New CReportHTML([("REFERENCE"), ("DATE"), ("REQUEST"), ("AMOUNT"), ("COMMENT")], "", "")
+  $BillingReport.UserData.Add("TRANSFER SUMMARY : " & sComp, "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dtfir, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate), "PARAM2")
+
+  totval = 0
+  rex = modDatabase.$syConn.Exec("select distinct(fldtocomp) as fldtocomp from tbltransfer where fldtoentrytime>=&1 and fldtoentrytime<=&2 and fldfromcomp like &3 and fldreference IS NOT NULL" & RepoStr & " ORDER BY fldtocomp", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp)
+  If rex.Available Then
+    For Each rex
+
+      deptot = 0
+      res = modDatabase.$syConn.Exec("select fldtoentrytime,fldreference,fldrequest,SUM(fldqty*fldnetcost) as xtot,fldcomment from tbltransfer where fldtoentrytime>=&1 and fldtoentrytime<=&2 and fldfromcomp like &3 and fldtocomp=&4 and fldreference IS NOT NULL" & RepoStr & " GROUP BY fldreference", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp, rex["fldtocomp"])
+      If res.Available Then
+        $BillingReport.AddChapter(rex["fldtocomp"])
+        For Each res
+          deptot = deptot + res["xtot"]
+          With asx
+            .Add(res["fldreference"])
+            .Add(modReportVar.GetDateTimeReport(res["fldtoentrytime"], gb.MediumDate))
+            .Add(res["fldrequest"])
+            .Add(modReportVar.GetLocaleNumberFormat(res["xtot"], gb.Currency))
+            .Add(res["fldcomment"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+      Endif
+
+      totval = totval + deptot
+      With asx
+        .Add("")
+        .Add("SUBTOTAL : " & rex["fldtocomp"])
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(deptot, gb.Currency))
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+  Endif
+
+  With asx
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(totval, gb.Currency))
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetConsumeFromCompSummary(dtfir As Date, dtlast As Date, sComp As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim rex As Result
+  Dim deptot As Float
+  Dim totval As Float
+
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetRepoLastStr()
+  $BillingReport = New CReportHTML([("REFERENCE"), ("DATE"), ("ORDER"), ("AMOUNT"), ("COMMENT")], "", "")
+  $BillingReport.UserData.Add("CONSUME SUMMARY : " & sComp, "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dtfir, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate), "PARAM2")
+
+  totval = 0
+  rex = modDatabase.$syConn.Exec("select distinct(fldtarget) as fldtarget from tblbulksale where fldtime>=&1 and fldtime<=&2 and fldcomp like &3 and fldreference IS NOT NULL" & RepoStr & " ORDER BY fldtarget", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp)
+  If rex.Available Then
+    For Each rex
+
+      deptot = 0
+      res = modDatabase.$syConn.Exec("select fldtime,fldreference,fldrequest,SUM(fldqtydisp*fldnetcost) as xtot,fldcomment from tblbulksale where fldtime>=&1 and fldtime<=&2 and fldcomp like &3 and fldtarget=&4 and fldreference IS NOT NULL" & RepoStr & " GROUP BY fldreference", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp, rex["fldtarget"])
+      If res.Available Then
+        $BillingReport.AddChapter(rex["fldtarget"])
+        For Each res
+          deptot = deptot + res["xtot"]
+          With asx
+            .Add(res["fldreference"])
+            .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumDate))
+            .Add(res["fldrequest"])
+            .Add(modReportVar.GetLocaleNumberFormat(res["xtot"], gb.Currency))
+            .Add(res["fldcomment"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+      Endif
+
+      totval = totval + deptot
+      With asx
+        .Add("")
+        .Add("SUBTOTAL : " & rex["fldtarget"])
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(deptot, gb.Currency))
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+  Endif
+
+  With asx
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(totval, gb.Currency))
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
   Return $BillingReport.NewHTMLPath()
 
 End
