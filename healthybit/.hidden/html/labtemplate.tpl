@@ -58,6 +58,9 @@ body {
    border-top: 1px solid #ccc;
 }
 
+.reportdual_table {
+}
+
 .row_chapter {
 }
 

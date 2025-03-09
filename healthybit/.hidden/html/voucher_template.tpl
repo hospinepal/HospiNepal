@@ -93,8 +93,6 @@
 .reportmid_table tr {
 }
 
-.reportdual_table {
-}
 
 .footer_table {
 }

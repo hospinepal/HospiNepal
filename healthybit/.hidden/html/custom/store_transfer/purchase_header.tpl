@@ -27,15 +27,15 @@
   <tbody>
     <tr>
       <td style="text-align: left;width: 75%;"></td>
-      <td style="text-align: left;">आ. व.:{PurchaseRequestNo}</td>
+      <td style="text-align: left;">आ. व.:</td>
       </tr>
     <tr>
       <td style="text-align: left;"></td>
-      <td style="text-align: left;">निकासा नं:{PurchaseRequestDate}</td>
+      <td style="text-align: left;">निकासा नं:{StoreTransferNo}</td>
       </tr>
     <tr>
       <td style="text-align: left;"></td>
-      <td style="text-align: left;">मिति:</td>
+      <td style="text-align: left;">मिति: {StoreTransferDate}</td>
       </tr>       
   </tbody>
 </table>
