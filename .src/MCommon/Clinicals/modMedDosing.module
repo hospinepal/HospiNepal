@@ -1,0 +1,171 @@
+' Gambas module file
+
+'NOTE:------------------------------------- Dose calculation -----------------------------------------
+Public Function GetDoseInMg(dos As Float, unt As String, encid As String) As Float
+
+  Dim dosval As Float
+  Dim wt As Float
+  Dim bsa As Float
+
+  Select unt
+    Case "mg", "IU", "mL"
+      dosval = dos
+
+    Case "mg/Kg", "IU/Kg", "mL/Kg"
+      wt = modClinic.GetBodyWeight(encid)
+      If wt Then
+        dosval = dos * wt
+      Else
+        dosval = 0
+      Endif
+
+    Case "mg/sqm", "IU/sqm", "mL/sqm"
+      bsa = modSysCons.GetCalculationAValue("Body_Surface_Area", encid)
+      If bsa Then
+        dosval = dos * bsa
+      Else
+        dosval = 0
+      Endif
+
+  End Select
+
+  If dosval Then
+    dosval = Round(dosval, -2)
+  Endif
+
+  Return dosval
+
+End
+
+Public Function GetDoseInMgFoFromRegID(id As Long, encid As String) As Float
+
+  Dim res As Result
+  Dim dose As Float
+  Dim xval As Float
+
+  res = modDatabase.$medConn.Exec("select flddose,flddoseunit from tblregimen where fldid=&1", id)
+  If res.Available = True Then
+    If res["flddose"] Then
+      xval = GetDoseInMg(res["flddose"], res["flddoseunit"], encid)
+      If xval Then
+        dose = xval
+      Else
+        dose = 0
+      Endif
+    Else
+      dose = 0
+    Endif
+  Else
+    dose = 0
+  Endif
+
+  Return dose
+
+End
+
+''------------------------------- use tblcode -----------------------------------------
+Private Function GetDoseValue(strDose As String, encid As String, stockid As String) As Float
+
+  Dim res As Result
+  Dim dos As Float
+  Dim dosval As Float
+  Dim sql As String
+  Dim xval As Float
+
+  sql = strDose & " where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid=&1))"
+  res = modDatabase.$medConn.Exec(sql, stockid)
+  If res.Available Then
+    res.MoveLast
+    If res["dose"] Then
+      dos = res["dose"]
+    Else
+      dos = 0
+    Endif
+  Else
+    dos = 0
+  Endif
+
+  If dos Then
+    xval = GetDoseInMg(dos, res["unit"], encid)
+    If xval Then
+      dosval = xval
+    Else
+      dosval = 0
+    Endif
+  Endif
+
+  Return dosval
+
+End
+
+Public Function RecommendedDoseDrug(encid As String, xYear As Integer, stockid As String) As Float
+
+  Dim sql As String
+  Dim recdose As Float
+
+  recdose = 0
+  If xYear <= 12 Then
+    sql = "select fldrecpeddose as dose,fldrecpeddoseunit as unit from tblcode"
+  Else If xYear > 12 Then
+    sql = "select fldrecaddose as dose,fldrecaddoseunit as unit from tblcode"
+  Endif
+  recdose = GetDoseValue(sql, encid, stockid)
+
+  If modSettings.ShowSettingFromFIle("RenalDoseAdjustment/Activate") = "Yes" Then
+    If modMedConstant.GetDrugRenalEliminFraction(stockid) * 100 > CFloat(modSettings.ShowSettingFromFIle("RenalDoseAdjustment/MinRenPer")) And If modSysCons.GetCreatinineClearance(encid) < CFloat(modSettings.ShowSettingFromFIle("RenalDoseAdjustment/MaxCrCl")) Then                                             ''
+      recdose = recdose * modMedDosing.GetDoseAdjustmentFactor(encid, stockid)
+    Endif
+  Endif
+
+  If recdose = 0 Then
+    recdose = modMedConstant.GetDrugInitialStrength(stockid)
+  Endif
+
+  Return recdose
+
+End
+
+Public Function RecommendedFrequencyDrug(xYear As Integer, stockid As String, Optional sMed As Boolean) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim recfreq As String
+
+  If xYear <= 12 Then
+    sql = "select fldrecpedfreq as freq from tblcode where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid=&1))"
+  Else If xYear > 12 Then
+    sql = "select fldrecadfreq as freq from tblcode where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid=&1))"
+  Endif
+  res = modDatabase.$medConn.Exec(sql, stockid)
+  If res.Available Then
+    If res["freq"] Then
+      recfreq = CStr(res["freq"])
+    Else
+      recfreq = ""
+    Endif
+  Else
+    recfreq = ""
+  Endif
+
+  If sMed = True Then
+  Else
+    If recfreq = "" Then
+      recfreq = "1"
+    Endif
+  Endif
+
+  Return recfreq
+
+End
+
+Public Function GetDoseAdjustmentFactor(encid As String, stockid As String) As Float
+
+  Dim xx As Float
+
+  xx = (modSysCons.GetCreatinineClearance(encid) / 120) - 1
+  xx = 1 + xx * modMedConstant.GetDrugRenalEliminFraction(stockid)
+  xx = Round(1 / xx, -3)
+
+  Return xx
+
+End

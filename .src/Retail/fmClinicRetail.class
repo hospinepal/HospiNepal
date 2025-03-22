@@ -1,0 +1,284 @@
+' Gambas class file
+
+Private $encid As String
+Private $CreatName As String
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+
+End
+
+Public Sub Form_Open()
+
+  Me.Center
+  cmbunit.List = ["mg/dL", "mMol/L"]
+  cmbhepatic.List = ["Impaired", "Normal"]
+  cmbhepatic.Text = modClinic.GetHepaticStatus($encid)
+  If modPatient.GetPatientSex($encid) = "Male" Then
+    cmbpregnancy.Text = "Not Applicable"
+    cmbpregnancy.Enabled = False
+    tlbtpregnancy.Enabled = False
+  Else
+    cmbpregnancy.List = ["1st trimester", "2nd trimester", "3rd trimester", "Breast feeding", "Non Pregnant"]
+    cmbpregnancy.Text = modClinic.GetPregnancyStatus($encid)
+    cmbpregnancy.Enabled = True
+  Endif
+  $CreatName = CreatinineName()
+  txtcreatinine.Value = modLabTest.GetCurrTesValuePos("Last", $encid, $CreatName, MMain.$defUnit)
+  cmbunit.Text = "mg/dL"
+  lstallergy.List = modPathoSub.GetAllergyMedicineList($encid, chkallergy.Value)
+  lsticdisease.List = modPathoSub.GetProvisionalDiagnosisList($encid)
+  If MMain.$SISHAppMode = "PHM" Then
+  Else
+    btnhepatic.Enabled = False
+    tlbtpregnancy.Enabled = False
+    btncreatinine.Enabled = False
+    tlbtndelallergy.Enabled = False
+    btnallergy.Enabled = False
+    tlbtndeldises.Enabled = False
+    btndismanual.Enabled = False
+    tbnsyndro.Enabled = False
+    tbndisease.Enabled = False
+  Endif
+
+End
+
+Public Sub btnhepatic_Click()
+
+  If $encid And If cmbhepatic.Text Then
+    modClinSub.AddGeneralParametersQuali($encid, "Hepatic Status", cmbhepatic.Text)
+    Balloon.Info(("Information saved"), btnhepatic)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub tlbtpregnancy_Click()
+
+  If $encid And If cmbpregnancy.Text Then
+    modClinSub.AddGeneralParametersQuali($encid, "Pregnancy Status", cmbpregnancy.Text)
+    Balloon.Info(("Information saved"), tlbtpregnancy)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub btncreatinine_Click()
+
+  Dim xunit As String
+
+  If cmbunit.Text And If $encid Then
+    If cmbunit.Text = "mg/dL" Then
+      xunit = "Metric"
+    Else If cmbunit.Text = "mMol/L" Then
+      xunit = "SI"
+    Endif
+    InsertSerumCreatinine($encid, txtcreatinine.Value, False, xunit)
+    Balloon.Info(("Information saved"), btncreatinine)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub tlbtndelallergy_Click()
+
+  Dim res As Result
+
+  If $encid Then
+    res = modDatabase.$myConn.Edit("tblpatfindings", "fldcode=&1 and fldencounterval=&2 and fldtype=&3 and fldsave=&4", lstallergy.Text, $encid, "Allergic Drugs", True)
+    res["fldsave"] = False
+    res["xyz"] = False
+    res.Update
+    lstallergy.List = modPathoSub.GetAllergyMedicineList($encid, chkallergy.Value)
+    Balloon.Delete(("Information deleted"), tlbtndelallergy)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub chkallergy_Click()
+
+  lstallergy.List = modPathoSub.GetAllergyMedicineList($encid, chkallergy.Value)
+
+End
+
+Public Sub btnallergy_Click()
+
+  Dim sName As String[]
+  Dim sText As String
+
+  If $encid Then
+    sName = GridListView(("Select Drugs"), modMedicine.GetGenericMedList())
+    If sName And If sName.Count Then
+      For Each sText In sName
+        modPatientGeneral.AddPatientFindings("Allergic Drugs", $encid, sText, "", "")
+      Next
+    Endif
+    lstallergy.List = modPathoSub.GetAllergyMedicineList($encid, chkallergy.Value)
+  Endif
+
+End
+
+Public Sub tlbtndeldises_Click()
+
+  Dim res As Result
+
+  If $encid Then
+    If lsticdisease.Text Then
+      res = modDatabase.$myConn.Edit("tblpatfindings", "fldcode=&1 and fldencounterval=&2 and fldtype=&3 and fldsave=&4", lsticdisease.Text, $encid, "Provisional Diagnosis", True)
+      res["fldsave"] = False
+      res["xyz"] = False
+      res.Update
+      lsticdisease.List = modPathoSub.GetProvisionalDiagnosisList($encid)
+      Balloon.Delete(("Information deleted"), tlbtndeldises)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub tbndisease_Click()
+
+  Dim sName As String[]
+
+  If $encid Then
+    sName = ICDTree(modDatabase.$icdConn, "Disease", modBasic.$ClinDiagnoSelectGrouped, modBasic.$ClinDiagnoSelectERGroup, modBasic.$ClinDiagnoChapterGrouped, modBasic.$DefaultDiagnoGroup)
+    If sName Then
+      If sName[1] And If sName[0] Then
+        modPatientGeneral.AddPatientFindings("Provisional Diagnosis", $encid, sName[0], sName[1], sName[2])
+        lsticdisease.List = modPathoSub.GetProvisionalDiagnosisList($encid)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub tbnsyndro_Click()
+
+  Dim sName As String[]
+
+  If $encid Then
+    If modBasic.$ProvDiagnosisRule = "Obstetrics" Then
+      sName = DiagnoObstetrics($encid, True)
+    Else
+      sName = GetSyndromes()
+    Endif
+
+    If sName Then
+      If sName[1] And If sName[0] Then
+        modPatientGeneral.AddPatientFindings("Provisional Diagnosis", $encid, sName[0], sName[1], sName[1])
+        lsticdisease.List = modPathoSub.GetProvisionalDiagnosisList($encid)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btndismanual_Click()
+
+  Dim xx As String
+
+  If $encid Then
+    xx = InputBox(("Enter custom Provisional Diagnosis"), ("Provisional Diagnosis"), "")
+    If xx Then
+      modPatientGeneral.AddPatientFindings("Provisional Diagnosis", $encid, xx, "Other", "Other")
+      lsticdisease.List = modPathoSub.GetProvisionalDiagnosisList($encid)
+    Endif
+  Endif
+
+End
+
+Private Function CreatinineName() As String
+
+  Dim tstname As String
+
+  tstname = modFixLab.GetLabTestIDFromSysConst("Creatinine_Serum")
+  If Not tstname Then
+    tstname = "Creatinine Serum"
+  Endif
+  Return tstname
+
+End
+
+Private Sub InsertSerumCreatinine(encid As String, strVal As Float, abn As Boolean, strUnit As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Create("tblpatlabtest")
+  res["fldencounterval"] = encid
+  res["fldtestid"] = $CreatName
+  res["fldmethod"] = ""
+  res["fldgroupid"] = 0
+  res["fldsampleid"] = ""
+  res["fldsampletype"] = "Serum"
+  res["fldreportquali"] = CStr(strVal)
+  res["fldreportquanti"] = strVal
+  res["fldfilepath"] = ""
+  res["fldstatus"] = "Reported"
+  res["fldprint"] = False
+  res["fldabnormal"] = abn
+  res["fldrefername"] = ""
+  res["fldcondition"] = ""
+  res["fldcomment"] = ""
+  res["fldbillno"] = ""
+  res["flvisible"] = "Visible"
+
+  res["fldtestunit"] = strUnit
+  res["fldtest_type"] = "Quantitative"
+  res["fldchk"] = False
+  res["fldorder"] = 0
+  res["fldflag"] = False
+  res["xyz"] = False
+
+  res["flduserid_sample"] = ""
+  res["fldtime_sample"] = ""
+  res["fldcomp_sample"] = modBasic.$compID
+  res["fldsave_sample"] = False
+  res["flduptime_sample"] = ""
+
+  res["flduserid_start"] = ""
+  res["fldtime_start"] = ""
+  res["fldcomp_start"] = ""
+  res["fldsave_start"] = False
+  res["flduptime_start"] = ""
+
+  res["flduserid_report"] = modBasic.$lbluser
+  res["fldtime_report"] = Now()
+  res["fldcomp_report"] = modBasic.$compID
+  res["fldsave_report"] = True
+  res["flduptime_report"] = ""
+  res["fldupuser_report"] = ""
+
+  res["flduserid_verify"] = ""
+  res["fldtime_verify"] = ""
+  res["fldcomp_verify"] = ""
+  res["fldsave_verify"] = False
+  res["flduptime_verify"] = ""
+  res["fldupuser_verify"] = ""
+  res.Update
+  'don't catch error
+
+End
+
+Public Sub btncalccreat_Click()
+
+  Dim xeqn As String[]
+  Dim i As Integer
+  Dim xval As String
+  Dim xcreat As String
+
+  xeqn = New String[]
+  For i = 1 To 10
+    xval = modSettings.ShowCalcSettingFromFIle("Creatinine_Clearance/Equation" & CStr(i))
+    If xval Then
+      xeqn.Add(xval)
+    Endif
+  Next
+
+  xcreat = InputCombo(("Select Equation for Creatinine Clerance"), ("Creatinine CLearance"), xeqn, modSettings.ShowSettingFromFIle("Creatinine_Clearance/Equation"), True)
+  If xcreat Then
+    modSettings.SaveSettingsToFile("Creatinine_Clearance/Equation", xcreat)
+  Endif
+
+End

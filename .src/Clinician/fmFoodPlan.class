@@ -1,0 +1,570 @@
+' Gambas class file
+
+Private $encid As String
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+
+End
+
+Public Sub Form_Open()
+
+  Dim hForm As FmQuantiEntry
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  hForm = New FmQuantiEntry(txtdose, pnlquanti)
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  If modBasic.$ClinDietApprove = "Disable" Then
+    btnsave.Enabled = False
+  Else
+    btnsave.Enabled = True
+  Endif
+
+  cmbtype.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldfoodtype) as col from tblfoodtype ORDER BY fldfoodtype"))
+  cmbtype.Add("Group")
+  cmbtype.Add("Mixture")
+  cmbtype.Text = ""
+  cmbsavetype.List = ["Continue", "Discontinue"]
+  cmbsavetype.Text = "Continue"
+  dttoday.Value = Date()
+  dttodaysave.Value = Date()
+  dttime.Value = Time()
+  txtfreq.Value = 24
+  SHowContinuePlan()
+  dttoday.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else If Key.Code = Key.F1 Then
+    TabPanel1.Index = 0
+  Else If Key.Code = Key.F2 Then
+    TabPanel1.Index = 1
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub cmbtype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbtype)
+  modFillContainer.RestrictComboToContent(cmbtype)
+
+End
+
+Public Sub cmbitem_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbitem)
+  modFillContainer.RestrictComboToContent(cmbitem)
+
+End
+
+Public Sub txtdose_GotFocus()
+
+  If modBasic.$TabletModeEnable = "Yes" Then
+    pnlquanti.Visible = True
+  Endif
+  txtdose.SelectAll
+
+End
+
+Private Function GetComboList() As String[]
+
+  Dim xx As String[]
+
+  If chkmixture.Value = True Then
+    xx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldgroup) as col from tblfoodgroup where (fldstatus=&1 or fldstatus IS NULL)", "Active"))
+  Else
+    If cmbtype.Text = "Mixture" Then
+      xx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldgroup) as col from tblfoodgroup"))
+    Else If cmbtype.Text = "Group" Then
+      xx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldgroup) as col from tbldietgroup"))
+    Else
+      xx = modMedicine.GetFoodSelectedType(cmbtype.Text)
+    Endif
+  Endif
+
+  Return xx
+
+End
+
+Public Sub cmbitem_GotFocus()
+
+  Dim xlist As String[]
+
+  If modBasic.$ItemListFormat = "GridView" Then
+    If Not cmbitem.Text Then
+      xlist = GetComboList()
+      If xlist.Count Then
+        cmbitem.Text = GridViewNew("Select Parameter", xlist, False, cmbitem, TabPanel1.Height - cmbitem.Top - cmbitem.Height)
+        GetItemUnit()
+        txtdose.SetFocus
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbtype_GotFocus()
+
+  If modBasic.$TabletModeEnable = "Yes" Then
+    If Not cmbtype.Text Then
+      cmbtype.Popup
+    Endif
+  Endif
+
+End
+
+Public Sub cmbtype_Click()
+
+  cmbitem.Clear
+  If cmbtype.Text Then
+    cmbitem.List = GetComboList()
+  Endif
+
+End
+
+Public Sub chkmixture_Click()
+
+  cmbitem.Clear()
+  If chkmixture.Value = True Then
+    cmbtype.Enabled = False
+    cmbtype.Text = "Mixture"
+    cmbitem.List = GetComboList()
+  Else
+    cmbtype.Enabled = True
+    cmbtype.Text = ""
+  Endif
+
+End
+
+Public Sub cmbitem_Click()
+
+  GetItemUnit()
+
+End
+
+Private Sub GetItemUnit()
+
+  If cmbitem.Text Then
+    If cmbtype.Text = "Group" Then
+      txtunit.Text = "Units"
+    Else If cmbtype.Text = "Mixture" Then
+      txtunit.Text = "Units"
+    Else
+      txtunit.Text = "Grams"
+    Endif
+  Endif
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim res As Result
+  Dim xdate As Date
+  Dim xtot As Integer
+  Dim i As Integer
+  Dim dosetime As Date
+  Dim res1 As Result
+
+  If cmbtype.Text And If cmbitem.Text And If txtdose.Value And If txtfreq.Value Then
+    xdate = Date(Year(dttoday.Value), Month(dttoday.Value), Day(dttoday.Value), Hour(dttime.Value), Minute(dttime.Value))
+
+    If cmbtype.Text = "Group" Then
+      res1 = modDatabase.$myConn.Exec("select flditemtype,flditemname,flditemqty from tbldietgroup where fldgroup=&1", cmbitem.Text)
+      If res1.Available Then
+        For Each res1
+          xtot = CInt(Ceil(24 / txtfreq.Value))
+          For i = 0 To xtot - 1
+            dosetime = DateAdd(xdate, gb.Hour, i * txtfreq.Value)
+            If dosetime <= modDate.EndSqlDate(dttoday.value) Then
+              res = modDatabase.$myConn.Create("tblextradosing")
+              res["fldencounterval"] = $encid
+              res["fldcategory"] = res1["flditemtype"]
+              res["flditem"] = res1["flditemname"]
+              res["flddose"] = txtdose.Value * res1["flditemqty"]
+              res["fldfreq"] = ""
+              res["fldtype"] = "Input Food/Fluid"
+              res["flddosetime"] = dosetime
+              res["flddosecode"] = cmbitem.Text
+              res["fldstatus"] = "Planned" '"Continue"
+              res["flduserid"] = modBasic.$lbluser
+              res["fldtime"] = Now()
+              res["fldcomp"] = modBasic.$compID
+              res["fldsave"] = False
+              res["xyz"] = True
+              res.Update
+            Endif
+          Next
+        Next
+      Endif
+
+    Else
+      xtot = CInt(Ceil(24 / txtfreq.Value))
+      For i = 0 To xtot - 1
+        dosetime = DateAdd(xdate, gb.Hour, i * txtfreq.Value)
+        If dosetime <= modDate.EndSqlDate(dttoday.value) Then
+          res = modDatabase.$myConn.Create("tblextradosing")
+          res["fldencounterval"] = $encid
+          res["fldcategory"] = cmbtype.Text
+          res["flditem"] = cmbitem.Text
+          res["flddose"] = txtdose.Value
+          res["fldfreq"] = ""
+          res["fldtype"] = "Input Food/Fluid"
+          res["flddosetime"] = dosetime
+          res["flddosecode"] = ""
+          res["fldstatus"] = "Planned" '"Continue"
+          res["flduserid"] = modBasic.$lbluser
+          res["fldtime"] = Now()
+          res["fldcomp"] = modBasic.$compID
+          res["fldsave"] = False
+          res["xyz"] = True
+          res.Update
+        Endif
+      Next
+
+    Endif
+
+    pnlquanti.Visible = False
+    cmbtype.Text = ""
+    cmbitem.Text = ""
+    txtdose.Value = 0
+    txtdose.Tag = ""
+    txtfreq.Value = 24
+    FillGridView()
+  Endif
+
+End
+
+Public Sub btnadd_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnadd_Click()
+    cmbtype.SetFocus
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  FillGridView()
+
+End
+
+Private Sub FillGridView()
+
+  Dim sql As String
+  Dim res As Result
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  Dim xcalori As Float
+  Dim xfluid As Float
+  Dim xprot As Float
+  Dim xsugar As Float
+  Dim xfat As Float
+  Dim xmineral As Float
+  Dim xfiber As Float
+  Dim xcalcium As Float
+  Dim xphospho As Float
+  Dim xiron As Float
+  Dim xcarotene As Float
+  Dim xthiam As Float
+  Dim xribofla As Float
+  Dim xniacin As Float
+  Dim xpyridox As Float
+  Dim xfreefoli As Float
+  Dim xtotfoli As Float
+  Dim xvitc As Float
+
+  sql = "select fldid,fldcategory,flditem,flddose,flddosetime,fldid,flddosetime,fldstatus from tblextradosing where fldencounterval=&1 and flddosetime>=&2 and flddosetime<=&3 and fldsave=&4"                        ''
+  res = modDatabase.$myConn.Exec(sql, $encid, modDate.StartSqlDate(dttoday.value), modDate.EndSqlDate(dttoday.value), False)
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 1
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "Particulars"
+    .Columns[3].Text = "Dose"
+    .Columns[4].Text = "Time"
+    .Columns[7].Text = "Status"
+  End With
+
+  xcalori = 0
+  xfluid = 0
+  xcalori = 0
+  xfluid = 0
+  xprot = 0
+  xsugar = 0
+  xfat = 0
+  xmineral = 0
+  xfiber = 0
+  xcalcium = 0
+  xphospho = 0
+  xiron = 0
+  xcarotene = 0
+  xthiam = 0
+  xribofla = 0
+  xniacin = 0
+  xpyridox = 0
+  xfreefoli = 0
+  xtotfoli = 0
+  xvitc = 0
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 5 Then
+        GridView1[res.Index, Column].Picture = Picture["icon:/small/cancel"]
+        GridView1[res.Index, Column].Text = ""
+      Else If Column = 4 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res[fld.Name], gb.MediumTime)
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      GridView1.Rows[res.Index].Height = Max(GridView1.Rows[res.Index].Height, GridView1[res.Index, Column].Font.RichTextHeight(GridView1[res.Index, Column].Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+      GridView1[res.Index, Column].WordWrap = True
+
+      Column = Column + 1
+    Next
+    xcalori = xcalori + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldenergy")
+    xfluid = xfluid + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldfluid")
+    xprot = xprot + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldprotein")
+    xsugar = xsugar + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldsugar")
+    xfat = xfat + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldlipid")
+    xmineral = xmineral + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldmineral")
+    xfiber = xfiber + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldfibre")
+    xcalcium = xcalcium + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldcalcium")
+    xphospho = xphospho + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldphosphorous")
+    xiron = xiron + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldiron")
+    xcarotene = xcarotene + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldcarotene")
+    xthiam = xthiam + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldthiamine")
+    xribofla = xribofla + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldriboflavin")
+    xniacin = xniacin + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldniacin")
+    xpyridox = xpyridox + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldpyridoxine")
+    xfreefoli = xfreefoli + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldfreefolic")
+    xtotfoli = xtotfoli + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldtotalfolic")
+    xvitc = xvitc + modFixPatho.GetNutritionValue(GridView1[res.Index, 1].Text, GridView1[res.Index, 2].Text, GridView1[res.Index, 3].Text, "fldvitaminc")
+  Next
+  txcalori.Value = Round(xcalori, -3)
+  txfluid.Value = Round(xfluid, -3)
+  txprot.Value = Round(xprot, -3)
+  txsugar.Value = Round(xsugar, -3)
+  txfat.Value = Round(xfat, -3)
+  txmineral.Value = Round(xmineral, -3)
+  txfiber.Value = Round(xfiber, -3)
+  txcalcium.Value = Round(xcalcium, -3)
+  txphospho.Value = Round(xphospho, -3)
+  txiron.Value = Round(xiron, -3)
+  txcarotene.Value = Round(xcarotene, -3)
+  txthiam.Value = Round(xthiam, -3)
+  txribofla.Value = Round(xribofla, -3)
+  txniacin.Value = Round(xniacin, -3)
+  txpyridox.Value = Round(xpyridox, -3)
+  txfreefoli.Value = Round(xfreefoli, -3)
+  txtotfoli.Value = Round(xtotfoli, -3)
+  txvitc.Value = Round(xvitc, -3)
+
+  GridView1.Row = 0
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+  Dim xval As Float
+  Dim xdate As Date
+  Dim xstr As String
+
+  If GridView1.Column = 5 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblextradosing", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      FillGridView()
+    Endif
+  Else If GridView1.Column = 3 Then
+    xval = InputValue(("Update Quantity of ") & GridView1[GridView1.Row, 2].Text, "Diet Plan", GridView1[GridView1.Row, 3].Text)
+    If xval Then
+      res = modDatabase.$myConn.Edit("tblextradosing", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["flddose"] = xval
+      res.Update
+      FillGridView()
+    Endif
+  Else If GridView1.Column = 4 Then
+    xdate = GetDateValue(("Update Administration Date Time"), "Diet Plan", GridView1[GridView1.Row, 6].Text)
+    If xdate Then
+      res = modDatabase.$myConn.Edit("tblextradosing", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["flddosetime"] = xdate
+      res.Update
+      FillGridView()
+    Endif
+  Else If GridView1.Column = 7 Then
+    xstr = InputCombo(("Update Status"), "Diet Plan", ["On Hold", "Planned"], GridView1[GridView1.Row, 7].Text, True)
+    If xstr Then
+      res = modDatabase.$myConn.Edit("tblextradosing", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldstatus"] = xstr
+      res.Update
+      FillGridView()
+    Endif
+  Endif
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res As Result
+
+  If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+    res = modDatabase.$myConn.Edit("tblextradosing", "fldencounterval=&1 and fldstatus=&2 and flddosetime>=&3 and flddosetime<=&4 and fldsave=&5", $encid, "Planned", modDate.StartSqlDate(dttoday.value), modDate.EndSqlDate(dttoday.value), False)                   ''
+    If res.Available Then
+      For Each res
+        res["fldstatus"] = "Continue"
+        res["flduserid"] = modBasic.$lbluser
+        res["fldtime"] = Now()
+        res["fldcomp"] = modBasic.$compID
+        res["fldsave"] = True
+        res["xyz"] = False
+        res.Update
+      Next
+      FillGridView()
+    Endif
+  Endif
+
+End
+
+Public Sub btnreport_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modCHTMLPatient.ShowPatientInputPlan($encid, dttoday.Value, "Planned")
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+
+End
+
+Public Sub btncalcul_Click()
+
+  Dim hForm As FmDietCalc
+
+  hForm = New FmDietCalc($encid, modDate.StartSqlDate(dttoday.value), modDate.EndSqlDate(dttoday.value), "Planned")
+  hForm.ShowModal
+
+End
+
+''============================ Saved but pending =================================
+Public Sub btnrefreshsave_Click()
+
+  SHowContinuePlan()
+
+End
+
+Private Sub SHowContinuePlan()
+
+  Dim sql As String
+  Dim xcalori As Float
+  Dim xfluid As Float
+
+  If cmbsavetype.Text Then
+    sql = "select fldid,fldcategory,flditem,flddose,flddosetime,fldid,flddosetime,fldstatus from tblextradosing where fldencounterval=&1 and fldstatus=&2 and flddosetime>=&3 and flddosetime<=&4 and fldsave=&5"                        ''
+    $rData = modDatabase.$myConn.Exec(sql, $encid, cmbsavetype.Text, modDate.StartSqlDate(dttodaysave.value), modDate.EndSqlDate(dttodaysave.value), True)
+    $aMyFields = New String[]
+    modGridView.ReadSmallData(GridView2, $rData, $aMyFields)
+
+    xcalori = 0
+    xfluid = 0
+    For Each $rData
+      xcalori = xcalori + modFixPatho.GetNutritionValue($rData["fldcategory"], $rData["flditem"], $rData["flddose"], "fldenergy")
+      xfluid = xfluid + modFixPatho.GetNutritionValue($rData["fldcategory"], $rData["flditem"], $rData["flddose"], "fldfluid")
+    Next
+    txtcaloriesave.Value = Round(xcalori, -3)
+    txtfluidsave.Value = Round(xfluid, -3)
+
+    With GridView2
+      .Columns[0].Width = 1
+      .Columns[1].Width = 175 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 275 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+      .Columns[6].Width = 1
+      .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+
+      .Columns[1].Text = "Type"
+      .Columns[2].Text = "Particulars"
+      .Columns[3].Text = "Dose"
+      .Columns[4].Text = "Time"
+      .Columns[7].Text = "Status"
+    End With
+
+  Endif
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 5 Then
+    GridView2.Data.Picture = Picture["icon:/small/cancel"]
+    GridView2.Data.Text = ""
+  Else If Column = 4 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.MediumTime)
+  Else
+    GridView2.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView2_Click()
+
+  Dim res As Result
+
+  If GridView2.Column = 5 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      res = modDatabase.$myConn.Edit("tblextradosing", "fldid=&1", GridView2[GridView2.Row, 0].Text)
+      res["fldstatus"] = "Discontinue"
+      res["xyz"] = False
+      res.Update
+      SHowContinuePlan()
+    Endif
+  Endif
+
+End
+
+Public Sub btnreportsave_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modCHTMLPatient.ShowPatientInputPlan($encid, dttodaysave.Value, "Pending")
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+
+End
+
+Public Sub btnsavecalc_Click()
+
+  Dim hForm As FmDietCalc
+
+  hForm = New FmDietCalc($encid, modDate.StartSqlDate(dttodaysave.value), modDate.EndSqlDate(dttodaysave.value), "Pending")
+  hForm.ShowModal
+
+End

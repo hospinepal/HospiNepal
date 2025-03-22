@@ -1,0 +1,619 @@
+' Gambas class file
+
+Private $LockType As String[] = ["Registration", "Invoice", "TempBill", "Journal", "Reference", "Stock", "Voucher", "AdmissionFile", "Backup", "ExecScript", "Purchase", "DataUpload"]
+
+Public Sub Form_Open()
+
+  Dim xscale As String
+
+  Me.Center
+  db.Debug = True
+  modBasic.$DebugMode = True
+  modHelpVariable.CalenderConnection()
+  modDate.$LocalDateData = New Collection
+  If Exist(modHelpVariable.AppDirectory &/ "splash.JPG") Then
+    Me.Picture = Image.Load(modHelpVariable.AppDirectory &/ "splash.JPG").Stretch(Me.Width - 10, Me.Height - 15).Picture
+  Endif
+  If modHelpVariable.$conTarget = "Remote" Then
+  Else
+    mnusetup.Enabled = True
+  Endif
+  xscale = modSettings.ShowSettingFromFIle("Application/DesktopScale")
+  If xscale Then
+    modBasic.$AppScaleFactor = CInt(xscale) / 8
+  Else
+    modBasic.$AppScaleFactor = Desktop.Scale / 8
+  Endif
+  If MMain.$SISHAppMode = "REP" Then  ''remoteoptimized
+    mnurepo.Enabled = True
+    mnurepomenu.Enabled = True
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  modDatabase.CloseDatabase()
+
+End
+
+Public Sub btnunlock_Click()
+
+  Dim xPass As String
+
+  xPass = InputPassword("Provide Root Password", "Verification", "")
+  If modPassword.GetSuperVerification(modBasic.$lbluser, xPass) = True Then
+    mnuSett.Enabled = True
+    mnuexecute.Enabled = True
+    mnudbactibity.Enabled = True
+  Else
+    Message.Info("Incorrect Root Password", ("OK"))
+  Endif
+
+End
+
+Public Sub mnusys_Click()
+
+  FSystemInfo.Show
+
+End
+
+Public Sub mnusetup_Click()
+
+  fmSetSqlite.Close
+  modHelpVariable.$FIrstTimeSetting = False
+  fmSetSqlite.Show
+
+End
+
+Public Sub mnucorrect_Click()
+
+  fmDebug.Close
+  fmDebug.ShowModal
+
+End
+
+Public Sub mnusample_Click()
+
+  fmDCreate.Close
+  fmDCreate.ShowModal
+
+End
+
+Public Sub mnudatrans_Click()
+
+  fmDTransfer.Close
+  fmDTransfer.ShowModal
+
+End
+
+''----------------------------- Repair DB ---------------------------------------
+Public Sub mnulower_Click()
+
+  Inc Application.Busy
+  modDBApp.ChangeToLowerCase(modDatabase.$myConn)
+  Dec Application.Busy
+
+End
+
+Public Sub mnufixdate_Click()
+
+  Dim tbl As String[] = ["tblentry", "tblpurchase", "tblpurchasebill", "tblstockreturn", "tbltenderlist", "tblpayment", "tblbulksale", "tblpatientinfo", "tblencounter", "tblpatbilldetail"]
+  Dim fld As String[] = ["fldexpiry", "fldtime", "fldpurdate", "fldtime", "fldtime", "fldtime", "fldtime", "fldptadmindate", "fldregdate", "fldtime"]
+  Dim i As Integer
+
+  Inc Application.Busy
+  For i = 0 To tbl.Count - 1
+    modDBApp.CHnageUniFIeldDefaultDateTime(modDatabase.$myConn, tbl[i], fld[i])
+  Next
+  Dec Application.Busy
+
+End
+
+Public Sub mnuremodate_Click()
+
+  Dim tbl As String[] = ["tblentry", "tblpurchase", "tblpurchasebill", "tblstockreturn", "tbltenderlist", "tblpayment", "tblbulksale", "tblpatientinfo", "tblencounter", "tblpatbilling", "tblpatbilldetail"]
+  Dim fld As String[] = ["fldexpiry", "fldtime", "fldpurdate", "fldtime", "fldtime", "fldtime", "fldtime", "fldptadmindate", "fldregdate", "fldtime", "fldtime"]
+  Dim i As Integer
+
+  Inc Application.Busy
+  For i = 0 To tbl.Count - 1
+    modDBApp.CHnageUniFIeldNullDefault(modDatabase.$myConn, tbl[i], fld[i])
+  Next
+  Dec Application.Busy
+
+End
+
+Public Sub mnudropnull_Click()
+
+  If Message.Question(("Do you really want to delete Empty Tables at your own risk?"), ("No"), ("Yes")) = 2 Then
+    modDBApp.GetDropEmptyTables(modDatabase.$myConn)
+  Endif
+
+End
+
+''------------------------------ Update DB ----------------------------------------------------
+Public Sub mnupdate_Click()
+
+  Inc Application.Busy
+  modDBTables.$DbFormat = MMain.$SISHAppMode
+  modDBGroup.CreateDatabaseForSish(modDatabase.$myConn)
+  Dec Application.Busy
+  Message.Info(("Tables creation completed"), ("OK"))
+
+End
+
+Public Sub mnualter_Click()
+
+  Dim hFile As File
+  Dim sLine As String
+  Dim xx As String
+  Dim newPath As String
+  Dim sType As String
+  Dim sQuery As String
+  Dim xsqlpath As String
+
+  Dim Cp As New Uncompress
+  Dim xtmp As String
+
+  xsqlpath = "/usr/share/doc" &/ modHelpVariable.AppName &/ "dbupdate"
+  If Exist(xsqlpath) Then
+    sQuery = File.Load(xsqlpath)
+  Else If Exist(xsqlpath & ".gz") Then
+    Cp.Type = "zlib"
+    xtmp = Temp()
+    Cp.File(xsqlpath & ".gz", xtmp)
+    sQuery = File.Load(xtmp)
+  Endif
+
+  If sQuery Then
+    xx = GetTextArea("SQL Query", sQuery)
+    If xx Then
+      newPath = Temp()
+      File.Save(newPath, xx)
+      If Message.Question(("Do you really want to update Database structure at your own risk?"), ("No"), ("Yes")) = 2 Then
+        sType = modDatabase.$myConn.Type
+        If sType = "mysql" Or If sType = "postgresql" Then
+          Inc Application.Busy
+          hFile = Open newPath
+          For Each sLine In hFile.Lines
+            sLine = Trim(sLine)
+            If sLine Then
+              If Left(sLine, 1) = "#" Then
+              Else
+                Try modDatabase.$myConn.Exec(sLine)
+              Endif
+            Endif
+          Next
+          hFile.Close()
+          Dec Application.Busy
+        Endif
+      Endif
+    Endif
+
+  Else
+    Message.Warning(("File doesn't exist"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnumychanges_Click()
+
+  If Message.Question("All tables collation will be changed to " & modHelpVariable.$SysCollation, ("No"), ("Yes")) = 2 Then
+    Inc Application.Busy
+    modDatabase.MySQLSpecificCollation(modDatabase.$myConn)
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub mnutemp_Click()
+
+  Dim stemp As String
+
+  If Dialog.SelectDirectory() Then Return
+  stemp = Dialog.Path &/ modDatabase.$myConn.Name
+  Inc Application.Busy
+  File.Save(stemp, modDatabase.$myConn.GetTemplate())
+  Dec Application.Busy
+
+End
+
+''-------------------------------- Backup --------------------------------
+Public Sub mnubackup_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  modDatabase.BackUpCurrentDB(Dialog.Path)
+
+End
+
+''-------------------------------- Lock-------------------------------------------
+Public Sub mnuclock_Click()
+
+  Dim sItem As String
+
+  sItem = InputListView(("Select Lock Type"), ("Clear Lock"), $LockType)
+  If sItem Then
+    modDatabase.$myConn.Delete("tbllock", "fldlock=&1", sItem)
+    Message.Info(("Lock Deleted"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnulockall_Click()
+
+  Dim res As Result
+  Dim xval As String
+
+  If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+    For Each xval In $LockType
+      res = modDatabase.$myConn.Create("tbllock")
+      res["fldlock"] = xval
+      res.Update
+    Next
+  Endif
+
+Catch
+  Message.Warning(Error.Text, ("OK"))
+
+End
+
+''------------------------------------------- DB warming ----------------------------------
+
+Public Sub mnuwarm_Click()
+
+  Inc Application.Busy
+  modDBApp.WarmUpDatabase(modDatabase.$myConn)
+  Dec Application.Busy
+  Message.Info(("Warm Up complete"), ("OK"))
+
+End
+
+''----------------------------------------- Index ------------------------------------------
+Public Sub mnucrindex_Click()
+
+  Dim hTable As Table
+
+  Inc Application.Busy
+  For Each hTable In modDatabase.$myConn.Tables
+    modDBGroup.UpdateDBIndexes(modDatabase.$myConn, hTable.Name)
+  Next
+  Dec Application.Busy
+
+End
+
+Public Sub mnuselectindex_Click()
+
+  Dim xList As String[]
+  Dim xx As String
+
+  xList = SelectListView("Selected Tables will have secondary Index", modDBApp.FillDBTables(modDatabase.$myConn, True), False)
+  If xList Then
+    Inc Application.Busy
+    For Each xx In xList
+      modDBGroup.UpdateDBIndexes(modDatabase.$myConn, xx)
+    Next
+    Dec Application.Busy
+    Message.Info(("Update complete"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnuclrindex_Click()
+
+  Inc Application.Busy
+  modDBApp.DeleteAllIndex(modDatabase.$myConn)
+  Dec Application.Busy
+
+End
+
+Public Sub mnudbactiv_Click()
+
+  fmDBChange.Close
+  fmDBChange.ShowModal
+
+End
+
+Public Sub mnucsvimport_Click()
+
+  fmCSVImport.Close
+  fmCSVImport.ShowModal
+
+End
+
+Public Sub mnutrans_Click()
+
+  fmDataExport.Close
+  fmDataExport.ShowModal
+
+End
+
+Public Sub mnumedrecode_Click()
+
+  fmMedRecode.Close
+  fmMedRecode.ShowModal
+
+End
+
+Public Sub mnurepo_Click()
+
+  Dim doTables As String[]
+  Dim goTables As String[]
+
+  If Message.Question(("Do you really want to update Database structure at your own risk?"), ("No"), ("Yes")) = 2 Then
+    doTables = modDatabase.GetRepositoryTables(modDatabase.$myConn)
+    goTables = SelectListView("Select Tables to alter", doTables, False)
+    If goTables.Count Then
+      Inc Application.Busy
+      modDatabase.AlterTableRepository(modDatabase.$myConn, goTables)
+      Dec Application.Busy
+    Endif
+  Endif
+
+End
+
+Public Sub mnudashboard_Click()
+
+  If Message.Question(("Do you really want to update Database structure at your own risk?"), ("No"), ("Yes")) = 2 Then
+    modDBTables.$DbFormat = "Dashboard"
+    Inc Application.Busy
+    modDBTables.CREATEtblhospitals(modDatabase.$myConn)
+    modDBTables.CREATEtblpopulation(modDatabase.$myConn)
+    modDBTables.CREATEtbldashparameters(modDatabase.$myConn)
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub mnucheckold_Click()
+
+  Dim sTabList As String[]
+  Dim res As Result
+  Dim sTable As String
+
+  If Message.Question(("Do you really want to update Data in bulk at your own risk?"), ("No"), ("Yes")) = 2 Then
+    Inc Application.Busy
+    sTabList = modDBApp.DBRegularTablesSelField(modDatabase.$myConn, ["fldencounterval", "xyz"])
+    For Each sTable In sTabList
+      res = modDatabase.$myConn.Exec(db.Subst("UPDATE &1 SET &2", sTable, "xyz") & "=&1", True)
+    Next
+    Dec Application.Busy
+    Message.Info(("Update complete"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnupattag_Click()
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res As Result
+  Dim xhospcode As String
+
+  If Message.Question(("Do you really want to update Data in bulk at your own risk?"), ("No"), ("Yes")) = 2 Then
+    Inc Application.Busy
+    res = modDatabase.$myConn.Exec("select fldid,fldhospcode from tblpatsubs")
+    If res.Available Then
+      res.MoveLast
+      If res!fldhospcode Then
+        xhospcode = res!fldhospcode
+        res1 = modDatabase.$myConn.Exec("UPDATE tblpatientinfo SET fldpatientval=CONCAT(tblpatientinfo.fldpatientval,&1) WHERE fldpatientval NOT LIKE &2", xhospcode, "%" & xhospcode)                                      ''
+        res2 = modDatabase.$myConn.Exec("UPDATE tblencounter SET fldpatientval=CONCAT(tblencounter.fldpatientval,&1) WHERE fldpatientval NOT LIKE &2", xhospcode, "%" & xhospcode)
+        res3 = modDatabase.$myConn.Exec("UPDATE tblpatientbook SET fldpatientval=CONCAT(tblpatientbook.fldpatientval,&1) WHERE fldpatientval NOT LIKE &2", xhospcode, "%" & xhospcode)
+      Endif
+    Endif
+    Dec Application.Busy
+    Message.Info(("Update complete"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnuird_Click()
+
+  If Message.Question(("Do you really want to update Database structure at your own risk?"), ("No"), ("Yes")) = 2 Then
+    Inc Application.Busy
+    modDatabase.CreateIRDTriggerBilling(modDatabase.$myConn)
+    modDatabase.CreateIRDTriggerLockEvent(modDatabase.$myConn)
+    Dec Application.Busy
+    Message.Info(("Update complete"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnuyearlyalter_Click()
+
+  modDatabase.AlterAutoIDToYearly(modDatabase.$myConn)
+  Message.Info(("Table Altered"), ("OK"))
+
+End
+
+Public Sub mnuyearlyfiscal_Click()
+
+  Dim xList As String[] = ["InvoiceNo", "ReceiptSaleNo", "InvoiceReturnNo", "ReceiptReturnNo", "DueClearanceNo", "DepositAdjustment"]
+  Dim xitem As String
+  Dim xfiscal As String
+  Dim res2 As Result
+
+  xfiscal = modDate.GetNepaliFiscalYear(Now())
+  If xfiscal Then
+    For Each xitem In xList
+      res2 = modDatabase.$myConn.Edit("tblautoid", "fldtype=&1 and fldfiscal IS NULL", xitem)
+      If res2.Available Then
+        res2["fldfiscal"] = xfiscal
+        res2.Update
+      Endif
+    Next
+    Message.Info(("Completed"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnuaddyearval_Click()
+
+  Dim sRange As String[]
+  Dim xfiscal As String
+  Dim xList As String[] = ["InvoiceNo", "ReceiptSaleNo", "InvoiceReturnNo", "ReceiptReturnNo", "DueClearanceNo", "DepositAdjustment"]
+  Dim xitem As String
+  Dim res As Result
+  Dim res1 As Result
+
+  sRange = modLongVar.$FiscalYearFixList
+  xfiscal = InputCombo("Select Fiscal Year", "Fiscal Auto ID", sRange, "", True)
+  If xfiscal Then
+    For Each xitem In xList
+      res1 = modDatabase.$myConn.Exec("select fldtype,fldvalue from tblautoid where fldtype=&1 and fldfiscal=&2", xitem, xfiscal)
+      If res1.Available = False Then
+        res = modDatabase.$myConn.Create("tblautoid")
+        res["fldtype"] = xitem
+        res["fldfiscal"] = xfiscal
+        res["fldvalue"] = 1
+        res.Update
+      Endif
+    Next
+    Message.Info(("Completed"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnucollatsel_Click()
+
+  Dim xList As String[]
+  Dim xx As String
+
+  xList = SelectListView("Selected Tables will be changed to " & modHelpVariable.$SysCollation, modDBApp.FillDBTables(modDatabase.$myConn, True), False)
+  If xList Then
+    For Each xx In xList
+      modDBApp.AlterMySQLSpecCollationTable(modDatabase.$myConn, xx)
+    Next
+    Message.Info(("Update complete"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnufiscaltrans_Click()
+
+  fmFiscalClosing.Close
+  fmFiscalClosing.ShowModal
+
+End
+
+Public Sub mnufiscal_Click()
+
+  Dim sType As String[] = ["Master", "Indoor", "Consult", "Emergency", "LiveBaby", "Delivery"]
+  Dim xx As String
+  Dim sRange As String[]
+  Dim yy As String
+
+  sRange = modLongVar.$FiscalYearFixList
+  For Each xx In sType
+    For Each yy In sRange
+      modAccount.InsertFiscalRangeSelected(xx, yy)
+    Next
+  Next
+  Message.Info(("Update complete"), ("OK"))
+
+End
+
+Public Sub mnuhaisurveil_Click()
+
+  If Message.Question(("Do you really want to update Database structure at your own risk?"), ("No"), ("Yes")) = 2 Then
+    Inc Application.Busy
+    modDatabase.AlterTableHAIParam(modDatabase.$myConn, "Add")
+    Dec Application.Busy
+    Message.Info(("Update complete"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnuremovehai_Click()
+
+  If Message.Question(("Do you really want to update Database structure at your own risk?"), ("No"), ("Yes")) = 2 Then
+    Inc Application.Busy
+    modDatabase.AlterTableHAIParam(modDatabase.$myConn, "Drop")
+    Dec Application.Busy
+    Message.Info(("Update complete"), ("OK"))
+  Endif
+
+End
+
+Public Sub mnuautoid_Click()
+
+  Dim xList As String[] = ["PatientNo", "EncounterID", "InvoiceNo", "ReceiptSaleNo", "InvoiceReturnNo", "ReceiptReturnNo", "DueClearanceNo", "DepositAdjustment", "AdmitFileNo", "BookingNo", "StockNo", "ReferenceNo", "VoucherNo", "LabSampleNo", "RadioSampleNo", "PurchaseRefNo", "JournalNo", "WebPayment", "SSFClaim"]
+  Dim xitem As String
+  Dim xfiscal As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Inc Application.Busy
+  If MMain.$AutoIDFiscal = True Then
+    xfiscal = modDate.GetNepaliFiscalYear(Now())
+    For Each xitem In xList
+      res1 = modDatabase.$myConn.Exec("select fldtype,fldvalue from tblautoid where fldtype=&1 and fldfiscal=&2", xitem, xfiscal)
+      If res1.Available = False Then
+        res = modDatabase.$myConn.Create("tblautoid")
+        res["fldtype"] = xitem
+        res["fldfiscal"] = xfiscal
+        res["fldvalue"] = 1
+        res.Update
+      Endif
+    Next
+    res2 = modDatabase.$myConn.Exec("select MAX(fldstockno) as fldstockno from tblentry")
+    If res2.Available Then
+      res3 = modDatabase.$myConn.Edit("tblautoid", "fldtype=&1 and fldfiscal=&2", "StockNo", xfiscal)
+      res3["fldvalue"] = res2["fldstockno"] + 1
+      res3.Update
+    Endif
+
+  Else
+    For Each xitem In xList
+      res1 = modDatabase.$myConn.Exec("select fldtype,fldvalue from tblautoid where fldtype=&1", xitem)
+      If res1.Available = False Then
+        res = modDatabase.$myConn.Create("tblautoid")
+        res["fldtype"] = xitem
+        res["fldvalue"] = 1
+        res.Update
+      Endif
+    Next
+    res2 = modDatabase.$myConn.Exec("select MAX(fldstockno) as fldstockno from tblentry")
+    If res2.Available Then
+      res3 = modDatabase.$myConn.Edit("tblautoid", "fldtype=&1", "StockNo")
+      res3["fldvalue"] = res2["fldstockno"] + 1
+      res3.Update
+    Endif
+
+  Endif
+
+  Dec Application.Busy
+  Message.Info(("Update complete"), ("OK"))
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["V"] And If Key.Control Then
+    If mnuexecute.Enabled = True Then
+      fmSuppUpdate.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub mnualterdrugtable_Click()
+
+  Dim aList As String[]
+  Dim xtable As String
+
+  aList = New String[]
+  aList.Insert(modRepoSync.$sBrandData)
+  aList.Insert(modRepoSync.$sMedSuppData)
+  aList.Insert(modRepoSync.$sPrecauData)
+
+  For Each xtable In aList
+    modDatabase.UpdateTableDrugInformation(modDatabase.$myConn, xtable)
+  Next
+  Message.Info("Complete", "OK")
+
+End

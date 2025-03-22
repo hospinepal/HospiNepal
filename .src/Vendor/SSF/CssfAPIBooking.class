@@ -1,0 +1,166 @@
+' Gambas class file
+
+Private $xAuthString As String
+Private $HeadString As String
+
+Private $PatCode As String
+Private $EncID As String
+Private $ClaimCode As String
+Private $sInvoice As String
+Private $sTotal As Float
+Private $rData As Result
+Private $PatUUID As String
+
+Private $xVarColl As Collection
+
+Private Sub SetAuthentication()
+
+  If modBasic.$SSFQuote = "Yes" Then
+    $xAuthString = "'" & modBasic.$SSFUser & ":" & modBasic.$SSFPass & "'"
+  Else
+    $xAuthString = modBasic.$SSFUser & ":" & modBasic.$SSFPass
+  Endif
+  $HeadString = "remote-user:" & modBasic.$SSFRemoUser
+
+End
+
+Public Sub _new(sPatcode As String, sEncID As String, sClaimCode As String, sInvoice As String, sTotal As Float)
+
+  $PatCode = sPatcode
+  $EncID = sEncID
+  $ClaimCode = sClaimCode
+  $sInvoice = sInvoice
+  $sTotal = sTotal
+
+  GetPatientUUID()
+  ShowFinancialParams()
+
+End
+
+Private Sub GetPatientUUID()
+
+  Dim xCssPat As CssfAPIPatient
+
+  xCssPat = New CssfAPIPatient($PatCode)
+  $PatUUID = xCssPat.GetPatientUUID()
+
+End
+
+Private Sub ShowFinancialParams()
+
+  Dim xschemetype As Integer
+  Dim xsubProduct As Integer
+  Dim xList As String[]
+
+  xList = ["fldptcode", "fldstatus", "fldscheme", "fldemployer", "fldsubproduct", "fldwound", "fldinjury", "flddisable", "flddead", "fldaccident", "fldsickness", "flddischarge", "flddischsumm", "fldcancer", "fldhiv", "fldheart", "fldhighbp", "flddiabetes", "fldtime"]
+  $rData = modDatabase.$myConn.Exec("select " & xList.Join(",") & " from tblssfclaim where fldclaimid=&1 and fldencounterval=&2", $ClaimCode, $EncID)
+  If $rData["fldscheme"] = "Accident SSF" Then
+    xschemetype = 1
+    If $rData["fldsubproduct"] Then
+      xsubProduct = modSSF.GetSSFAccidentCode($rData["fldsubproduct"])
+    Else
+      xsubProduct = 18
+    Endif
+
+  Else If $rData["fldscheme"] = "Critical SSF" Then
+    xschemetype = 9
+    If $rData["fldstatus"] Then
+      If $rData["fldstatus"] = "Pre Diagnosis" Then
+        xsubProduct = 19
+      Else If $rData["fldstatus"] = "Post Diagnosis" Then
+        xsubProduct = 20
+      Else If $rData["fldstatus"] = "Post Discharge" Then
+        xsubProduct = 21
+      Endif
+    Else
+      xsubProduct = 19
+    Endif
+
+  Else If $rData["fldscheme"] = "Medical SSF" Then
+    xschemetype = 2
+    If $PatCode Like "S" & "*" Then
+      If $rData["fldstatus"] Then
+        If $rData["fldstatus"] = "Consultation" Then
+          xsubProduct = 4
+        Else If $rData["fldstatus"] = "Patient Ward" Then
+          xsubProduct = 3
+        Endif
+      Else
+        xsubProduct = 4
+      Endif
+    Else
+      If $rData["fldstatus"] Then
+        If $rData["fldstatus"] = "Consultation" Then
+          xsubProduct = 2
+        Else If $rData["fldstatus"] = "Patient Ward" Then
+          xsubProduct = 1
+        Endif
+      Else
+        xsubProduct = 2
+      Endif
+    Endif
+
+  Endif
+
+  $xVarColl = SendFinancialDetails(xschemetype, xsubProduct)
+
+End
+
+Private Sub SendFinancialDetails(xschemetype As Integer, xsubProduct As Integer) As Collection
+
+  Dim acmd As String
+  Dim xurl As String
+  Dim xcont As String
+  Dim xcolVar As Collection
+
+  Dim xpatout As String
+  Dim xResColl As Collection
+  Dim xhead As String
+
+  SetAuthentication()
+  xurl = modBasic.$SSFBookingURL
+  xcont = "Content-Type: application/json"
+
+  xcolVar = New Collection
+  xcolVar.Add($sTotal, "bookedAmount")
+  xcolVar.Add($PatUUID, "Patient")
+  xcolVar.Add(xschemetype, "scheme")
+  xcolVar.Add(xsubProduct, "subProduct")
+  xcolVar.Add($ClaimCode, "client_claim_id")
+  xcolVar.Add($sInvoice, "client_invoice_no")
+
+  xhead = Space(1)
+  If modBasic.$SSFCACert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If modBasic.$SSFUserAgent Then
+    xhead = xhead & "-A " & modBasic.$SSFUserAgent & Space(1)
+  Endif
+
+  acmd = "curl" & xhead & "-u " & $xAuthString & " -H " & Quote(xcont) & " -H " & Quote($HeadString) & " -d '" & JSON.Encode(xcolVar) & "' -X POST " & xurl
+  modBasic.DebugAPIString(Replace("Execute " & acmd, $xAuthString, "****"))
+  Shell acmd To xpatout
+  modBasic.DebugAPIString("Response: " & xpatout)
+
+  If xpatout Then
+    Try xResColl = JSON.Decode(xpatout)
+    If xResColl Then
+      Return xResColl
+    Else
+      Message.Warning("Error in getting data", "OK")
+    Endif
+  Else
+    Message.Warning("No Response from server", "OK")
+  Endif
+
+End
+
+Public Function GetAPIErrorOutput() As String
+
+  If $xVarColl["status"] And If $xVarColl["status"] = True Then
+    ' Return "Success"
+  Else
+    Return JSON.Encode($xVarColl)
+  Endif
+
+End

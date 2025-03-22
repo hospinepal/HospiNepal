@@ -1,0 +1,928 @@
+' Gambas class file
+
+Private $encid As String
+Private $doa As Date
+Private $patNo As String
+Private $dtLMP As Date
+Private $dtEDD As Date
+Private $billMode As String
+
+Private $Category As String = "HMIS 3.61"
+Private $sDepart As String = "Departmental"
+Private $reference As String
+Private $ANCExams As String = "ANC"
+Private $PNCExams As String = "PNC"
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+
+Public Sub _new(encid As String)
+  
+  $encid = encid
+  
+End
+
+Public Sub Form_Open()
+  
+  Dim xval As String
+  
+  cmbpresent.List = ["Cephalic", "Breech", "Face", "Cord", "Shoulder"]
+  cmbancvisit.List = ["Upto 12 weeks", "16 weeks", "20-24 weeks", "28 weeks", "32 weeks", "34 weeks", "36 weeks", "38-40 weeks"]
+  cmbpncvisit.List = ["Within 24 hour", "3 days", "7-14 days", "42 days"]
+  xval = modSettings.ShowSettingFromFIle("ClinicalRule/EDD_LMP_DayDifference")
+  If xval Then
+    txtexday.Value = CInt(xval)
+  Else
+    txtexday.Value = 277
+  Endif
+  
+  Dim xx As Boolean
+  Dim sList As String[]
+  
+  If $encid Then
+    txtname.Text = modPatient.GetPatientNameByEnc($encid)
+    $patNo = modPatient.GetPatientNoByEnc($encid)
+    $doa = modPatient.GetRecordDate($encid)
+    $billMode = modpatient.GetPatBillingMode($encid)
+    xx = modPatient.EnableClinicForm(modPatient.CurrentAdmissionStatus($encid))
+    ShowLastValues()
+    btnsave.Enabled = xx
+    
+    $reference = modSettings.ShowSettingFromFIle($Category & "/RecommendedExam")
+    If Not $reference Then
+      sList = modMedicine.FillClinicalReference($Category)
+      If sList And If sList.Count Then
+        $reference = sList[0]
+      Endif
+    Endif
+    LoadTreeData()
+    LoadTreeData1()
+    
+    btnaddanc.Enabled = xx
+    grdtreeview.Enabled = xx
+    btnaddpnc.Enabled = xx
+    grdtreeview1.Enabled = xx
+    
+  Endif
+  
+End
+
+Public Sub btnclose_Click()
+  
+  Me.Close
+  
+End
+
+''---------------- Diagni=osis --------------------------
+Public Sub dtlmp_Click()
+  
+  txtneplmp.Text = modDate.ConvertToLocaldate(dtlmp.Value)
+  
+End
+
+Public Sub txtneplmp_Change()
+  
+  dtlmp.Value = modDate.ConvertToEnglishdate(txtneplmp.Text)
+  
+End
+
+Public Sub dtedd_Click()
+  
+  txtnepedd.Text = modDate.ConvertToLocaldate(dtedd.Value)
+  
+End
+
+Public Sub txtnepedd_Change()
+  
+  dtedd.Value = modDate.ConvertToEnglishdate(txtnepedd.Text)
+  
+End
+
+Public Sub btnlmp_Click()
+  
+  GetEDDValue()
+  
+End
+
+Private Sub GetEDDValue()
+  
+  Dim xweek As Float
+  
+  dtedd.Value = DateAdd(dtlmp.Value, gb.Day, CInt(txtexday.Value))
+  txtnepedd.Text = modDate.ConvertToLocaldate(dtedd.Value)
+  xweek = DateDiff(dtlmp.Value, Now(), gb.Day) / 7
+  txtgesweek.Value = Fix(xweek)
+  txtgesdays.Value = Round(Frac(xweek) * 7)
+  
+End
+
+Private Sub ShowLastValues()
+  
+  Dim res As Result
+  
+  res = modDatabase.$myConn.Exec("select fldgravida,fldparity,fldbortion,fldlive,fldlast,fldexpect,fldgestation,fldpresent,fldstatus,fldpast,flddelref from tblobstetrics where fldpatientval=&1 and fldlast<&2 and fldexpect>&3 ORDER BY fldtime", $patNo, Now(), DateAdd(Now(), gb.Month, -3))
+  If res.Available Then
+    res.MoveLast
+    txtgravida.Value = res["fldgravida"]
+    txtparity.Value = res["fldparity"]
+    txtabortion.Value = res["fldbortion"]
+    txtliving.Value = res["fldlive"]
+    dtlmp.Value = res["fldlast"]
+    dtedd.Value = res["fldexpect"]
+    If res["fldexpect"] Then
+      $dtLMP = res["fldlast"]
+      $dtEDD = res["fldexpect"]
+    Endif
+    If res["fldgestation"] Then
+      txtgesweek.Value = Floor(res["fldgestation"] / 7)
+      txtgesdays.Value = Round(Frac(res["fldgestation"] / 7) * 7)
+    Endif
+    cmbpresent.Text = res["fldpresent"]
+    txtreference.Text = res["flddelref"]
+  Endif
+  
+  If txtreference.Text Then
+    ShowAfterLMP()
+  Endif
+  
+  txtneplmp.Text = modDate.ConvertToLocaldate(dtlmp.Value)
+  txtnepedd.Text = modDate.ConvertToLocaldate(dtedd.Value)
+  
+End
+
+Public Sub btnsave_Click()
+  
+  Dim xday As Integer
+  Dim res As Result
+  Dim xrefNo As String
+  
+  If dtlmp.Value And If dtedd.Value And If txtgesweek.Value Then
+    xday = 7 * txtgesweek.Value + txtgesdays.Value
+    If txtreference.Text Then
+      res = modDatabase.$myConn.Edit("tblobstetrics", "flddelref=&1", txtreference.Text)
+      res["fldgravida"] = txtgravida.Value
+      res["fldparity"] = txtparity.Value
+      res["fldbortion"] = txtabortion.Value
+      res["fldlive"] = txtliving.Value
+      res["fldlast"] = dtlmp.Value
+      res["fldexpect"] = dtedd.Value
+      If dtedd.Value Then
+        $dtLMP = dtlmp.Value
+        $dtEDD = dtedd.Value
+      Endif
+      res["fldgestation"] = xday
+      res["fldpresent"] = cmbpresent.Text
+      res["flduserid"] = modBasic.$lbluser
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = True
+      res["xyz"] = False
+      res["flduptime"] = Now()
+      res.Update
+      Balloon.Info(("Information saved"), btnsave)
+      Balloon.Delay = modBasic.$BalloonDelay
+      
+    Else
+      modDatabase.$myConn.Begin
+      xrefNo = modPatient.GetDeliveryHMISVal($patNo)
+      If xrefNo Then
+        res = modDatabase.$myConn.Create("tblobstetrics")
+        res["fldencounterval"] = $encid
+        res["fldpatientval"] = $patNo
+        res["fldgravida"] = txtgravida.Value
+        res["fldparity"] = txtparity.Value
+        res["fldbortion"] = txtabortion.Value
+        res["fldlive"] = txtliving.Value
+        res["fldlast"] = dtlmp.Value
+        res["fldexpect"] = dtedd.Value
+        If dtedd.Value Then
+          $dtLMP = dtlmp.Value
+          $dtEDD = dtedd.Value
+        Endif
+        res["fldgestation"] = xday
+        res["fldpresent"] = cmbpresent.Text
+        res["flduserid"] = modBasic.$lbluser
+        res["fldcomp"] = modBasic.$compID
+        res["fldtime"] = Now()
+        res["fldsave"] = True
+        res["flddelref"] = xrefNo
+        res["xyz"] = False
+        res.Update
+        modClinSub.AddGeneralParametersQuali($encid, "Pregnancy Status", GetTrimesterLabel(xday))
+        modDatabase.$myConn.Commit
+        txtreference.Text = xrefNo
+        Balloon.Info(("Information saved"), btnsave)
+        Balloon.Delay = modBasic.$BalloonDelay
+      Else
+        modDatabase.$myConn.Rollback
+      Endif
+      
+    Endif
+    
+    If txtreference.Text Then
+      ShowAfterLMP()
+    Endif
+    
+  Endif
+  
+Catch
+  modDatabase.$myConn.Rollback
+  modHelpVariable.CreateErrorReport()
+  
+End
+
+Private Function GetTrimesterLabel(sDay As Integer) As String
+  
+  Dim xx As String
+  
+  If sDay < 84 Then
+    xx = "1st trimester"
+  Else If sDay >= 84 And If sDay < 189 Then
+    xx = "2nd trimester"
+  Else If sDay >= 189 Then
+    xx = "3rd trimester"
+  Endif
+  Return xx
+  
+End
+
+Private Sub ShowAfterLMP()
+  
+  pnlanc.Enabled = True
+  pnlpnc.Enabled = True
+  
+End
+
+''--------------------- ANC/PNC visits ---------------------------
+Public Sub AddConsultDataMat(encid As String, consultname As String, consulttime As Date, sComment As String, Optional xnotice As String)
+  
+  Dim res As Result
+  Dim res1 As Result
+  Dim anotice As String
+  Dim xIntVal As String
+  
+  If xnotice Then
+    anotice = xnotice
+  Else
+    anotice = ""
+  Endif
+  If txtreference.Text Then
+    res1 = modDatabase.$myConn.Exec("select fldid from tblopvisit where fldencounterval=&1 and fldemerid=&2", encid, txtreference.Text)
+    If res1.Available Then
+      res1.MoveLast
+      res = modDatabase.$myConn.Edit("tblopvisit", "fldid=&1", res1["fldid"])
+      res["fldconsulttime"] = consulttime
+      res["fldstatus"] = "Done"
+      res["fldbillingmode"] = $billMode
+      res["fldnotice"] = anotice
+      res["flduserid"] = modBasic.$lbluser
+      res.Update
+    Else
+      res = modDatabase.$myConn.Create("tblopvisit")
+      res["fldencounterval"] = encid
+      res["fldconsultname"] = consultname
+      res["fldconsulttime"] = consulttime
+      res["fldcomment"] = sComment
+      res["fldstatus"] = "Done"
+      res["fldbillingmode"] = $billMode
+      res["fldoutcome"] = ""
+      res["fldnotice"] = anotice
+      res["fldflag"] = False
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = False
+      res["fldemerid"] = txtreference.Text
+      res["xyz"] = False
+      
+      If MMain.$WebEntry = True Then
+        xIntVal = modString.GetDateString(Now())
+        res["fldid"] = CLong(xIntVal)
+        res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+        res["fldrepodate"] = Now()
+        res["fldrepomac"] = modHelpVariable.$MACAddress
+        res["fldhospcode"] = modBasic.$HospCode
+      Endif
+      res.Update
+      
+      modPatientSub.AddEncounterSpecData(encid, consultname)
+      modPatientSub.EnterPatientImpDate(encid, "OP Visit", consultname)
+    Endif
+  Endif
+  
+End
+
+Public Sub btnnepanc_Click()
+  
+  Dim xx As String
+  
+  If dtancdate.Value Then
+    xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtancdate.Value))
+    If xx Then
+      dtancdate.Value = modDate.ConvertToEnglishdate(xx)
+    Endif
+  Else
+    dtancdate.Value = Now()
+  Endif
+  
+End
+
+Public Sub btnneppnc_Click()
+  
+  Dim xx As String
+  
+  If dtpncdate.Value Then
+    xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtpncdate.Value))
+    If xx Then
+      dtpncdate.Value = modDate.ConvertToEnglishdate(xx)
+    Endif
+  Else
+    dtpncdate.Value = Now()
+  Endif
+  
+End
+
+Private Function GetProceedBool(sComm As String, sVal As String) As Boolean
+  
+  Dim xx As Boolean
+  
+  If sComm = sVal Then
+    xx = True
+  Else
+    If Message.Question("Visit Date doesn't match protocol. Do you want to add visit ?", ("No"), ("Yes")) = 2 Then
+      xx = True
+    Else
+      xx = False
+    Endif
+  Endif
+  
+  Return xx
+  
+End
+
+''========================= ANC =================================
+Public Sub cmbancvisit_Click()
+  
+  ShowClinicTable()
+  
+End
+
+Public Sub btnaddanc_Click()
+  
+  Dim xlmpdate As Date
+  Dim res As Result
+  Dim xform As Boolean
+  
+  If dtancdate.Value > modDate.EndSqlDate(Now()) Then
+    Message.Warning("Incorrect Date and Time", ("OK"))
+  Else
+    If $encid And If dtancdate.Value Then
+      xlmpdate = modPatient.GetLastMensDate(txtreference.Text)
+      If xlmpdate Then
+        
+        If cmbancvisit.Text Then
+          xform = GetProceedBool(cmbancvisit.Text, modHMISRep.GetANCVisitComment(xlmpdate, dtancdate.Value))
+          If xform = True Then
+            res = modDatabase.$myConn.Exec("select fldid from tblopvisit where fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&1) and fldconsultname=&2 and fldconsulttime>=&3 and fldconsulttime<=&4", $patNo, "ANC Visit", $dtLMP, DateAdd($dtEDD, gb.Month, 3))
+            If res.Available Then
+              AddConsultDataMat($encid, "ANC Visit", dtancdate.Value, cmbancvisit.Text)
+            Else
+              AddConsultDataMat($encid, "ANC Visit", dtancdate.Value, cmbancvisit.Text, "First Visit")
+            Endif
+            Balloon.Info(("Information saved"), btnaddanc)
+            Balloon.Delay = modBasic.$BalloonDelay
+          Endif
+        Endif
+        
+      Endif
+    Endif
+  Endif
+  
+End
+
+Private Sub LoadTreeData()
+  
+  Dim str3 As String
+  Dim res3 As Result
+  
+  str3 = "select distinct(flditem) from tblstructexam where fldsubclass=&1 and fldcategory=&2 and fldreferencee=&3 and fldclass=&4 ORDER BY flditemid"
+  res3 = modDatabase.$myConn.Exec(str3, $Category, $ANCExams, $reference, $sDepart)
+  grdtreeview.List = modControlSub.GetDirectFillresult(res3)
+  
+End
+
+Private Sub ShowSelectedVar()
+  
+  Dim res As Result
+  Dim sList As String[]
+  Dim hForm As FmEnterMultiExam
+  Dim hForm11 As FmEnterMultiExamVir
+  
+  sList = New String[]
+  res = modDatabase.$myConn.Exec("select fldheadcode from tblstructexam where fldclass=&1 and fldsubclass=&2 and fldcategory=&3 and flditem=&4 and fldreferencee=&5 ORDER BY fldheadid", $sDepart, $Category, $ANCExams, grdtreeview.Text, $reference)
+  If res.Available Then
+    For Each res
+      sList.Add(res!fldheadcode)
+    Next
+    If cmbancvisit.Text Then
+      If modBasic.$FactorForm = "Vertical" Then
+        hForm11 = New FmEnterMultiExamVir(grdtreeview.Text, $encid, cmbancvisit.Text, sList, $Category)
+        hForm11.ShowModal
+      Else 
+        hForm = New FmEnterMultiExam(grdtreeview.Text, $encid, cmbancvisit.Text, sList, $Category)
+        hForm.ShowModal
+      Endif 
+      ShowClinicTable()
+    Endif
+  Endif
+  
+End
+
+Public Sub grdtreeview_Click()
+  
+  If dtancdate.Value Then
+    ShowSelectedVar()
+  Endif
+  
+End
+
+Private Sub ShowClinicTable()
+  
+  If cmbancvisit.Text And If txtreference.Text Then
+    $rData1 = modDatabase.$myConn.Exec("select fldid,fldtype,fldhead,fldabnormal,fldid,fldtime,fldid,fldserialval,fldrepquali,fldrepquanti from tblpatientexam where fldinput=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2 and fldpatientval in(select fldpatientval from tblobstetrics where flddelref=&3)) and fldsave=&4 and fldserialval in(select fldheadcode from tblstructexam where fldsubclass=&5 and fldcategory=&6 and fldclass=&7 and fldreferencee=&8)", cmbancvisit.Text, $patNo, txtreference.Text, True, $Category, $ANCExams, $sDepart, $reference)               ''
+    $aMyFields1 = New String[]
+    modGridView.ReadSmallData(GridView1, $rData1, $aMyFields1)
+    
+    With GridView1
+      .Columns[0].Width = 1
+      .Columns[1].Width = 1
+      .Columns[2].Width = 200 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 25 * modBasic.$AppWidthRatio
+      .Columns[4].Width = 225 * modBasic.$AppWidthRatio
+      .Columns[5].Width = 150 * modBasic.$AppWidthRatio
+      .Columns[6].Width = 1
+      .Columns[7].Width = 1
+      .Columns[8].Width = 1
+      .Columns[9].Width = 1
+      
+      .Columns[2].Text = "Examination"
+      .Columns[4].Text = "Observation"
+      .Columns[5].Text = "Time"
+    End With
+  Endif
+  
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+  
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 3 Then
+    GridView1.Data.Picture = Picture[modMisc.GetGridIcon($rData1[$aMyFields1[Column]])]
+    GridView1.Data.Text = ""
+  Else If Column = 4 Then
+    GridView1.Data.Text = modClinic.GetExamValueString($encid, $rData1[$aMyFields1[Column]], False)
+  Else If Column = 5 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.GeneralDate)
+  Else
+    GridView1.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+  
+End
+
+Public Sub btncomponents_Click()
+  
+  Dim yqualival As Variant[]
+  Dim xquantival As Variant[]
+  Dim rsn As Result
+  Dim xdate As Date
+  
+  Dim opt As String[]
+  Dim xval As String
+  Dim sTable As String[]
+  Dim sName As String
+  
+  Dim cForm As CFindExam
+  Dim examtype As String
+  Dim sExam As String
+  Dim sOptName As String
+  Dim sDefault As String
+  
+  If GridView1.Rows.Selection.Count Then
+    If GridView1[GridView1.Row, 1].Text = "Qualitative" Then
+      rsn = modDatabase.$myConn.Exec("select fldhead,fldtesttype,fldtanswertype,fldsysconst from tblstructexam where fldheadcode=&1", GridView1[GridView1.Row, 7].Text)
+      If rsn.Available And If rsn["fldsysconst"] Then
+        cForm = New CFindExam(rsn["fldsysconst"])
+        examtype = cForm.GetExamMode()
+        sExam = cForm.GetExamName()
+        sOptName = cForm.GetExamOption()
+        sDefault = cForm.GetExamDefault()
+      Else
+        examtype = "Exam"
+      Endif
+      
+      If sExam Then
+        sName = sExam
+      Else
+        sName = GridView1[GridView1.Row, 2].Text
+      Endif
+      
+      If rsn["fldtanswertype"] = "Left and Right" Then
+        yqualival = CLeftRight(GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 8].Text, modFixClinic.GetLeftRightMainHeader("Exam", GridView1[GridView1.Row, 2].Text))
+        If yqualival Then
+          modClinSub.UpdateClinicQualiData(GridView1[GridView1.Row, 0].Text, yqualival[0], yqualival[1])
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Date Time" Then
+        xdate = GetDateValue(GridView1[GridView1.Row, 2].Text, ("Select Date Time"), Val(GridView1[GridView1.Row, 8].Text))
+        If xdate Then
+          modClinSub.UpdateClinicQualiData(GridView1[GridView1.Row, 0].Text, modDate.DateStringForExam(xdate), False)
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "BS Date" Then
+        xdate = GetDateValue(GridView1[GridView1.Row, 2].Text, ("Select Date Time"), modDate.ConvertToEnglishdate(GridView1[GridView1.Row, 8].Text))
+        If xdate Then
+          modClinSub.UpdateClinicQualiData(GridView1[GridView1.Row, 0].Text, modDate.ConvertToLocaldate(xdate), False)
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Text Table" Then
+        sTable = modString.ConverTableRichTextToGrid(modClinic.GetExamValueString($encid, GridView1[GridView1.Row, 0].Text))
+        opt = Split(sTable[0], ";")
+        xval = TableEntry(opt, GridView1[GridView1.Row, 2].Text, sTable[1])
+        If xval Then
+          modClinSub.UpdateClinicQualiData(GridView1[GridView1.Row, 0].Text, modString.GetTableFormatFromText(xval), False)
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Qualitative" Then
+        yqualival = GetQualiString(GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 8].Text, "Exam")
+        If yqualival Then
+          modClinSub.UpdateClinicQualiData(GridView1[GridView1.Row, 0].Text, yqualival[0], yqualival[1])
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Fixed Components" Then
+        
+      Else
+        If sOptName = "Clinical Scale" Then
+          yqualival = modExamOption.GetClinScalePopUp(examtype, sName)
+          If yqualival Then
+            modClinSub.UpdateQualiQuantiData(GridView1[GridView1.Row, 0].Text, yqualival[1], CFloat(yqualival[0]), False)
+          Endif
+        Else If sOptName = "RichText Area" Then
+          yqualival = GetQualiRich(sName, GridView1[GridView1.Row, 8].Text, examtype)
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData(GridView1[GridView1.Row, 0].Text, yqualival[0], yqualival[1], yqualival[2])
+          Endif
+        Else
+          yqualival = GetQualiValues(sName, GridView1[GridView1.Row, 8].Text, examtype)
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData(GridView1[GridView1.Row, 0].Text, yqualival[0], yqualival[1], yqualival[2])
+          Endif
+        Endif
+      Endif
+      
+    Else If GridView1[GridView1.Row, 1].Text = "Quantitative" Then
+      xquantival = GetQuantiValues(examtype, $encid, sName, 0, 0, GridView1[GridView1.Row, 9].Text)
+      If xquantival Then
+        modClinSub.UpdateQuantiData(GridView1[GridView1.Row, 0].Text, xquantival[0], xquantival[1])
+      Endif
+    Endif
+    ShowClinicTable()
+    
+  Endif
+  
+End
+
+Public Sub btneditflag_Click()
+  
+  Dim abc As String
+  
+  If GridView1.Rows.Selection.Count Then
+    abc = InputCombo("Select Flag for the observation", "Change Flag", ["Normal", "Abnormal"], modMisc.GetIconValue(GridView1[GridView1.Row, 3].Picture), True)
+    If abc Then
+      modClinSub.UpdateExamFlag(GridView1[GridView1.Row, 0].Text, abc)
+      ShowClinicTable()
+    Endif
+  Endif
+  
+End
+
+Public Sub btndelete_Click()
+  
+  Dim res As Result
+  
+  If GridView1.Rows.Selection.Count Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      res = modDatabase.$myConn.Edit("tblpatientexam", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+        res["fldsave"] = False
+        res["flduserid"] = modBasic.$lbluser
+        res.Update
+        ShowClinicTable()
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+    Endif
+  Endif
+  
+End
+
+Public Sub btnreposel_Click()
+  
+  Dim xPath As String
+  
+  If $encid Then
+    xPath = modCHTMLPatient.ShowRecomExaminationpatient($encid, $Category, $ANCExams, $sDepart, $reference, cmbancvisit.Text)
+    modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+  
+End
+
+''========================== PNC ===============================
+Public Sub cmbpncvisit_Click()
+  
+  ShowClinicTable1()
+  
+End
+
+Public Sub btnaddpnc_Click()
+  
+  Dim xhosp As String
+  Dim res As Result
+  Dim xform As Boolean
+  
+  If dtpncdate.Value > modDate.EndSqlDate(Now()) Then
+    Message.Warning("Incorrect Date and Time", ("OK"))
+  Else
+    
+    If $encid And If dtpncdate.Value Then
+      If cmbpncvisit.Text Then
+        res = modDatabase.$myConn.Exec("select flddeltime,flddelspot from tblconfinement where fldreference=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2) ORDER BY flddeltime ASC", txtreference.Text, $patNo)
+        If res.Available Then
+          res.MoveLast
+          xhosp = res["flddelspot"]
+          If res["flddeltime"] Then
+            xform = GetProceedBool(cmbpncvisit.Text, modHMISRep.GetPNCVisitComment(res["flddeltime"], dtpncdate.Value))
+          Else
+            xform = True
+          Endif
+        Endif
+        
+        AddConsultDataMat($encid, "PNC Visit", dtpncdate.Value, cmbpncvisit.Text, xhosp)
+        Balloon.Info(("Information saved"), btnaddpnc)
+        Balloon.Delay = modBasic.$BalloonDelay
+      Endif
+    Endif
+    
+  Endif
+  
+End
+
+Private Sub LoadTreeData1()
+  
+  Dim str3 As String
+  Dim res3 As Result
+  
+  str3 = "select distinct(flditem) from tblstructexam where fldsubclass=&1 and fldcategory=&2 and fldreferencee=&3 and fldclass=&4 ORDER BY flditemid"
+  res3 = modDatabase.$myConn.Exec(str3, $Category, $PNCExams, $reference, $sDepart)
+  grdtreeview1.List = modControlSub.GetDirectFillresult(res3)
+  
+End
+
+Private Sub ShowSelectedVar1()
+  
+  Dim res As Result
+  Dim sList As String[]
+  Dim hForm As FmEnterMultiExam
+  Dim hForm11 As FmEnterMultiExamVir
+  
+  sList = New String[]
+  res = modDatabase.$myConn.Exec("select fldheadcode from tblstructexam where fldclass=&1 and fldsubclass=&2 and fldcategory=&3 and flditem=&4 and fldreferencee=&5 ORDER BY fldheadid", $sDepart, $Category, $PNCExams, grdtreeview1.Text, $reference)
+  If res.Available Then
+    For Each res
+      sList.Add(res!fldheadcode)
+    Next
+    If cmbpncvisit.Text Then
+      If modBasic.$FactorForm = "Vertical" Then
+        hForm11 = New FmEnterMultiExamVir(grdtreeview1.Text, $encid, cmbpncvisit.Text, sList, $Category)
+        hForm11.ShowModal
+      Else
+        hForm = New FmEnterMultiExam(grdtreeview1.Text, $encid, cmbpncvisit.Text, sList, $Category)
+        hForm.ShowModal
+      Endif 
+      ShowClinicTable1()
+    Endif
+  Endif
+  
+End
+
+Public Sub grdtreeview1_Click()
+  
+  If dtpncdate.Value Then
+    ShowSelectedVar1()
+  Endif
+  
+End
+
+Private Sub ShowClinicTable1()
+  
+  If cmbpncvisit.Text And If txtreference.Text Then
+    $rData = modDatabase.$myConn.Exec("select fldid,fldtype,fldhead,fldabnormal,fldid,fldtime,fldid,fldserialval,fldrepquali,fldrepquanti from tblpatientexam where fldinput=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2 and fldpatientval in(select fldpatientval from tblobstetrics where flddelref=&3)) and fldsave=&4 and fldserialval in(select fldheadcode from tblstructexam where fldsubclass=&5 and fldcategory=&6 and fldclass=&7 and fldreferencee=&8)", cmbpncvisit.Text, $patNo, txtreference.Text, True, $Category, $PNCExams, $sDepart, $reference)               ''
+    $aMyFields = New String[]
+    modGridView.ReadSmallData(GridView11, $rData, $aMyFields)
+    
+    With GridView11
+      .Columns[0].Width = 1
+      .Columns[1].Width = 1
+      .Columns[2].Width = 200 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 25 * modBasic.$AppWidthRatio
+      .Columns[4].Width = 225 * modBasic.$AppWidthRatio
+      .Columns[5].Width = 150 * modBasic.$AppWidthRatio
+      .Columns[6].Width = 1
+      .Columns[7].Width = 1
+      .Columns[8].Width = 1
+      .Columns[9].Width = 1
+      
+      .Columns[2].Text = "Examination"
+      .Columns[4].Text = "Observation"
+      .Columns[5].Text = "Time"
+    End With
+  Endif
+  
+End
+
+Public Sub GridView11_Data(Row As Integer, Column As Integer)
+  
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView11, Row)
+  If Column = 3 Then
+    GridView11.Data.Picture = Picture[modMisc.GetGridIcon($rData[$aMyFields[Column]])]
+    GridView11.Data.Text = ""
+  Else If Column = 4 Then
+    GridView11.Data.Text = modClinic.GetExamValueString($encid, $rData[$aMyFields[Column]], False)
+  Else If Column = 5 Then
+    GridView11.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else
+    GridView11.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  
+End
+
+Public Sub btncomponents1_Click()
+  
+  Dim yqualival As Variant[]
+  Dim xquantival As Variant[]
+  Dim rsn As Result
+  Dim xdate As Date
+  
+  Dim opt As String[]
+  Dim xval As String
+  Dim sTable As String[]
+  Dim sName As String
+  
+  Dim cForm As CFindExam
+  Dim examtype As String
+  Dim sExam As String
+  Dim sOptName As String
+  Dim sDefault As String
+  
+  If GridView11.Rows.Selection.Count Then
+    If GridView11[GridView11.Row, 1].Text = "Qualitative" Then
+      rsn = modDatabase.$myConn.Exec("select fldhead,fldtesttype,fldtanswertype,fldsysconst from tblstructexam where fldheadcode=&1", GridView11[GridView11.Row, 7].Text)
+      
+      If rsn.Available And If rsn["fldsysconst"] Then
+        cForm = New CFindExam(rsn["fldsysconst"])
+        examtype = cForm.GetExamMode()
+        sExam = cForm.GetExamName()
+        sOptName = cForm.GetExamOption()
+        sDefault = cForm.GetExamDefault()
+      Else
+        examtype = "Exam"
+      Endif
+      
+      If sExam Then
+        sName = sExam
+      Else
+        sName = GridView11[GridView11.Row, 2].Text
+      Endif
+      
+      If rsn["fldtanswertype"] = "Left and Right" Then
+        yqualival = CLeftRight(GridView11[GridView11.Row, 2].Text, GridView11[GridView11.Row, 8].Text, modFixClinic.GetLeftRightMainHeader("Exam", GridView11[GridView11.Row, 2].Text))
+        If yqualival Then
+          modClinSub.UpdateClinicQualiData(GridView11[GridView11.Row, 0].Text, yqualival[0], yqualival[1])
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Date Time" Then
+        xdate = GetDateValue(GridView11[GridView11.Row, 2].Text, ("Select Date Time"), Val(GridView11[GridView11.Row, 8].Text))
+        If xdate Then
+          modClinSub.UpdateClinicQualiData(GridView11[GridView11.Row, 0].Text, modDate.DateStringForExam(xdate), False)
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "BS Date" Then
+        xdate = GetDateValue(GridView11[GridView11.Row, 2].Text, ("Select Date Time"), modDate.ConvertToEnglishdate(GridView11[GridView11.Row, 8].Text))
+        If xdate Then
+          modClinSub.UpdateClinicQualiData(GridView11[GridView11.Row, 0].Text, modDate.ConvertToLocaldate(xdate), False)
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Text Table" Then
+        sTable = modString.ConverTableRichTextToGrid(modClinic.GetExamValueString($encid, GridView11[GridView11.Row, 0].Text))
+        opt = Split(sTable[0], ";")
+        xval = TableEntry(opt, GridView11[GridView11.Row, 2].Text, sTable[1])
+        If xval Then
+          modClinSub.UpdateClinicQualiData(GridView11[GridView11.Row, 0].Text, modString.GetTableFormatFromText(xval), False)
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Qualitative" Then
+        yqualival = GetQualiString(GridView11[GridView11.Row, 2].Text, GridView11[GridView11.Row, 8].Text, "Exam")
+        If yqualival Then
+          modClinSub.UpdateClinicQualiData(GridView11[GridView11.Row, 0].Text, yqualival[0], yqualival[1])
+        Endif
+        
+      Else If rsn["fldtanswertype"] = "Fixed Components" Then
+        
+      Else
+        If sOptName = "Clinical Scale" Then
+          yqualival = modExamOption.GetClinScalePopUp(examtype, sName)
+          If yqualival Then
+            modClinSub.UpdateQualiQuantiData(GridView11[GridView11.Row, 0].Text, yqualival[1], CFloat(yqualival[0]), False)
+          Endif
+        Else If sOptName = "RichText Area" Then
+          yqualival = GetQualiRich(sName, GridView11[GridView11.Row, 8].Text, examtype)
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData(GridView11[GridView11.Row, 0].Text, yqualival[0], yqualival[1], yqualival[2])
+          Endif
+        Else
+          yqualival = GetQualiValues(sName, GridView11[GridView11.Row, 8].Text, examtype)
+          If yqualival Then
+            modClinSub.UpdateClinicQualiData(GridView11[GridView11.Row, 0].Text, yqualival[0], yqualival[1], yqualival[2])
+          Endif
+        Endif
+      Endif
+      
+    Else If GridView11[GridView11.Row, 1].Text = "Quantitative" Then
+      xquantival = GetQuantiValues(examtype, $encid, sName, 0, 0, GridView11[GridView11.Row, 9].Text)
+      If xquantival Then
+        modClinSub.UpdateQuantiData(GridView11[GridView11.Row, 0].Text, xquantival[0], xquantival[1])
+      Endif
+    Endif
+    ShowClinicTable1()
+    
+  Endif
+  
+End
+
+Public Sub btneditflag1_Click()
+  
+  Dim abc As String
+  
+  If GridView11.Rows.Selection.Count Then
+    abc = InputCombo("Select Flag for the observation", "Change Flag", ["Normal", "Abnormal"], modMisc.GetIconValue(GridView11[GridView11.Row, 3].Picture), True)
+    If abc Then
+      modClinSub.UpdateExamFlag(GridView11[GridView11.Row, 0].Text, abc)
+      ShowClinicTable1()
+    Endif
+  Endif
+  
+End
+
+Public Sub btndelete1_Click()
+  
+  Dim res As Result
+  
+  If GridView11.Rows.Selection.Count Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      res = modDatabase.$myConn.Edit("tblpatientexam", "fldid=&1", GridView11[GridView11.Row, 0].Text)
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+        res["fldsave"] = False
+        res["flduserid"] = modBasic.$lbluser
+        res.Update
+        ShowClinicTable1()
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+    Endif
+  Endif
+  
+End
+
+Public Sub btnreposel1_Click()
+  
+  Dim xPath As String
+  
+  If $encid Then
+    xPath = modCHTMLPatient.ShowRecomExaminationpatient($encid, $Category, $PNCExams, $sDepart, $reference, cmbpncvisit.Text)
+    modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+  Endif
+  
+End
+
+Public Sub btnhmis_Click()
+  
+  Dim xPath As String
+  
+  Inc Application.Busy
+  xPath = modHMISMat.HMISRegister36(dtlmp.Value, Now(), "", "", True, $patNo)
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  
+End

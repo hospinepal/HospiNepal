@@ -1,0 +1,337 @@
+' Gambas class file
+
+Private $sDevice As String
+Private $sUniq As Boolean
+
+Private hWebcam As VideoDevice
+Private OnSet As Boolean
+Private Fps As Date
+Private nFps As Integer
+Private $sValue As String[]
+
+Private $TempDir As String
+Private $TempList As String[]
+Private $X As Integer
+Private $Y As Integer
+Private $Width As Integer
+Private $Height As Integer
+
+Public Sub Run(sDevice As String, sUniq As Boolean) As String[]
+
+  If sDevice Then
+    $sDevice = sDevice
+  Else
+    sDevice = "/dev/v4l/by-id/" & Dir("/dev/v4l/by-id", "*")[0]
+  Endif
+
+  If sUniq = True Then
+    $sUniq = True
+  Else
+    If modBasic.$CamOutputMode = "Multiple" Then
+      $sUniq = False
+    Else
+      $sUniq = True
+    Endif
+  Endif
+
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Public Sub Form_Open()
+
+  Dim xdate As Date
+
+  Me.Center
+  $TempList = New String[]
+  xdate = Now()
+  $TempDir = File.Dir(Temp()) &/ modString.GetDateString(xdate)
+  If Exist($TempDir) Then
+    modExternal.DeleteFolderRecursive($TempDir)
+  Endif
+  Mkdir $TempDir
+
+  If $sUniq = False Then
+    FileView1.Visible = True
+    FileView1.Dir = $TempDir
+    FileView1.Filter = ["*.jpg", "*.jpeg", "*.png", "*.bmp"]
+    FileView1.ShowPreview = False
+    btnclose.Visible = True
+    btnview.Visible = True
+  Else
+    FileView1.Visible = False
+    btnclose.Visible = False
+    btnview.Visible = False
+  Endif
+  ReadyForImage()
+
+End
+
+Public Sub btnview_Click()
+
+  Try FileView1.ShowPreview = btnview.Value
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Left Then
+    btnleft_Click()
+  Else If Key.Code = Key.Right Then
+    btnright_Click()
+  Else If Key.Code = Key.Esc Then
+    If $sUniq = False Then
+      btnclose_Click()
+    Else
+      BtnTakeShot_Click()
+    Endif
+  Else If Key.Code = Key.Insert Then
+    If $sUniq = False Then
+      BtnTakeShot_Click()
+    Endif
+  Endif
+
+End
+
+Public Sub btnclose_Click()
+
+  If $sUniq = False Then
+    $sValue = $TempList
+    Me.Close(True)
+  Endif
+
+End
+
+Private Sub ReadyForImage()
+
+  Dim aSize As String[]
+
+  If hWebCam Then
+    txtbrightness.Enabled = False
+    txtcontrase.Enabled = False
+    txthue.Enabled = False
+    txtwhiteness.Enabled = False
+    txtcolor.Enabled = False
+
+    BtnTakeShot.Enabled = False
+    hWebCam = Null
+    Timer1.Enabled = False
+    Return
+  End If
+
+  Try hWebCam = New VideoDevice($sDevice)
+  If Error Then
+    Message.Error(("Unable to open video device"))
+    Return
+  End If
+  hWebCam.Source = hWebCam.TV + hWebCam.Pal
+
+  BtnTakeShot.Enabled = True
+  txtbrightness.Enabled = True
+  txtcontrase.Enabled = True
+  txthue.Enabled = True
+  txtwhiteness.Enabled = True
+  txtcolor.Enabled = True
+  If modBasic.$CamImageSize Then
+    aSize = Split(modBasic.$CamImageSize, "*x*")
+    If aSize.Count = 2 Then
+      hWebcam.Resize(CInt(aSize[0]), CInt(aSize[1]))
+    Endif
+  Else
+    hWebcam.Resize(dwgVideo.Width, dwgVideo.Height)
+  Endif
+
+  OnSet = True
+  txtbrightness.Value = hWebcam.Bright
+  txtcontrase.Value = hWebcam.Contrast
+  txthue.Value = hWebCam.Hue
+  txtwhiteness.Value = hWebCam.Whiteness
+  txtcolor.Value = hWebCam.Color
+
+  Wait 0.001
+  OnSet = False
+  Timer1.Delay = 10
+  Timer1.Enabled = True
+  Me.Caption = hWebCam.Name
+  Fps = Now()
+  nFps = 0
+
+End
+
+Public Sub txtbrightness_Change()
+
+  If OnSet Then Return
+  hWebCam.Bright = txtbrightness.Value
+
+End
+
+Public Sub txtcontrase_Change()
+
+  If OnSet Then Return
+  hWebCam.Contrast = txtcontrase.Value
+
+End
+
+Public Sub txtwhiteness_Change()
+
+  If OnSet Then Return
+  hWebCam.Whiteness = txtwhiteness.Value
+
+End
+
+Public Sub txtcolor_Change()
+
+  If OnSet Then Return
+  hWebcam.Color = txtcolor.Value
+
+End
+
+Public Sub txthue_Change()
+
+  If OnSet Then Return
+  hWebCam.Hue = txthue.Value
+
+End
+
+Public Sub Timer1_Timer()
+
+  Dim T1 As Date
+  Dim hPict As Picture
+
+  Timer1.Enabled = False
+
+  'Try PictureBox1.Picture = hWebCam.Picture
+  Draw.Begin(dwgVideo)
+  hPict = hWebCam.Image.Picture
+  Draw.Picture(hPict, (dwgVideo.W - hPict.W) \ 2, (dwgVideo.H - hPict.H) \ 2)
+  Draw.End
+
+  If Not Error Then
+    nFps = nFps + 1
+    T1 = Now() - Fps
+    If Second(T1) >= 1 Then
+      Me.Caption = hWebCam.Name & " (" & nFps & " " & ("fps") & ")"
+      Fps = Now()
+      nFps = 0
+    End If
+  End If
+  Timer1.Enabled = True
+
+End
+
+Public Sub btncapture_Click()
+
+  Dim ximage As Image
+  Dim sTemp As String
+
+  ' If Not hWebCam.Image Then Return
+  If modBasic.$CamGrayScale = "Black/White" Then
+    ximage = hWebCam.Image
+    sTemp = Temp() & ".png"
+    ximage.Save(sTemp)
+    ximage = Image.Load(modDevAll.ConvertToBlackInWhite(sTemp))
+  Else If modBasic.$CamGrayScale = "GrayColor" Then
+    ximage = hWebCam.Image.Desaturate()
+  Else If modBasic.$CamGrayScale = "Composite Color" Then
+    ximage = hWebCam.Image.Picture.Image
+    If modBasic.$CamOpacity Then
+      ximage = ximage.Opacity(modBasic.$CamOpacity / 100)
+    Endif
+    If modBasic.$CamThreshold Then
+      ximage.Threshold(modBasic.$CamThreshold / 100)
+    Endif
+  Else
+    ximage = hWebCam.Image
+  Endif
+
+  If $Width And If $Height Then
+    ximage = ximage.Copy($X, $Y, $Width, $Height)
+  Endif
+
+  ImageView1.Image = ximage
+  ImageView1.Zoom = ZoomSlider1.Value / 100
+
+End
+
+Public Sub BtnTakeShot_Click()
+
+  Dim sPath As String
+
+  If IsNull(ImageView1.Image) Then Return
+
+  If modBasic.$CamImageFormat Then
+    sPath = $TempDir &/ modString.GetNowString() & "." & modBasic.$CamImageFormat
+  Else
+    sPath = $TempDir &/ modString.GetNowString() & ".png"
+  Endif
+  If modBasic.$CamImageQuality Then
+    ImageView1.Image.Save(sPath, modBasic.$CamImageQuality)
+  Else
+    ImageView1.Image.Save(sPath)
+  Endif
+  Wait
+
+  $TempList.Add(sPath)
+  If $sUniq = False Then
+    FileView1.Reload()
+  Else If $sUniq = True Then
+    $sValue = $TempList
+    Me.Close(True)
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  Try Timer1.Enabled = False
+  Try hWebCam = Null
+
+End
+
+Public Sub btnleft_Click()
+
+  Dim aVal As Integer
+
+  aVal = ZoomSlider1.Value
+  With ImageView1
+    .Image = ImageView1.Image.RotateLeft()
+    .Zoom = aVal / 100
+  End With
+
+End
+
+Public Sub btnright_Click()
+
+  Dim aVal As Integer
+
+  aVal = ZoomSlider1.Value
+  With ImageView1
+    .Image = ImageView1.Image.RotateRight()
+    .Zoom = aVal / 100
+  End With
+
+End
+
+Public Sub ZoomSlider1_Change()
+
+  ImageView1.Zoom = ZoomSlider1.Value / 100
+
+End
+
+Public Sub btncrop_Click()
+
+  Dim sColl As Collection
+  Dim X As Integer
+  Dim Y As Integer
+
+  X = Me.X + ScrollView1.X
+  Y = Me.Y + ScrollView1.Y
+  sColl = CCrop(X, Y, ScrollView1.Width, ScrollView1.Width)
+  If sColl Then
+    $X = sColl["X"] - Me.X
+    $Y = sColl["Y"] - Me.Y
+    $Width = sColl["Width"]
+    $Height = sColl["Height"]
+  Endif
+
+End

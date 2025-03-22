@@ -1,0 +1,161 @@
+' Gambas class file
+
+Private $sList As Long[]
+
+Public Sub _new(sList As Long[])
+
+  $sList = sList
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  ShowStockGrid()
+  txtencid.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub ShowStockGrid()
+
+  Dim res As Result
+  Dim i As Integer
+
+  GridView1.Clear
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = $sList.Count
+
+  For i = 0 To $sList.Count - 1
+    res = modDatabase.$myConn.Exec("select fldcode,flditem,fldexpiry from tblmedinventory where fldid=&1 and fldstatus=&2", $sList[i], "Active")
+    GridView1[i, 0].Text = $sList[i]
+    GridView1[i, 1].Text = res!fldcode
+    GridView1[i, 2].Text = res!flditem
+    GridView1[i, 3].Text = res!fldexpiry
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "ItemCode"
+    .Columns[2].Text = "ItemName"
+    .Columns[3].Text = "Expiry"
+  End With
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim xstatus As String
+
+  If txtencid.Text Then
+    txtpatientname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
+    txtgender.Text = modPatient.GetPatientSex(Trim(txtencid.Text))
+    txtpatientaddress.Text = modPatient.GetPatientAddressByEnc(Trim(txtencid.Text))
+
+    xstatus = modPatient.CurrentAdmissionStatus(Trim(txtencid.Text))
+    txtlocation.Text = modPatient.GetLocationSetting(Trim(txtencid.Text), xstatus)
+    SHowRequestGrid(Trim(txtencid.Text))
+  Endif
+
+End
+
+Private Sub SHowRequestGrid(encid As String)
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim $rData As Result
+
+  sql = "select fldid,fldtime_order,fldcategory,flditem,fldcomment from tblpatmeditem where fldencounterval=&1 and fldorder=&2"                                             ''
+  $rData = modDatabase.$myConn.Exec(sql, encid, "Requested")
+
+  GridView2.Clear
+  GridView2.Columns.Count = $rData.Fields.Count
+  GridView2.Rows.Count = $rData.Count
+
+  For Each $rData
+    Column = 0
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView2, $rData.Index, Column)
+      If Column = 1 Then
+        GridView2[$rData.Index, Column].Text = modReportVar.GetDateTimeReport($rData["fldtime_order"], gb.GeneralDate)
+      Else
+        GridView2[$rData.Index, Column].Text = $rData[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView2.Row = 0
+
+  With GridView2
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Category"
+    .Columns[3].Text = "Particulars"
+  End With
+
+End
+
+Public Sub btnuseup_Click()
+
+  Dim res1 As Result
+  Dim res2 As Result
+
+  If GridView1.Rows.Selection.Count > 0 And If GridView2.Rows.Selection.Count Then
+    modDatabase.$myConn.Begin
+    res1 = modDatabase.$myConn.Edit("tblpatmeditem", "fldid=&1 and fldencounterval=&2 and fldorder=&3", GridView2[GridView2.Row, 0].Text, Trim(txtencid.Text), "Requested")
+    res1["fldcode"] = GridView1[GridView1.Row, 1].Text
+    res1["fldorder"] = "Done"
+    res1["flduserid"] = modBasic.$lbluser
+    res1["fldtime"] = Now()
+    res1["fldcomp"] = modBasic.$compID
+    res1["fldsave"] = True
+    res1["xyz"] = False
+    res1.Update
+
+    res2 = modDatabase.$myConn.Edit("tblmedinventory", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+    res2["fldstatus"] = "Used"
+    res2["fldsave"] = False
+    res2["xyz"] = False
+    res2.Update
+    $sList.Remove(GridView1.Row)
+    modDatabase.$myConn.Commit
+    ShowStockGrid()
+    SHowRequestGrid(Trim(txtencid.Text))
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtencid.Text = txtencid.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End

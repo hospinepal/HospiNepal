@@ -1,0 +1,613 @@
+' Gambas module file
+
+'NOTE:------------------------------- PHARMACY FUNCTIONS --------------------------------------
+Public Function GetStockNoFromDosing(dosid As Long) As Long
+
+  Dim res As Result
+  Dim xx As Long
+
+  res = modDatabase.$myConn.Exec("select flditemno from tblpatdosing where fldid=&1", dosid)
+  If res.Available Then
+    If res["flditemno"] Then
+      xx = res["flditemno"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function GetStockIDFromDosing(dosid As Long) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select flditem from tblpatdosing where fldid=&1", dosid)
+  If res.Available Then
+    If res["flditem"] Then
+      xx = res["flditem"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetRouteFromDosing(dosid As Long) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldroute from tblpatdosing where fldid=&1", dosid)
+  If res.Available Then
+    If res["fldroute"] Then
+      xx = res["fldroute"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetDailyDoseFromDosing(dosid As Long) As Float
+
+  Dim res As Result
+  Dim xx As Float
+
+  res = modDatabase.$myConn.Exec("select flddose,fldfreq from tblpatdosing where fldid=&1", dosid)
+  If res.Available Then
+    If res["flddose"] Then
+      xx = res["flddose"] * modPharmLabel.ConvertFrequencyToNumber(res["fldfreq"])
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+'NOTE:----------------------------------------- Dosing Record --------------------------------------------
+Public Function GetMedFormatForMedReport(txtitemname As String, txtroute As String) As String
+
+  Dim bch As String
+  Dim xform As String
+
+  xform = modSettings.ShowSettingFromFIle("ClinicalReport/MedicineName_Format")
+  If xform Then
+    If txtroute <> "suture" And If txtroute <> "msurg" And If txtroute <> "ortho" And If txtroute <> "extra" Then
+      bch = modPharmLabel.GetMedicineNameOptionType(txtitemname, xform)
+    Else
+      bch = txtitemname
+    Endif
+  Else
+    bch = txtitemname
+  Endif
+
+  If Not bch Then
+    bch = txtitemname
+  Endif
+
+  Return bch
+
+End
+
+Public Function GetMedicineDoseInFormat(sid As Long, sFormat As String) As Variant
+
+  Dim res As Result
+  Dim xx As Variant
+
+  res = modDatabase.$myConn.Exec("select flditemtype,fldroute,flditem,flddose from tblpatdosing where fldid=&1", sid)
+  If res.Available Then
+    If res["flditemtype"] = "Medicines" Then
+
+      If sFormat = "Label" Then
+        Select res["fldroute"]
+          Case "fluid", "resp", "topical", "eye/ear", "anal/vaginal"
+            xx = res["flddose"] & Space(1) & modMedConstant.GetMedicineDoseUnit(res["flditem"])
+          Case Else
+            xx = modPharmLabel.ConvertDoseToPrintNum(res["flddose"] / modMedConstant.GetDrugInitialStrength(res["flditem"])) & Space(1) & modPharmLabel.GetPackVolUnit(res["flditem"])
+        End Select
+      Else
+        xx = res["flddose"]
+      Endif
+
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetTaperingRegimen(id As Long, Optional sHospCode As String) As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  xx = New String[]
+  If sHospCode Then
+    res = modDatabase.$myConn.Exec("select fldid,flddose,fldfreq,flddays from tbltaperdose where flddoseno=&1 and fldhospcode=&2", id, sHospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select fldid,flddose,fldfreq,flddays from tbltaperdose where flddoseno=&1", id)
+  Endif
+  If res.Available Then
+    For Each res
+      xx.Add(res["flddose"] & " " & modMedConstant.GetMedicineDoseUnit(GetStockIDFromDosing(res["fldid"])) & " X " & res["fldfreq"] & " X " & res["flddays"] & " day(s)")
+    Next
+  Endif
+  Return xx
+
+End
+
+Public Function GetDoseRegimenString(id As Variant, Route As Boolean, Optional ShowQty As Boolean) As String
+
+  Dim xx As String
+  Dim rs As Result
+  Dim reg As String
+  Dim taper As String[]
+  Dim xfin As String
+
+  xfin = ""
+  If MMain.$WebEntry = True Then  ''remoteoptimized
+    rs = modDatabase.$myConn.Exec("select fldid,fldroute,flditem,flddose,fldfreq,flddays,(fldqtydisp-fldqtyret) as fldqty,fldhospcode from tblpatdosing where fldrepoid=&1", id)
+  Else
+    rs = modDatabase.$myConn.Exec("select fldid,fldroute,flditem,flddose,fldfreq,flddays,(fldqtydisp-fldqtyret) as fldqty from tblpatdosing where fldid=&1", id)
+  Endif
+  If rs.Available = True Then
+    If rs["flddose"] Then
+
+      If rs["fldfreq"] = "Tapering" Then
+        If MMain.$WebEntry = True Then  ''remoteoptimized
+          taper = GetTaperingRegimen(rs["fldid"], rs["fldhospcode"])
+        Else
+          taper = GetTaperingRegimen(rs["fldid"])
+        Endif
+
+        If taper Then
+          reg = taper.Join(gb.NewLine)
+        Else
+          reg = rs["flddose"] & " " & modMedConstant.GetMedicineDoseUnit(rs["flditem"]) & " X " & rs["fldfreq"] & " X " & rs["flddays"] & " day(s)"
+        Endif
+      Else
+        reg = rs["flddose"] & " " & modMedConstant.GetMedicineDoseUnit(rs["flditem"]) & " X " & rs["fldfreq"] & " X " & rs["flddays"] & " day(s)"
+      Endif
+
+      If Route = True Then
+        xx = rs["fldroute"] & Space(1) & reg
+      Else
+        xx = reg
+      Endif
+
+      If ShowQty = True Then
+        xfin = xx & Space(1) & " [" & rs["fldqty"] & "]"
+      Else
+        xfin = xx
+      Endif
+
+    Endif
+  Endif
+
+  Return xfin
+
+End
+
+Public Function GetMedicineDispRegimens(encid As String) As String[]
+
+  Dim rs As Result
+  Dim xval As String
+  Dim regm As String[]
+
+  regm = New String[]
+  rs = modDatabase.$myConn.Exec("select fldroute,flditem,flddose,fldfreq,SUM(flddays) as flddays from tblpatdosing where fldencounterval=&1 and flditemtype=&2 and (fldstatus=&3 or fldstatus=&4 or fldstatus=&5) and fldsave_order=&6 and flddose>&7 GROUP BY fldroute,flditem,flddose,fldfreq", encid, "Medicines", "Registered", "Admitted", "Recorded", True, 0)
+  If rs.Available Then
+    For Each rs
+      xval = rs["fldroute"] & Space(1) & modMedConstant.GetCodeFromStockID(rs["flditem"]) & Space(2) & rs["flddose"] & " " & modMedConstant.GetMedicineDoseUnit(rs["flditem"]) & " X " & rs["fldfreq"] & " X " & rs["flddays"] & " day(s)"
+      If regm.Count = 0 Then
+        regm.Add(xval)
+      Else
+        If regm.Exist(xval) = False
+          regm.Add(xval)
+        Endif
+      Endif
+    Next
+  Endif
+
+  Return regm
+
+End
+
+Public Function NurDosingString(encid As String) As String
+
+  Dim rs As Result
+  Dim res As Result
+  Dim xx As String
+  Dim yy As String
+  Dim regm As String[]
+  Dim sPt As String[]
+  Dim tot As Integer
+  Dim xval As String
+  Dim xFinal As Variant[]
+  Dim i As Integer
+  Dim xRowVal As Collection
+  Dim colLst As String[] = ["", "Medicine", "Regimen", "Count"]
+
+  xFinal = New Variant[]
+
+  regm = New String[]
+  rs = modDatabase.$myConn.Exec("select fldroute,flditem,flddose,fldfreq from tblpatdosing where fldencounterval=&1 and flditemtype=&2 and (fldstatus=&3 or fldstatus=&4 or fldstatus=&5) and flddose>&6 GROUP BY fldroute,flditem,flddose,fldfreq", encid, "Medicines", "Registered", "Admitted", "Recorded", 0)
+  If rs.Available Then
+    For Each rs
+      xval = rs["fldroute"] & "|" & rs["flditem"] & "|" & rs["flddose"] & "|" & rs["fldfreq"]
+      If regm.Count = 0 Then
+        regm.Add(xval)
+      Else
+        If regm.Exist(xval) = False
+          regm.Add(xval)
+        Endif
+      Endif
+    Next
+    If regm Then
+      regm.Sort()
+    Endif
+
+    i = 1
+    For Each xx In regm
+      sPt = Split(xx, "|")
+      res = modDatabase.$myConn.Exec("select  COUNT(fldid) as cnt from tblnurdosing where flddoseno in(select fldid from tblpatdosing where fldencounterval=&1 and flditemtype=&2 and (fldstatus=&3 or fldstatus=&4 or fldstatus=&5) and fldroute=&6 and flditem=&7 and flddose=&8 and fldfreq=&9)", encid, "Medicines", "Registered", "Admitted", "Recorded", sPt[0], sPt[1], sPt[2], sPt[3])                          ''
+      tot = 0
+      If res.Available Then
+        If res["cnt"] Then
+          tot = tot + res["cnt"]
+        Endif
+      Endif
+      If tot Then
+        xRowVal = New Collection
+        xRowVal.Add(CStr(i), CStr(0))
+        xRowVal.Add(GetMedFormatForMedReport(sPt[1], sPt[0]), CStr(1))
+        xRowVal.Add(sPt[0] & Space(2) & sPt[2] & Space(1) & modMedConstant.GetMedicineDoseUnit(sPt[1]) & " X " & sPt[3], CStr(2))
+        xRowVal.Add(CStr(tot) & " dose", CStr(3))
+        xFinal.Add(xRowVal)
+        i = i + 1
+      Endif
+      sPt.Clear
+    Next
+
+    yy = modString.GetRichTableStringFromVariant(colLst, xFinal)
+  Endif
+
+  Return yy
+
+End
+
+Public Function GetMedicineFollowPatient(sToDate As Date) As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+  Dim yy As String[]
+
+  xx = New String[]
+  res = modDatabase.$myConn.Exec("select fldstarttime,fldencounterval,flditem,flddose,fldfreq,flddays,fldqtydisp,flditemtype from tblpatdosing where fldsave_order=&1 and fldendtime>&2", True, sToDate)
+  If res.Available Then
+    For Each res
+      If res["flditemtype"] = "Medicines" Then
+        If Ceil(modMedConstant.GetQuantityDosing(res["flditem"], res["flddose"], res["fldfreq"], res["flddays"])) > res["fldqtydisp"] And If DateDiff(res["fldstarttime"], sToDate, gb.Day) > modMedConstant.GetDrugUseDurationDosing(res["flditem"], res["flddose"], res["fldfreq"], res["fldqtydisp"]) Then
+
+          If xx.Count = 0 Then
+            xx.Add(res["fldencounterval"])
+          Else
+            If xx.Exist(res["fldencounterval"]) = False Then
+              xx.Add(res["fldencounterval"])
+            Endif
+          Endif
+
+        Endif
+      Endif
+    Next
+
+    If xx Then
+      xx.Sort()
+    Endif
+    yy = xx
+  Endif
+
+  Return yy
+
+End
+
+Public Function PatientTakingMed(dtfir As Date, dtlast As Date) As String[]
+
+  Dim xx As String[]
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select distinct(fldencounterval) from tblpatdosing where fldstarttime>=&1 and fldendtime<=&2 and flditemtype=&3", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "Medicines")
+  xx = modControlSub.GetDirectFillresult(res)
+
+  Return xx
+
+End
+
+Public Function PatientDoseIDByDate(encid As String, dtfir As Date, dtlast As Date) As Long[]
+
+  Dim xid As Long
+  Dim xx As Long[]
+  Dim res As Result
+  Dim dd As Integer
+  Dim res1 As Result
+  Dim res2 As Result
+
+  xx = New Long[]
+  res = modDatabase.$myConn.Exec("select fldid from tblpatdosing where fldstarttime>=&1 and fldstarttime<=&2 and flditemtype=&3 and fldencounterval=&4", modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "Medicines", encid)
+  If res.Available Then
+    For Each res
+      If xx.Count = 0 Then
+        xx.Add(res["fldid"])
+
+      Else If xx.Count > 0 Then
+        dd = 0
+        For Each xid In xx
+          res1 = modDatabase.$myConn.Exec("select fldencounterval,fldroute,flditem,flddose,fldfreq from tblpatdosing where fldid=&1", xid)
+          res2 = modDatabase.$myConn.Exec("select fldencounterval,fldroute,flditem,flddose,fldfreq from tblpatdosing where fldid=&1", res["fldid"])
+          If res1["fldroute"] = res2["fldroute"] And If res1["flditem"] = res2["flditem"] And If res1["flddose"] = res2["flddose"] And If res1["fldfreq"] = res2["fldfreq"] Then
+            dd = dd + 1
+          Else
+            dd = dd + 0
+          Endif
+        Next
+        If dd = 0 Then
+          xx.Add(res["fldid"])
+        Endif
+
+      Endif
+    Next
+  Endif
+  Return xx
+
+End
+
+Public Function GetMedicinesUsed(encid As String, Optional sDate As Date) As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  If sDate Then
+    res = modDatabase.$myConn.Exec("select distinct(flditem) from tblpatdosing where fldencounterval=&1 and fldid in(select flddoseno from tblnurdosing where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3)", encid, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate))
+  Else
+    res = modDatabase.$myConn.Exec("select distinct(flditem) from tblpatdosing where fldencounterval=&1 and fldid in(select flddoseno from tblnurdosing where fldencounterval=&1)", encid)
+  Endif
+  xx = modControlSub.GetDirectFillresult(res)
+
+  Return xx
+
+End
+
+Public Function UniProcedureMedString(encid As String, itemid As Long, sType As String) As String[]
+
+  Dim rs As Result
+  Dim xx As String[]
+
+  xx = New String[]
+  rs = modDatabase.$myConn.Exec("select fldid,fldroute,flditem,flddose,(fldqtydisp-fldqtyret) as qty,flditemtype from tblpatdosing where fldencounterval=&1 and fldsave_order=&2", encid, sType & ":" & CStr(itemid), True)
+  If rs.Available = True Then
+    For Each rs
+      If rs["flditemtype"] = "Medicines" Then
+        xx.Add(GetMedFormatForMedReport(rs["flditem"], rs["fldroute"]) & Space(1) & rs["fldroute"] & Space(1) & rs["flddose"] & Space(1) & modMedConstant.GetMedicineDoseUnit(rs["flditem"]) & " [" & rs["qty"] & "]")
+      Endif
+    Next
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetALLReportDrugSelString(encid As String, doseno As Long, sDate As Date) As String[]
+
+  Dim sql As String
+  Dim res As Result
+  Dim xList As String[]
+
+  xList = New String[]
+  sql = "select fldvalue,fldunit,fldtime from tblnurdosing where fldencounterval=&1 and flddoseno=&2 and fldtime>=&3 and fldtime<=&4"
+  res = modDatabase.$syConn.Exec(sql, encid, doseno, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate))
+  If res.Available = True Then
+    For Each res
+      If res["fldvalue"] Then
+        xList.Add("[ " & modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime) & " ] " & " : " & CStr(res["fldvalue"]) & Space(1) & res["fldunit"])
+      Endif
+    Next
+  Endif
+  Return xList
+
+End
+
+Public Function ShowMedicationListDosID(encid As String, dosid As Long[]) As String[]
+
+  Dim res As Result
+  Dim dos As Long
+  Dim xList As String[]
+
+  xList = New String[]
+  For Each dos In dosid
+    res = modDatabase.$myConn.Exec("select fldencounterval,fldroute,flditem,flddose,fldfreq,flddays,fldtime from tblpatdosing where fldid=&1 and fldencounterval=&2", dos, encid)                                                                      ''
+    If res.Available = True Then
+      xList.Add(res["fldroute"] & Space(1) & modMedConstant.GetCodeFromStockID(res["flditem"]) & Space(2) & res["flddose"] & " " & modMedConstant.GetMedicineDoseUnit(res["flditem"]) & " X " & res["fldfreq"] & " X " & res["flddays"] & " day(s)")
+    Endif
+  Next
+
+  Return xList
+
+End
+
+''------------------------------- Med calculation --------------------------------
+Public Function GetTotalFluidMedicine(nurid As Long) As Float
+
+  Dim res As Result
+  Dim txtroute As String
+  Dim totfld As Float
+  Dim xdura As Float
+
+  res = modDatabase.$myConn.Exec("select flddoseno,fldvalue,fldunit,fldfromtime,fldtotime from tblnurdosing where fldid=&1", nurid)
+  If res.Available Then
+    txtroute = GetRouteFromDosing(res["flddoseno"])
+    If txtroute = "CIV" Or txtroute = "IIV" Then
+      '     totfld = (res["flddose"] * modPharmLabel.ConvertFrequencyToNumber(res["fldfreq"])) / modMedConstant.GetDrugFinalStrength(res["flditem"], txtroute)
+      totfld = 0
+    Else If txtroute = "fluid" Then
+      If res["fldtotime"] Then
+        xdura = Round(DateDiff(res["fldfromtime"], res["fldtotime"], gb.Minute) / 60)
+      Else
+        xdura = 0
+      Endif
+      totfld = xdura * res["fldvalue"]
+    Else
+      totfld = 0
+    Endif
+    totfld = Round(totfld, -2)
+  Endif
+  Return totfld
+
+End
+
+Public Function GetTotalEnergyMedicine(id As Long) As Float
+
+  Dim res As Result
+  Dim txtroute As String
+  Dim totenr As Float
+
+  res = modDatabase.$myConn.Exec("select fldroute,flditem,flddose,fldfreq,flddays,fldtime from tblpatdosing where fldid=&1", id)
+  If res.Available Then
+    txtroute = res["fldroute"]
+    If txtroute = "CIV" Or txtroute = "IIV" Then
+      totenr = (res["flddose"] * modPharmLabel.ConvertFrequencyToNumber(res["fldfreq"])) * modMedConstant.GetDrugEnergyContent(res["flditem"], txtroute)
+    Else If txtroute = "fluid" Then
+    Else
+      totenr = 0
+    Endif
+    totenr = Round(totenr, -2)
+  Endif
+  Return totenr
+
+End
+
+Public Function DisableEncounterForReview(encid As String) As Boolean
+
+  Dim xx As String
+  Dim aStr As String[]
+  Dim xval As Boolean
+
+  xx = modSettings.ShowSettingFromFIle("MedicineSetting/DisableDrugProblems")
+  If xx Then
+    aStr = Split(xx, ";")
+    If aStr.Exist(encid) = True Then
+      xval = True
+    Else
+      xval = False
+    Endif
+  Else
+    xval = False
+  Endif
+  Return xval
+
+End
+
+' ' Public Function TotalDoseNumner(dosid As Long) As Integer
+' '
+' '   Dim xx As Integer
+' '   Dim res As Result
+' '
+' '   res = modDatabase.$myConn.Exec("select COUNT(fldid) as cnt from tblnurdosing where flddoseno=&1", dosid)
+' '   If res.Available Then
+' '     If res["cnt"] Then
+' '       xx = res["cnt"]
+' '     Else
+' '       xx = 0
+' '     Endif
+' '   Else
+' '     xx = 0
+' '   Endif
+' '
+' '   Return xx
+' '
+' ' End
+' '
+' ' Public Function TodayDoseNumner(dosid As Long) As Integer
+' '
+' '   Dim xx As Integer
+' '   Dim res As Result
+' '
+' '   res = modDatabase.$myConn.Exec("select COUNT(fldid) as cnt from tblnurdosing where flddoseno=&1 and fldtime<=&2 and fldtime>=&3", dosid, modDate.EndSqlDate(Now()), modDate.StartSqlDate(Now()))
+' '   If res.Available Then
+' '     If res["cnt"] Then
+' '       xx = res["cnt"]
+' '     Else
+' '       xx = 0
+' '     Endif
+' '   Else
+' '     xx = 0
+' '   Endif
+' '
+' '   Return xx
+' '
+' ' End
+
+Public Function TotalDoseCount(dosid As Long, Optional sDate As Date) As Integer
+
+  Dim xx As Integer
+  Dim res As Result
+
+  If sDate Then
+    res = modDatabase.$myConn.Exec("select COUNT(fldid) as cnt from tblnurdosing where flddoseno=&1 and fldtime<=&2 and fldtime>=&3", dosid, modDate.EndSqlDate(sDate), modDate.StartSqlDate(sDate))
+  Else
+    res = modDatabase.$myConn.Exec("select COUNT(fldid) as cnt from tblnurdosing where flddoseno=&1", dosid)
+  Endif
+  If res.Available Then
+    If res["cnt"] Then
+      xx = res["cnt"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End
+
+Public Function TotalDoseAmount(dosid As Long, Optional sDate As Date) As Integer
+
+  Dim xx As Float
+  Dim res As Result
+  Dim xstrn As Float
+
+  xstrn = modMedConstant.GetDrugInitialStrength(modPharmacy.GetStockIDFromDosing(dosid))
+  If sDate Then
+    res = modDatabase.$myConn.Exec("select SUM(fldvalue) as fldvalue from tblnurdosing where flddoseno=&1 and fldtime<=&2 and fldtime>=&3", dosid, modDate.EndSqlDate(sDate), modDate.StartSqlDate(sDate))
+  Else
+    res = modDatabase.$myConn.Exec("select SUM(fldvalue) as fldvalue from tblnurdosing where flddoseno=&1", dosid)
+  Endif
+  If res.Available Then
+    If res["fldvalue"] Then
+      xx = Round(res["fldvalue"] * xstrn, -3)
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End

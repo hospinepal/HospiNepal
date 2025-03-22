@@ -1,0 +1,796 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  cmbroute.List = modMedicine.ComboRoute()
+  cmbsupplier.List = modSupplier.FillVendorNameCombo("Active")
+  cmbstatus.List = ["Requested", "Verified"]
+  If modBasic.$PurCompList Then
+    cmbfixdepart.Text = modBasic.$PurCompList
+    cmbfixdepart.Enabled = False
+  Else
+    cmbfixdepart.List = modMedicine.GetExtraDepartments()
+  Endif
+  cmbroute.Text = ""
+  dtdelivery.Value = DateAdd(Date(), gb.Date, 7)
+  rbgeneric.Value = True
+  rbnew.Value = True
+  If modBasic.$AccessPurchaseOrder = "Disable" Then
+    btnverify.Enabled = False
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub mnublank_Click()
+
+  Me.Close
+  Wait
+  modWorkSpace.Add(fmPurchRequest)
+
+End
+
+Public Sub cmbsupplier_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbsupplier)
+  modFillContainer.RestrictComboToContent(cmbsupplier)
+
+End
+
+Public Sub cmbroute_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbroute)
+  modFillContainer.RestrictComboToContent(cmbroute)
+
+End
+
+Public Sub btnnepdelivery_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtdelivery.Value))
+  If xx Then
+    dtdelivery.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Private Function GetBrandGenerricType() As String
+
+  Dim brandOrGeneric As String
+
+  If rbrand.Value = True Then
+    brandOrGeneric = "Brand"
+  Else
+    brandOrGeneric = "Generic"
+  Endif
+  Return brandOrGeneric
+
+End
+
+Public Sub cmbroute_GotFocus()
+
+  cmbsupplier.Enabled = False
+  dtdelivery.Enabled = False
+
+End
+
+Public Sub cmbroute_Click()
+
+  cmbmedicine.Clear
+  cmbmedicine.Text = ""
+  txtqty.Value = 0
+
+End
+
+Public Sub cmbmedicine_GotFocus()
+
+  Dim res As Result
+
+  cmbsupplier.Enabled = False
+  If Not cmbroute.Text Then
+    cmbroute.SetFocus
+
+  Else If cmbroute.Text Then
+    If cmbroute.Text = "Group" Then
+    Else
+      If Not cmbmedicine.Text Then
+        If cmbfixdepart.Text Then
+          res = modStock.ItemListForPurchaseResult(cmbroute.Text, GetBrandGenerricType(), cmbfixdepart.Text)
+        Else
+          res = modStock.ItemListForPurchaseResult(cmbroute.Text, GetBrandGenerricType())
+        Endif
+        cmbmedicine.Text = GridViewNew("Select Particulars", modControlSub.GetDirectFillresult(res), False, cmbmedicine, GridView1.Height + cmbmedicine.Height)
+        txtrate.SetFocus
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Public Sub txtrate_GotFocus()
+
+  If cmbmedicine.Text Then
+    If modStockSub.GetComboStockControl(cmbroute.Text, cmbmedicine.Text, rbgeneric, rbrand, modDatabase.$medConn) = False Then
+      cmbmedicine.Text = ""
+      Balloon.Warning(("Item not listed"), cmbmedicine)
+      Balloon.Delay = modBasic.$BalloonDelay
+      cmbroute.SetFocus
+    Else
+
+      If cmbroute.Text = "suture" Or If cmbroute.Text = "msurg" Or If cmbroute.Text = "ortho" Or If cmbroute.Text = "extra" Or If cmbroute.Text = "Group" Then
+        txtrate.SetFocus
+      Else
+        If rbrand.Value = True Then
+          cmbmedicine.Text = modMedConstant.ConvertBrandToGeneric(cmbroute.Text, cmbmedicine.Text)
+        Endif
+      Endif
+      txtrate.SelectAll
+
+    Endif
+  Endif
+
+End
+
+Public Sub txtqty_GotFocus()
+
+  txtqty.SelectAll
+
+End
+
+Public Sub btnadd_Click()
+
+  If cmbsupplier.Text And If cmbmedicine.Text And If txtqty.Value Then
+    AddRequestStore()
+    SHowGridView()
+    ClearComboAll()
+    cmbroute.SetFocus
+  Endif
+
+End
+
+Private Sub ClearComboAll()
+
+  cmbroute.Text = ""
+  cmbmedicine.Clear()
+  cmbmedicine.Text = ""
+  txtrate.Value = 0
+  txtqty.Value = 0
+
+End
+
+Public Sub btnadd_KeyRelease()
+
+  btnadd_Click()
+
+End
+
+Public Sub mnureqimport_Click()
+
+  Dim xrefNo As String
+  Dim res1 As Result
+  Dim res As Result
+
+  If cmbsupplier.Text Then
+    xrefNo = InputBox("Provide Verified Request No", "Store Request", "")
+    If xrefNo Then
+      res1 = modDatabase.$myConn.Exec("select fldid,fldstockid,fldcategory,fldfinalqty,fldreference,fldtime,flduserid,fldremarks from tblrequest where fldreference=&1 and fldstatus=&2", xrefNo, "Approved")
+      If res1.Available Then
+        For Each res1
+          res = modDatabase.$myConn.Create("tblpurorder")
+          res["fldstockid"] = res1["fldstockid"]
+          res["fldcategory"] = res1["fldcategory"]
+          res["fldrate"] = 0
+          res["fldqty"] = res1["fldfinalqty"]
+          res["fldstatus"] = "Requested"
+          res["fldsuppname"] = cmbsupplier.Text
+          res["fldreference"] = ""
+          res["flddelivery"] = dtdelivery.Value
+          res["flduserid"] = modBasic.$lbluser
+          res["fldtime"] = Now()
+          res["fldcomp"] = modBasic.$compID
+          res["fldsave"] = False
+
+          res["fldverify"] = ""
+          res["fldverify_time"] = ""
+          res["fldconfirm"] = ""
+          res["fldconfirm_time"] = ""
+
+          res["fldrecvref"] = ""
+          res["fldrecvuserid"] = ""
+          res["fldrecvtime"] = ""
+          res.Update
+        Next
+        SHowGridView()
+        ClearComboAll()
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Sub AddRequestStore()
+
+  Dim res As Result
+
+  If cmbsupplier.Text Then
+    res = modDatabase.$myConn.Create("tblpurorder")
+    res["fldstockid"] = cmbmedicine.Text
+    res["fldcategory"] = modNonMedical.GetBillItemCategoryFromCombo(cmbroute.Text)
+    res["fldrate"] = txtrate.Value
+    res["fldqty"] = txtqty.Value
+    res["fldstatus"] = "Requested"
+    res["fldsuppname"] = cmbsupplier.Text
+    res["fldreference"] = ""
+    res["flddelivery"] = dtdelivery.Value
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldsave"] = False
+
+    res["fldverify"] = ""
+    res["fldverify_time"] = ""
+    res["fldconfirm"] = ""
+    res["fldconfirm_time"] = ""
+
+    res["fldrecvref"] = ""
+    res["fldrecvuserid"] = ""
+    res["fldrecvtime"] = ""
+    res.Update
+    SHowGridView()
+    ClearComboAll()
+  Endif
+
+End
+
+Public Sub btnshow_Click()
+
+  SHowGridView()
+
+End
+
+Private Sub SHowGridView()
+
+  Dim sql As String
+  Dim xsuppl As String
+
+  If cmbsupplier.Text Then
+    xsuppl = cmbsupplier.Text
+  Else
+    xsuppl = "%"
+  Endif
+  If rbnew.Value = True Then
+    sql = "select fldid,fldtime,fldstockid,fldcategory,fldrate,fldqty,fldstatus,fldreference,fldsuppname,flddelivery from tblpurorder where fldsuppname like &1 and fldcomp=&2 and fldstatus=&3 and fldsave=&4"
+  Else
+    sql = "select fldid,fldtime,fldstockid,fldcategory,fldrate,fldqty,fldstatus,fldreference,fldsuppname,flddelivery from tblpurorder where fldsuppname like &1 and fldcomp=&2 and fldstatus=&3"
+  Endif
+  $rData = modDatabase.$myConn.Exec(sql, xsuppl, modBasic.$compID, "Requested", False)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 400 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 1
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Particulars"
+    .Columns[4].Text = "Rate"
+    .Columns[5].Text = "QTY"
+    .Columns[6].Text = "Status"
+    .Columns[7].Text = "Reference"
+    .Columns[8].Text = "Supplier"
+    .Columns[9].Text = "Delivery"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.MediumDate)
+  Else If Column = 4 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], -2)
+  Else If Column = 5 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], -2)
+  Else If Column = 9 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.MediumDate)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup()
+
+End
+
+Public Sub mnudelete_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modDatabase.$myConn.Delete("tblpurorder", "fldid=&1 and fldcomp=&2 and fldsave=&3", GridView1[GridView1.Row, 0].Text, modBasic.$compID, False)
+    SHowGridView()
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+  Dim xval As Float
+  Dim Row As Integer
+
+  Row = GridView1.Row
+  If GridView1.Column = 4 Then
+    xval = InputValue(("Edit Rate of selected Particular"), "Purchase Request", GridView1[GridView1.Row, 4].Text)
+    If xval Then
+      res = modDatabase.$myConn.Edit("tblpurorder", "fldid=&1 and fldcomp=&2 and fldsave=&3", GridView1[GridView1.Row, 0].Text, modBasic.$compID, False)
+      res["fldrate"] = xval
+      res.Update
+      SHowGridView()
+    Endif
+  Else If GridView1.Column = 4 Then
+    xval = InputValue(("Edit Quantity of selected Particular"), "Purchase Request", GridView1[GridView1.Row, 5].Text)
+    If xval Then
+      res = modDatabase.$myConn.Edit("tblpurorder", "fldid=&1 and fldcomp=&2 and fldsave=&3", GridView1[GridView1.Row, 0].Text, modBasic.$compID, False)
+      res["fldqty"] = xval
+      res.Update
+      SHowGridView()
+    Endif
+  Endif
+  GridView1.Row = Row
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res1 As Result
+  Dim res As Result
+  Dim ref As String
+  Dim idLock As Boolean
+
+  res1 = modDatabase.$myConn.Exec("select fldid from tblpurorder where fldsuppname=&1 and fldcomp=&2 and fldstatus=&3 and fldsave=&4", cmbsupplier.Text, modBasic.$compID, "Requested", False)
+  If res1.Available Then
+    idLock = modBillLock.LockTableForID("Reference")
+
+    Inc Application.Busy
+    If idLock = True Then
+      modDatabase.$myConn.Begin
+      ref = modBillLock.ReferenceString("General")
+      If ref Then
+        For Each res1
+          res = modDatabase.$myConn.Edit("tblpurorder", "fldid=&1", res1["fldid"])
+          res["fldreference"] = ref
+          res["fldsave"] = True
+          res.Update
+        Next
+      Endif
+      modDatabase.$myConn.Commit
+      txtrefno.Text = ref
+      modBillLock.ReleaseLockTable("Reference")
+    Endif
+    Dec Application.Busy
+    SHowGridView()
+
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Reference")
+  Endif
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub btnformatfir_Click()
+
+  Dim xPath As String
+
+  If txtrefno.Text And If cmbsupplier.Text Then
+    Inc Application.Busy
+    xPath = modMaLePaFormat.PurchaseOrderMaLePa(txtrefno.Text, cmbsupplier.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnreportfir_Click()
+
+  Dim xPath As String
+
+  If txtrefno.Text And If cmbsupplier.Text Then
+    Inc Application.Busy
+    xPath = modHTMLStockReport.PurchaseRequestReport(txtrefno.Text, cmbsupplier.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+''======================= ORDERED VIEW ===========================
+Public Sub txtreference_Click()
+
+  Dim xxx As String[]
+
+  xxx = DualGridValue("Select Purchase Order No", GetPurOrderReferenceList(), True)
+  If xxx Then
+    txtreference.Text = xxx[0]
+    txtsuppname.Text = xxx[1]
+  Endif
+
+End
+
+Private Function GetPurOrderReferenceList() As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  xx = New String[]
+  If modBasic.$ViewLockInventory = "Location" Then
+    res = modDatabase.$myConn.Exec("select fldreference,fldsuppname from tblpurorder where fldsave=&1 and fldcomp=&3 GROUP BY fldreference ORDER BY fldtime DESC", True, "Requested", modBasic.$compID)
+  Else If modBasic.$ViewLockInventory = "User" Then
+    res = modDatabase.$myConn.Exec("select fldreference,fldsuppname from tblpurorder where fldsave=&1 and flduserid=&3 GROUP BY fldreference ORDER BY fldtime DESC", True, "Requested", modBasic.$lbluser)
+  Else
+    res = modDatabase.$myConn.Exec("select fldreference,fldsuppname from tblpurorder where fldsave=&1 and fldstatus=&2 GROUP BY fldreference ORDER BY fldtime DESC", True, "Requested")
+  Endif
+  If res.Available Then
+    For Each res
+      xx.Add(res["fldsuppname"] & "|" & res["fldreference"])
+    Next
+  Endif
+  Return xx
+
+End
+
+Public Sub btnrefresh_Click()
+
+  SHowOrderGridView()
+
+End
+
+Private Sub SHowOrderGridView()
+
+  Dim sql As String
+  Dim xrefno As String
+
+  If txtreference.Text Then
+    xrefno = Trim(txtreference.Text)
+  Else
+    xrefno = "%"
+  Endif
+  sql = "select fldid,fldsuppname,fldstockid,fldcategory,fldqty,fldstatus,fldtime,flduserid,flddelivery,fldverify,fldverify_time,fldreference from tblpurorder where fldcomp=&1 and fldsave=&2 and fldreference like &3 and fldstatus=&4"
+  $rData1 = modDatabase.$myConn.Exec(sql, modBasic.$compID, True, xrefno, cmbstatus.Text)
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData1, $aMyFields1)
+
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 350 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 1
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 1
+
+    .Columns[1].Text = "Supplier"
+    .Columns[2].Text = "Particulars"
+    .Columns[4].Text = "QTY"
+    .Columns[5].Text = "Status"
+    .Columns[6].Text = "EntryDate"
+    .Columns[7].Text = "EntryUser"
+    .Columns[8].Text = "Delivery"
+    .Columns[9].Text = "VerifyUser"
+    .Columns[10].Text = "VerifyDate"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 6 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.MediumDate)
+  Else If Column = 8 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.MediumDate)
+  Else If Column = 10 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.MediumDate)
+  Else If Column = 4 Then
+    GridView2.Data.Text = modReportVar.GetLocaleNumberFormat($rData1[$aMyFields1[Column]], -2)
+  Else
+    GridView2.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+  GridView2.Rows[Row].Height = Max(GridView2.Rows[Row].Height, GridView2.Data.Font.RichTextHeight(GridView2.Data.Text, GridView2.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView2.Rows.Height - GridView2.Font.Height))
+  GridView2.Data.WordWrap = True
+
+End
+
+Public Sub GridView2_Click()
+
+  txtsuppname.Text = GridView2[GridView2.Row, 1].Text
+  txtreference.Text = GridView2[GridView2.Row, 11].Text
+
+End
+
+Public Sub chkselallorder_Click()
+
+  If chkselallorder.Value = True Then
+    GridView2.SelectAll()
+  Else If chkselallorder.Value = False Then
+    GridView2.UnSelectAll()
+  Endif
+
+End
+
+Public Sub btnverify_Click()
+
+  Dim res As Result
+  Dim Row As Integer
+
+  For Row = 0 To GridView2.Rows.Count - 1
+    If GridView2.Rows[Row].Selected = True Then
+      res = modDatabase.$myConn.Edit("tblpurorder", "fldid=&1", GridView2[Row, 0].Text)
+      res["fldverify"] = modBasic.$lbluser
+      res["fldverify_time"] = Now()
+      res["fldstatus"] = "Verified"
+      res.Update
+    Endif
+  Next
+  SHowOrderGridView()
+  Balloon.Info(("Information saved"), btnverify)
+  Balloon.Delay = modBasic.$BalloonDelay
+
+End
+
+Public Sub mnueditdate_Click()
+
+  Dim res As Result
+  Dim xdate As Date
+
+  If cmbstatus.Text = "Requested" And If txtreference.Text Then
+    xdate = GetDateValue("Update PO Entry Date", txtreference.Text, "")
+    If xdate Then
+      res = modDatabase.$myConn.Edit("tblpurorder", "fldcomp=&1 and fldsave=&2 and fldreference like &3 and fldstatus=&4", modBasic.$compID, True, Trim(txtreference.Text), "Requested")
+      If res.Available Then
+        For Each res
+          res["fldtime"] = xdate
+          res.Update
+        Next
+        SHowOrderGridView()
+      Endif
+    Endif
+  Endif
+
+End
+
+''================ Reports ==================
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView2, txtreference.Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+Public Sub btnreport_Click()
+
+  Dim xPath As String
+
+  If txtreference.Text Then
+    Inc Application.Busy
+    xPath = modHTMLStockReport.PurchaseRequestReport(txtreference.Text, txtsuppname.Text, cmbstatus.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnformat_Click()
+
+  Dim xPath As String
+
+  If txtreference.Text Then
+    Inc Application.Busy
+    xPath = modMaLePaFormat.PurchaseOrderMaLePa(txtreference.Text, txtsuppname.Text, cmbstatus.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+''========================== Goods received =============================
+Public Sub txtorderno_Click()
+
+  Dim xxx As String[]
+
+  xxx = DualGridValue("Select Purchase Order No", GetVerifiedOrderReferenceList(), True)
+  If xxx Then
+    txtorderno.Text = xxx[0]
+    txtsupprecv.Text = xxx[1]
+  Endif
+
+End
+
+Private Function GetVerifiedOrderReferenceList() As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  xx = New String[]
+  If modBasic.$ViewLockInventory = "Location" Then
+    res = modDatabase.$myConn.Exec("select fldreference,fldsuppname from tblpurorder where fldstatus=&1 and fldcomp=&2 GROUP BY fldreference ORDER BY fldtime DESC", "Verified", modBasic.$compID)
+  Else If modBasic.$ViewLockInventory = "User" Then
+    res = modDatabase.$myConn.Exec("select fldreference,fldsuppname from tblpurorder where fldstatus=&1 and flduserid=&2 GROUP BY fldreference ORDER BY fldtime DESC", "Verified", modBasic.$lbluser)
+  Else
+    res = modDatabase.$myConn.Exec("select fldreference,fldsuppname from tblpurorder where fldstatus=&1 GROUP BY fldreference ORDER BY fldtime DESC", "Verified")
+  Endif
+  If res.Available Then
+    For Each res
+      xx.Add(res["fldsuppname"] & "|" & res["fldreference"])
+    Next
+  Endif
+  Return xx
+
+End
+
+Public Sub btnrefrecv_Click()
+
+  If txtorderno.Text Then
+    SHowVerifiedGridView(Trim(txtorderno.Text))
+  Endif
+
+End
+
+Private Sub SHowVerifiedGridView(xRefNo As String)
+
+  Dim sql As String
+
+  sql = "select fldid,fldsuppname,fldstockid,fldcategory,fldqty,fldstatus,fldtime,fldrecvuserid,fldrecvtime,fldrecvref from tblpurorder where fldcomp=&1 and fldsave=&2 and fldreference=&3 and fldstatus=&4"
+  $rData2 = modDatabase.$myConn.Exec(sql, modBasic.$compID, True, xRefNo, "Verified")
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView3, $rData2, $aMyFields2)
+
+  With GridView3
+    .Columns[0].Width = 1
+    .Columns[1].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 1
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Supplier"
+    .Columns[2].Text = "Particulars"
+    .Columns[4].Text = "QTY"
+    .Columns[5].Text = "Status"
+    .Columns[6].Text = "EntryDate"
+    .Columns[7].Text = "RecvUser"
+    .Columns[8].Text = "RecvDate"
+    .Columns[9].Text = "Receipt"
+  End With
+
+End
+
+Public Sub GridView3_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView3, Row)
+  If Column = 6 Then
+    GridView3.Data.Text = modReportVar.GetDateTimeReport($rData2[$aMyFields2[Column]], gb.MediumDate)
+  Else If Column = 8 Then
+    GridView3.Data.Text = modReportVar.GetDateTimeReport($rData2[$aMyFields2[Column]], gb.MediumDate)
+  Else If Column = 4 Then
+    GridView3.Data.Text = modReportVar.GetLocaleNumberFormat($rData2[$aMyFields2[Column]], -2)
+  Else
+    GridView3.Data.Text = $rData2[$aMyFields2[Column]]
+  Endif
+
+End
+
+Public Sub chkselall_Click()
+
+  If chkselall.Value = True Then
+    GridView3.SelectAll()
+  Else If chkselall.Value = False Then
+    GridView3.UnSelectAll()
+  Endif
+
+End
+
+Public Sub btnsetreceived_Click()
+
+  Dim res As Result
+  Dim idLock As Boolean
+  Dim Row As Integer
+  Dim ref As String
+
+  Inc Application.Busy
+  txtrecvno.Text = ""
+  idLock = modBillLock.LockTableForID("Reference")
+  If idLock = True Then
+
+    modDatabase.$myConn.Begin
+    ref = modBillLock.ReferenceString("General")
+    If ref Then
+      For Row = 0 To GridView3.Rows.Count - 1
+        If GridView3.Rows[Row].Selected = True Then
+          res = modDatabase.$myConn.Edit("tblpurorder", "fldid=&1", GridView3[Row, 0].Text)
+          res["fldrecvuserid"] = modBasic.$lbluser
+          res["fldrecvtime"] = Now()
+          res["fldstatus"] = "Received"
+          res["fldrecvref"] = ref
+          res.Update
+        Endif
+      Next
+    Endif
+    modDatabase.$myConn.Commit
+    txtrecvno.Text = ref
+
+    modBillLock.ReleaseLockTable("Reference")
+  Endif
+  Dec Application.Busy
+
+End
+
+Public Sub btnrecvformat_Click()
+
+  Dim xPath As String
+
+  If txtorderno.Text And If txtrecvno.Text Then
+    Inc Application.Busy
+    xPath = modMaLePaFormat.ReceiveOrderMaLePa(txtrecvno.Text, txtorderno.Text, txtsupprecv.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End

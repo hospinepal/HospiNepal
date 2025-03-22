@@ -1,0 +1,242 @@
+' Gambas class file
+
+Private $xMAC As String
+Private $id As Long
+Private $encid As String
+Private $sTable As String
+
+Public Sub _new(id As Long, strExam As String, strValue As Float, defUnt As String, xspecimen As String, xMAC As String, sTable As String)
+
+  lblitem.Text = strExam
+  $id = id
+  $xMAC = xMAC
+  txtreport.Value = strValue
+  txtspecimen.Text = xspecimen
+  If sTable Then
+    $sTable = sTable
+  Else
+    $sTable = "tblpatlabtest"
+  Endif
+
+  If defUnt = "Metric" Then
+    rbmetric.Value = True
+  Else If defUnt = "SI" Then
+    rbsi.Value = True
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  Dim hForm As FmQuantiEntry
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  hForm = New FmQuantiEntry(txtreport, pnlquanti)
+  modSettings.ShowCheckBox(chkoutlier, "Laboratory/WarnOutliers")
+  $encid = modLabTest.GetEncIDFromLabID($id)
+  ShowTestLImit()
+
+End
+
+Public Sub chkoutlier_Click()
+
+  modSettings.EnterCheckSetting(chkoutlier, "Laboratory/WarnOutliers")
+
+End
+
+Private Sub ShowTestLImit()
+
+  Dim sql As String
+  Dim res As Result
+  Dim xunit As String
+
+  Dim strUnit As String
+  Dim xlimit As Float[]
+
+  If rbsi.Value = True Then
+    strUnit = "SI"
+  Else
+    strUnit = "Metric"
+  Endif
+
+  sql = "select fldencounterval,fldtestid,fldmethod from " & $sTable & " where fldid=&1 and fldtest_type=&2"
+  res = modDatabase.$myConn.Exec(sql, $id, "Quantitative")
+  If res.Available Then
+    If res["fldmethod"] Then
+      xunit = modLabTest.LabTestUnit(res["fldtestid"], res["fldencounterval"], strUnit, res["fldmethod"])
+      xlimit = modLabTest.LabBothLimitValue(res["fldtestid"], res["fldencounterval"], strUnit, res["fldmethod"])
+    Else
+      xunit = modLabTest.LabTestUnit(res["fldtestid"], res["fldencounterval"], strUnit)
+      xlimit = modLabTest.LabBothLimitValue(res["fldtestid"], res["fldencounterval"], strUnit)
+    Endif
+  Endif
+  txtlower.Value = xlimit[0]
+  txtupper.Value = xlimit[1]
+
+  lblunit1.Text = xunit
+  lblunit2.Text = xunit
+
+End
+
+Public Sub rbsi_Click()
+
+  ShowTestLImit()
+
+End
+
+Public Sub rbmetric_Click()
+
+  ShowTestLImit()
+
+End
+
+Private Sub GetOutlierRange()
+
+  Dim xcrit As Float
+
+  If txtlower.Value <> txtupper.Value Then
+    xcrit = modFixLab.GetCritValueTest(lblitem.Text)
+    If xcrit Then
+      txtcritlow.Value = txtlower.Value - xcrit * (txtupper.Value - txtlower.Value)
+      txtcrithigh.Value = txtupper.Value + xcrit * (txtupper.Value - txtlower.Value)
+    Endif
+  Endif
+
+End
+
+Public Sub txtreport_Change()
+
+  If txtreport.Value Then
+    If txtlower.Value <> txtupper.Value Then
+      If txtreport.Value < txtlower.Value Or If txtreport.Value > txtupper.Value Then
+        chkabnormal.Value = True
+      Else
+        chkabnormal.Value = False
+      Endif
+    Else
+      chkabnormal.Value = False
+    Endif
+  Else
+    chkabnormal.Value = False
+  Endif
+  If chkabnormal.Value = True Then
+    chkabnormal.Foreground = Color.Red
+  Else
+    chkabnormal.Foreground = Color.Default
+  Endif
+
+End
+
+Public Sub btnBrChange_Click()
+
+  Me.Close
+
+End
+
+Public Sub txtreport_GotFocus()
+
+  chkabnormal.Value = False
+  txtreport.SelectAll
+
+End
+
+Public Sub btncalc_Click()
+
+  Dim xsyscon As String
+  Dim xval As Float
+
+  If rbsi.Value = True Then
+    rbmetric.Value = True
+    ShowTestLImit()
+  Endif
+
+  xsyscon = modFixLab.GetTestSysName(lblitem.Text)
+  If xsyscon Then
+    If rbmetric.Value = True Then
+      xval = modSysCons.GetConstantValue(xsyscon, modMedReports.GetPatientEncFromID($sTable, $id))
+      If xval Then
+        txtreport.Value = xval
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnBrOK_Click()
+
+  If chkoutlier.Value = True Then
+
+    GetOutlierRange()
+    If txtcritlow.Value Or If txtcrithigh.Value Then
+      If txtreport.Value < txtcritlow.Value Or If txtreport.Value > txtcrithigh.Value Then
+
+        If Message.Question(("Are you sure ?"), ("No"), ("Yes")) = 2 Then
+          SaveLabData()
+        Endif
+
+      Else
+        SaveLabData()
+      Endif
+    Else
+      SaveLabData()
+    Endif
+
+  Else
+    SaveLabData()
+  Endif
+
+  Wait
+  Me.Close()
+
+End
+
+Private Sub SaveLabData()
+
+  If chknull.Value Then
+    modLabSub.UpdateLabTestReportQuanti($id, txtreport.Value, chkabnormal.Value, modLabSub.GetTestUnitFromButton(rbsi, rbmetric), $sTable)
+    SocketMessage()
+    Balloon.Info(("Information saved"), btnBrOK)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Else
+    If txtreport.Value Then
+      modLabSub.UpdateLabTestReportQuanti($id, txtreport.Value, chkabnormal.Value, modLabSub.GetTestUnitFromButton(rbsi, rbmetric), $sTable)
+      SocketMessage()
+      Balloon.Info(("Information saved"), btnBrOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Private Sub SocketMessage()
+
+  Dim xline As String
+  Dim encid As String
+  Dim xuser As String
+
+  If $xMAC Then
+    Inc Application.Busy
+    encid = modLabTest.GetEncIDFromLabID($id)
+    xuser = modGeneral.GetCurrentUseronMac($xMAC)
+    xline = "UserNotice: [" & modPatient.GetPatientNameByEnc(encid, modDatabase.$myConn) & "]" & lblitem.Text & Space(1) & CStr(txtreport.Value) & "@"
+    modDevice.TransferTextSocket(modGeneral.GetCurrentIPonMac($xMAC), modAppSupport.GetTransferPort(xuser), xline)
+    Dec Application.Busy
+  Endif
+
+Catch
+  Dec Application.Busy
+  Message.Warning(Error.Text, ("OK"))
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else If Key.Code = Key.F1 Then
+    btncalc_Click()
+  Else If Key.Code = Key["C"] And If Key.Control Then
+    btncalc_Click()
+  Endif
+
+End

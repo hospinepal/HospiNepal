@@ -1,0 +1,1249 @@
+' Gambas class file
+
+Private $ItemList As String[]
+Private $rData As Result
+Private $aMyFields As String[]
+Private $ProgressBar1 As ProgressBar
+Private $SSQLFields As String[]
+
+Private $ColCount As Integer
+Private $newColumn As String[]
+Private $RepoStr As String
+
+Private $tblpatlabtest As String
+Private $tblpatlabsubtest As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Horizontal")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  btnmnuqty.Menu = "mnuhide"
+
+  If MMain.$WebReport = "Multiple" Then
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      pnlocat.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+    If MMain.$RepoReportMode = True Then
+      mnusearname.Visible = False
+    Endif
+
+  Else
+    pnlocat.Visible = False
+  Endif
+
+  cmbsensi.List = ["Sensitive", "Intermediate", "Resistant", "ValidValue", "%"]
+  cmbsensi.Text = "%"
+  cmbspecimen.List = modBasic.$LabSpecimenList
+  cmbspecimen.Add("%")
+  cmbspecimen.Text = "%"
+
+  cmbdrug.List = modBasic.$LabAntibioticList
+  cmbdrug.Add("%")
+  cmbdrug.Text = "%"
+
+  cmbstatus.List = ["Sampled", "Reported", "Verified"]
+  cmbstatus.Text = "Reported"
+
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  rball.Value = True
+  modAccount.PasInvoiceSetting(cmbfiscal, True)
+  LoadTableNames()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub cmblocation_Click()
+
+  cmbvalue.Clear()
+  If cmblocation.Text Then
+    cmbvalue.List = modDataRepo.GetRepoValueListType(cmblocation.Text)
+  Endif
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatlabtest = "tblpatlabtest"
+    $tblpatlabsubtest = "tblpatlabsubtest"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatlabtest,fldpatlabsubtest from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatlabtest"] Then
+        $tblpatlabtest = res["fldpatlabtest"]
+      Else
+        $tblpatlabtest = "tblpatlabtest"
+      Endif
+      If res["fldpatlabsubtest"] Then
+        $tblpatlabsubtest = res["fldpatlabsubtest"]
+      Else
+        $tblpatlabsubtest = "tblpatlabsubtest"
+      Endif
+    Else
+      $tblpatlabtest = "tblpatlabtest"
+      $tblpatlabsubtest = "tblpatlabsubtest"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Private Sub FillListBox()
+
+  Dim xList As String[]
+
+  If $ItemList Then
+    If txtcustom.Text Then
+      xList = modString.SelectStringArrayToText(txtcustom.Text, $ItemList)
+    Else
+      xList = $ItemList
+    Endif
+    If xList Then
+      cmbmicrobe.List = xList.Sort()
+    Else
+      cmbmicrobe.Clear()
+    Endif
+  Endif
+
+End
+
+Public Sub txtcustom_Change()
+
+  FillListBox()
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnload_Click()
+
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  If MMain.$WebReport = "Multiple" Then
+    $ItemList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldsubtest) as col from " & $tblpatlabsubtest & " where (fldtanswertype=&1 or fldtanswertype=&2)" & $RepoStr, "Drug Sensitivity", "WHO Sensitivity"))
+  Else
+    $ItemList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldsubtest) from tbltestquali where (fldtanswertype=&1 or fldtanswertype=&2)", "Drug Sensitivity", "WHO Sensitivity"))
+  Endif
+  FillListBox()
+
+End
+
+Private Function GetLabTimeStr() As String
+
+  Dim xfldtime As String
+
+  If cmbstatus.Text = "Sampled" Then
+    xfldtime = "t1.fldtime_sample"
+  Else If cmbstatus.Text = "Reported" Then
+    xfldtime = "t1.fldtime_report"
+  Else If cmbstatus.Text = "Verified" Then
+    xfldtime = "t1.fldtime_verify"
+  Else
+    xfldtime = "t1.fldtime_sample"
+  Endif
+  Return xfldtime
+
+End
+
+Private Sub GetFieldList()
+
+  Dim xfldtime As String
+  Dim xhospfld As String
+  Dim xList As String[]
+
+  xList = New String[]
+  xfldtime = GetLabTimeStr()
+  xhospfld = modDataRepo.HospitalField("t3")
+  xList = [xfldtime, "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldsampletype", "t1.fldmethod", "t2.fldsubtest", "t3.fldvariable", "t3.fldvalue"]
+  If xhospfld Then
+    xList.Add(xhospfld)
+  Endif
+  $SSQLFields = xList
+
+End
+
+Private Function GetSQLColumns() As String[]
+
+  Dim xFldList As String[]
+  Dim i As Integer
+
+  GetFieldList()
+  modCustPatient.FillNewCOlumnCollection(Me.Tag)
+  $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+  xFldList = $SSQLFields.Copy()
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      xFldList.Add("t1.fldencounterval")
+    Next
+  Endif
+  Return xFldList
+
+End
+
+Public Sub mnusearch_Click()
+
+  Dim encid As String
+  Dim sql As String
+  Dim xFldList As String[]
+
+  encid = GetEncid()
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t2")
+  If encid Then
+    xFldList = GetSQLColumns()
+    sql = "select " & xFldList.Join(",") & " FROM (tblpatlabsubtable AS t3 inner join " & $tblpatlabsubtest & " AS t2 on (t3.fldsubtestid=t2.fldid and t3.fldindex<=>t2.fldindex)) inner join " & $tblpatlabtest & " AS t1 on t2.fldtestid=t1.fldid WHERE t1.fldencounterval=&1" & $RepoStr
+    $rData = modDatabase.$syConn.Exec(sql, encid)
+    FillPatGrid()
+  Endif
+
+End
+
+Public Sub mnusearname_Click()
+
+  Dim xname As String[]
+  Dim sql As String
+  Dim xFldList As String[]
+
+  xname = InputDoubleText(("Search Patient Name"), ["First Name", "SurName"], ["%", "%"], modBasic.$SurNameList)
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t2")
+  If xname Then
+    xFldList = GetSQLColumns()
+    sql = "select " & xFldList.Join(",") & " FROM (tblpatlabsubtable AS t3 inner join " & $tblpatlabsubtest & " AS t2 on (t3.fldsubtestid=t2.fldid and t3.fldindex<=>t2.fldindex)) inner join " & $tblpatlabtest & " AS t1 on t2.fldtestid=t1.fldid WHERE t1.fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where lower(fldptnamefir) like &1 and lower(fldptnamelast) like &2))" & $RepoStr
+    $rData = modDatabase.$syConn.Exec(sql, LCase(xname[0]), LCase(xname[1]))
+    Inc Application.Busy
+    FillPatGrid()
+    Dec Application.Busy
+  Endif
+
+End
+
+Private Function ExecuteQuery(xFldList As String[]) As Result
+
+  Dim sql As String
+  Dim xfldtime As String
+  Dim res As Result
+  Dim xmicrobe As String
+
+  If rball.Value = True Then
+    xmicrobe = "%"
+  Else If rbsel.Value = True Then
+    If chkcustom.Value = True Then
+      xmicrobe = Trim(txtcustom.Text) & "%"
+    Else
+      xmicrobe = cmbmicrobe.Text
+    Endif
+  Endif
+
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t2")
+  If xmicrobe Then
+    xfldtime = GetLabTimeStr()
+    If cmbsensi.Text = "ValidValue" Then
+      sql = "select " & xFldList.Join(",") & " FROM (tblpatlabsubtable AS t3 inner join " & $tblpatlabsubtest & " AS t2 on (t3.fldsubtestid=t2.fldid and t3.fldindex<=>t2.fldindex)) inner join " & $tblpatlabtest & " AS t1 on t2.fldtestid=t1.fldid WHERE " & xfldtime & ">=&1 and " & xfldtime & "<=&2 and lower(t1.fldsampletype) like &3 and (t2.fldtanswertype=&4 or t2.fldtanswertype=&5) and lower(t2.fldsubtest) like &6 and lower(t3.fldvariable) like &7 and (t3.fldvalue like &8 or t3.fldvalue like &9 or t3.fldvalue like &{10})" & $RepoStr
+      res = modDatabase.$syConn.Exec(sql, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), LCase(cmbspecimen.Text), "Drug Sensitivity", "WHO Sensitivity", LCase(xmicrobe), LCase(cmbdrug.Text), "Sensitive", "Intermediate", "Resistant")
+    Else
+      sql = "select " & xFldList.Join(",") & " FROM (tblpatlabsubtable AS t3 inner join " & $tblpatlabsubtest & " AS t2 on (t3.fldsubtestid=t2.fldid and t3.fldindex<=>t2.fldindex)) inner join " & $tblpatlabtest & " AS t1 on t2.fldtestid=t1.fldid WHERE " & xfldtime & ">=&1 and " & xfldtime & "<=&2 and lower(t1.fldsampletype) like &3 and (t2.fldtanswertype=&4 or t2.fldtanswertype=&5) and lower(t2.fldsubtest) like &6 and lower(t3.fldvariable) like &7 and t3.fldvalue like &8" & $RepoStr
+      res = modDatabase.$syConn.Exec(sql, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), LCase(cmbspecimen.Text), "Drug Sensitivity", "WHO Sensitivity", LCase(xmicrobe), LCase(cmbdrug.Text), cmbsensi.Text)
+    Endif
+  Endif
+  Return res
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+
+  Dim xxx As Variant
+  Dim i As Integer
+
+  If Column = 0 Then
+    xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+  Else If Column = 2 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
+  Else If Column = 3 Then
+    xxx = modPatient.GetPatientSex(xVariable, modDatabase.$syConn)
+  Else If Column = 4 Then
+    xxx = modMedReports.GetPatientPastAgeString($tblpatlabtest, xVariable)
+  Else If Column = 10 Then
+    xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+  Else
+    xxx = xVariable
+  Endif
+
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      If Column = $ColCount + i Then
+        xxx = modCustPatient.NewColValue(Me.Tag, $newColumn[i], xVariable)
+      Endif
+    Next
+  Endif
+  Return xxx
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim xFldList As String[]
+
+  TabStrip1.Index = 0
+  Inc Application.Busy
+  xFldList = GetSQLColumns()
+  $rData = ExecuteQuery(xFldList)
+
+  If chkgrid.Value = True Then
+    FillPatGrid()
+  Endif
+
+  If chkchart.Value = True Then
+    FillItemChartQTY()
+  Endif
+
+  Dec Application.Busy
+
+End
+
+Public Sub FillPatGrid()
+
+  Dim i As Integer
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  $ColCount = $SSQLFields.Count
+  With GridView1
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 1
+    .Columns[7].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "DateTime"
+    .Columns[1].Text = "EncID"
+    .Columns[2].Text = "Name"
+    .Columns[3].Text = "Gender"
+    .Columns[4].Text = "Age"
+    .Columns[5].Text = "Specimen"
+    .Columns[7].Text = "Growth"
+    .Columns[8].Text = "Antibiotics"
+    .Columns[9].Text = "Sensitivity"
+
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        .Columns[$ColCount + i].Text = $newColumn[i]
+        .Columns[$ColCount + i].Width = 150 * modBasic.$AppWidthRatio
+      Next
+    Endif
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column > $SSQLFields.Count - 1 Then
+    GridView1.Data.RichText = modString.TextToHTML(GetGridViewValue(Column, $rData[$aMyFields[Column]]))
+  Else
+    GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+''------------------------------------------- Grid View Report ----------------------------------
+Public Sub GridView1_Menu()
+
+  mnugrid.Popup
+
+End
+
+Public Sub GridView1_DblClick()
+
+  Dim xx As Integer
+  Dim yy As Integer
+
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+
+End
+
+Public Sub mnuenchart_Click()
+
+  Dim xx As String
+  Dim xField As String
+  Dim Column As Integer
+  Dim res As Result
+  Dim xval As Variant
+  Dim hFile As CUnivariate
+  Dim xFldList As String[]
+  Dim sOrder As String[]
+
+  Dim hUniv As FmAnalyzeSett
+
+  hUniv = New FmAnalyzeSett("Univariate", modGridView.GetGridViewColumns(GridView1))
+  hUniv.ShowModal
+
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  Inc Application.Busy
+  hFile = New CUnivariate
+
+  Column = modCustPatient.GetUnivariateColumn(1)
+  xField = xFldList[Column]
+  res = ExecuteQuery([xField])
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Column, res[xField])
+      If xval Then
+        hFile.Add(xval)
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modSettings.ShowSettingFromFIle("UnivariateAnalysis/DataType") = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetEncChartGridNew(hFile.GetSPSSFile(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrosstab_Click()
+
+  Dim xx As String
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hFile As CBivariate
+  Dim xFldList As String[]
+  Dim sOrder As String[]
+  Dim hBivar As FmAnalyzeSett
+
+  hBivar = New FmAnalyzeSett("Bivariate", modGridView.GetGridViewColumns(GridView1))
+  hBivar.ShowModal
+
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  Inc Application.Busy
+  hFile = New CBivariate
+  Row = modCustPatient.GetCrossVarRow(1)
+  xFieRow = xFldList[Row]
+  Column = modCustPatient.GetCrossVarColumn(1)
+  xFieColm = xFldList[Column]
+  res = ExecuteQuery([xFieRow, xFieColm])
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Row, res[xFieRow])
+      yval = GetGridViewValue(Column, res[xFieColm])
+      If xval And If yval Then
+        hFile.Add([xval, yval])
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetCrossTabStatNew(hFile.GetSPSSFile(), hFile.GetGroups(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrotab_Click()
+
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hForm As FmGridCrossTab
+  Dim xForm As CCrossTab
+  Dim xFldList As String[]
+  Dim hGdChr As FmAnalyzeSett
+
+  hGdChr = New FmAnalyzeSett("GridCrossTab", modGridView.GetGridViewColumns(GridView1))
+  hGdChr.ShowModal
+
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  If modCustPatient.$TabRowColumn And If modCustPatient.$TabFieldColumn Then
+    xForm = New CCrossTab
+    Inc Application.Busy
+    Row = CInt(modCustPatient.$TabRowColumn) - 1
+    xFieRow = xFldList[Row]
+    Column = CInt(modCustPatient.$TabFieldColumn) - 1
+    xFieColm = xFldList[Column]
+    res = ExecuteQuery([xFieRow, xFieColm])
+
+    If res.Available Then
+      For Each res
+        xval = GetGridViewValue(Row, res[xFieRow])
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If xval And If yval Then
+          xForm.Add([xval, yval])
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    Dec Application.Busy
+
+    hForm = New FmGridCrossTab(GridView1.Columns[Row].Text, xForm.GetSPSSFile())
+    hForm.ShowModal
+    modExternal.$ExecValueColl.Clear()
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub mnugridsummary_Click()
+
+  Dim xx As String
+  Dim ChapCol As String
+  Dim GropCol As String
+  Dim xChapList As String[]
+  Dim xGropList As String[]
+
+  Dim res As Result
+  Dim valCol As String
+  Dim xFieldList As String[]
+
+  Dim xFinList As Variant[]
+  Dim xrowVar As Variant[]
+  Dim xchapval As String
+  Dim xgroup As String
+  Dim xPath As String
+  Dim xFldList As String[]
+
+  Dim hGdSum As FmAnalyzeSett
+
+  hGdSum = New FmAnalyzeSett("GridSummary", modGridView.GetGridViewColumns(GridView1))
+  hGdSum.ShowModal
+
+  xFldList = GetSQLColumns()
+  Inc Application.Busy
+  xFieldList = New String[]
+  If modCustPatient.$SumChapterColumn Then
+    ChapCol = xFldList[modCustPatient.$SumChapterColumn - 1]
+    xFieldList.Add(ChapCol)
+  Endif
+  GropCol = xFldList[modCustPatient.$SumGroupColumn - 1]
+  valCol = xFldList[modCustPatient.$SumValueColumn - 1]
+  xFieldList.Add(GropCol)
+  xFieldList.Add(valCol)
+
+  xChapList = New String[]
+  xGropList = New String[]
+  xFinList = New Variant[]
+  res = ExecuteQuery(xFieldList)
+  If res.Available Then
+    For Each res
+      xrowVar = New Variant[]
+      If modCustPatient.$SumChapterColumn Then
+        xchapval = GetGridViewValue(modCustPatient.$SumChapterColumn - 1, res[ChapCol])
+        xrowVar.Add(xchapval)
+        xChapList.Add(xchapval)
+      Endif
+      xgroup = GetGridViewValue(modCustPatient.$SumGroupColumn - 1, res[GropCol])
+      xrowVar.Add(xgroup)
+      xGropList.Add(xgroup)
+
+      xrowVar.Add(GetGridViewValue(modCustPatient.$SumValueColumn - 1, res[valCol]))
+      xFinList.Add(xrowVar)
+    Next
+  Endif
+  Dec Application.Busy
+
+  xx = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  If modCustPatient.$SumGroupColumn And If modCustPatient.$SumValueColumn Then
+    If modCustPatient.$SumChapterColumn Then
+      If modCustPatient.$SummaryType = "Summation(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapterTableReport("Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else If modCustPatient.$SummaryType = "Count(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapCountTableReport("Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else
+        xPath = modCHTMLReport.SummaryGridChapterReport("Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Endif
+    Else
+      xPath = modCHTMLReport.SummaryGridReport("Report Summary", xx, modString.GetDistinctStringArray(xGropList), xFinList)
+    Endif
+    modControlSub.DisplayReportExport(xPath)
+  Endif
+
+End
+
+Public Sub btnexpo_Click()
+
+  Dim xHeader As String[]
+  Dim xhide As Integer[]
+  Dim Column As Integer
+  Dim xCollRow As Collection
+  Dim xColum As Integer
+
+  Dim $hGridExportTable As CExportResult
+  Dim xparam1 As String
+  Dim xparam2 As String
+  Dim encColumn As Integer
+  Dim xFldList As String[]
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  xHeader = New String[]
+  xhide = New Integer[]
+  For Column = 0 To GridView1.Columns.Count - 1
+    xHeader.Add(GridView1.Columns[Column].Text)
+    If GridView1.Columns[Column].Width < 5 Then
+      xhide.Add(Column)
+    Endif
+  Next
+  xparam1 = "SENSITIVITY REPORT:: Status: " & cmbstatus.Text & "  Organism: " & cmbmicrobe.Text & " Specimen: " & cmbspecimen.Text
+  xparam2 = modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  encColumn = 1
+  $hGridExportTable = New CExportResult(Me.Tag, xHeader, xhide, xparam1, xparam2, encColumn)
+
+  Inc Application.Busy
+  xFldList = GetSQLColumns()
+
+  For Each $rData
+    xCollRow = New Collection
+    For xColum = 0 To xFldList.Count - 1
+      xCollRow.Add(GetGridViewValue(xColum, $rData[xFldList[xColum]]), CStr(xColum))
+    Next
+    $hGridExportTable.Add($rData.Index, xCollRow)
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Endif
+  Next
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  modControlSub.DisplayReportExport($hGridExportTable.HTMLPath())
+
+End
+
+''------------------------------------------ Picture ------------------------------
+Private Sub FillItemChartQTY()
+
+  Dim xLst As String[]
+  Dim sFile As String
+
+  xLst = New String[]
+  $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  For Each $rData
+    If $rData["fldvalue"] = "Sensitive" Or If $rData["fldvalue"] = "Intermediate" Or If $rData["fldvalue"] = "Resistant" Then
+      If Not modBasic.$HospCode And If MMain.$WebReport = "Multiple" Then
+        xLst.Add($rData["fldhospcode"] & gb.Tab & $rData["fldvalue"])
+      Else
+        xLst.Add(Format(DateDiff(dtfir.Value, $rData[GetLabTimeStr()], modChart.GetDateIntegerFromSetting()), "0#.#") & gb.Tab & $rData["fldvalue"])
+      Endif
+    Endif
+    $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+    Wait
+  Next
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  sFile = Temp()
+  File.Save(sFile, xLst.Join(gb.NewLine))
+  mnustats.Tag = sFile
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox1, modChart.ProportionChart(sFile, "Sensitivity Count"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox1, modChart.ProportionChart(sFile, "Sensitivity Count"))
+  Endif
+
+End
+
+Public Sub PictureBox1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnuexpoqty_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox1.Image.Save(Dialog.Path &/ "Sensitivity Count" & ".png")
+
+End
+
+Public Sub mnustats_Click()
+
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("crosstab", mnustats.Tag))
+  Else
+    modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("crosstab", mnustats.Tag))
+  Endif
+
+End
+
+''--------------------------------------- Full Export ---------------------------
+Public Sub mnufullexpo_Click()
+
+  Dim xx As String
+  Dim xmicrobe As String
+  Dim xFldList As String[]
+
+  xFldList = GetSQLColumns()
+  If rbsel.Value = True Then
+    xmicrobe = cmbmicrobe.Text
+  Else
+    xmicrobe = "%"
+  Endif
+  If Not cmbspecimen.Text Then
+    cmbspecimen.Text = "%"
+  Endif
+
+  If xmicrobe And If cmbspecimen.Text Then
+    xx = InputCombo(("Select Observation Format"), "Sensitivity Data", ["String", "Value"], "", True)
+    If xx Then
+      ExportSensitivityDetail(xx, xmicrobe, cmbspecimen.Text)
+    Endif
+  Endif
+
+End
+
+Public Sub mnuculture_Click()
+
+  Dim xx As String
+  Dim xFldList As String[]
+
+  xFldList = GetSQLColumns()
+  If Not cmbspecimen.Text Then
+    cmbspecimen.Text = "%"
+  Endif
+
+  If cmbspecimen.Text Then
+    xx = InputCombo(("Select Observation Format"), "Sensitivity Data", ["String", "Value"], "", True)
+    If xx Then
+      ExportSensitivityAllDetail(xx, cmbspecimen.Text)
+    Endif
+  Endif
+
+End
+
+Private Function GetSensitivityValue(testid As Long, subtestid As Long, sIndex As String, sType As String) As Collection
+
+  Dim res As Result
+  Dim xstr As String
+  Dim aColl As Collection
+
+  aColl = New Collection
+  xstr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  If sIndex Then
+    res = modDatabase.$syConn.Exec("select fldvariable,fldvalue,fldcolm3 from tblpatlabsubtable where fldtestid=&1 and fldsubtestid=&2 and fldindex=&3" & xstr, testid, subtestid, sIndex)
+  Else
+    res = modDatabase.$syConn.Exec("select fldvariable,fldvalue,fldcolm3 from tblpatlabsubtable where fldtestid=&1 and fldsubtestid=&2 and fldindex IS &3" & xstr, testid, subtestid, Null)
+  Endif
+  If res.Available Then
+    For Each res
+      If sType = "Value" Then
+        If res["fldcolm3"] Then
+          aColl.Add(res["fldcolm3"], res["fldvariable"])
+        Endif
+      Else
+        If res["fldvalue"] Then
+          aColl.Add(res["fldvalue"], res["fldvariable"])
+        Endif
+      Endif
+    Next
+  Endif
+  Return aColl
+
+End
+
+Private Sub ExportSensitivityDetail(sType As String, sMicrobe As String, sSpecimen As String)
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim hdr As String[]
+  Dim antlist As String[]
+  Dim antname As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim j As Integer
+  Dim xfldtime As String
+
+  Dim i As Integer
+  Dim xstr As String
+  Dim aColl As Collection
+
+  xstr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  If cmbstatus.Text = "Sampled" Then
+    xfldtime = "fldtime_sample"
+  Else If cmbstatus.Text = "Reported" Then
+    xfldtime = "fldtime_report"
+  Else If cmbstatus.Text = "Verified" Then
+    xfldtime = "fldtime_verify"
+  Else
+    xfldtime = "fldtime_sample"
+  Endif
+
+  antlist = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldanswer) as col from tblsubtestquali where fldsubtest like &1 and fldanswertype=&2 UNION select flclass from tblsensidrugs", sMicrobe, "Drug Sensitivity"))
+  If antlist.Count Then
+    antlist.Sort()
+    hdr = New String[]
+    hdr.Add("SNo")
+    hdr.Add("EncID")
+    hdr.Add("Name")
+    hdr.Add("Gender")
+    hdr.Add("Age")
+
+    hdr.Add("SampleID")
+    hdr.Add("Specimen")
+    hdr.Add("Method")
+    hdr.Add("SamplingDate")
+    hdr.Add("ReportingDate")
+    hdr.Add("VerifyDate")
+
+    hdr.Add("Observation")
+    hdr.Add("Organism")
+    For Each antname In antlist
+      hdr.Add(antname)
+    Next
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        hdr.Add($newColumn[i])
+      Next
+    Endif
+
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+
+    Inc Application.Busy
+    $BillingReport = New CReportHTML(hdr, "", "")
+    $BillingReport.UserData.Add("SENSITIVITY REPORT:: Status: " & cmbstatus.Text & "  Organism: " & sMicrobe & " Specimen: " & sSpecimen, "PARAM1")
+    $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate), "PARAM2")
+
+    res = modDatabase.$syConn.Exec("select fldid,fldencounterval,fldtestid,fldsubtest,fldindex from " & $tblpatlabsubtest & " where (fldtanswertype=&1 or fldtanswertype=&2) and fldsubtest like &3 and fldtestid in(select fldid from " & $tblpatlabtest & " where " & xfldtime & ">=&4 and " & xfldtime & "<=&5 and fldsampletype like &6)" & xstr, "Drug Sensitivity", "WHO Sensitivity", sMicrobe, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), sSpecimen)
+    If res.Available Then
+      j = 1
+      For Each res
+        res1 = modDatabase.$syConn.Exec("select fldid,fldmethod,fldsampleid,fldsampletype,flduserid_sample,fldtime_sample,flduserid_report,fldtime_report,flduserid_verify,fldtime_verify from " & $tblpatlabtest & " where fldid=&1" & xstr, res["fldtestid"])
+
+        With asx
+          .Add(CStr(j))
+          .Add(res["fldencounterval"])
+          .Add(modPatient.GetPatientNameByEnc(res["fldencounterval"], modDatabase.$syConn))
+          .Add(modPatient.GetPatientSex(res["fldencounterval"], modDatabase.$syConn))
+          .Add(modPatient.GetPatientAgeString(res["fldencounterval"], res1["fldtime_sample"]))
+
+          .Add(res1["fldsampleid"])
+          .Add(res1["fldsampletype"])
+          .Add(res1["fldmethod"])
+          .Add(modReportVar.GetDateTimeReport(res1["fldtime_sample"], gb.GeneralDate))
+          .Add(modReportVar.GetDateTimeReport(res1["fldtime_report"], gb.GeneralDate))
+          .Add(modReportVar.GetDateTimeReport(res1["fldtime_verify"], gb.GeneralDate))
+
+          .Add(modLabTest.GetLabTestValueString(res["fldtestid"], MMain.$defUnit, True, res["fldencounterval"]))
+          .Add(res["fldsubtest"])
+          aColl = GetSensitivityValue(res["fldtestid"], res["fldid"], res["fldindex"], sType)
+          For Each antname In antlist
+            If aColl[antname] Then
+              .Add(aColl[antname])
+            Else
+              .Add("")
+            Endif
+          Next
+
+          If $newColumn.Count Then
+            For i = 0 To $newColumn.Count - 1
+              .Add(modCustPatient.NewColValue(Me.Tag, $newColumn[i], res["fldencounterval"]))
+            Next
+          Endif
+
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+        j = j + 1
+
+      Next
+    Endif
+    Dec Application.Busy
+  Endif
+
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Private Sub ExportSensitivityAllDetail(sType As String, sSpecimen As String)
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim testList As String[]
+  Dim sTest As String
+
+  Dim hdr As String[]
+  Dim antlist As String[]
+  Dim antname As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim res3 As Result
+  Dim res4 As Result
+  Dim j As Integer
+  Dim xfldtime As String
+
+  Dim i As Integer
+  Dim xstr As String
+  Dim aColl As Collection
+
+  xstr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  If cmbstatus.Text = "Sampled" Then
+    xfldtime = "fldtime_sample"
+  Else If cmbstatus.Text = "Reported" Then
+    xfldtime = "fldtime_report"
+  Else If cmbstatus.Text = "Verified" Then
+    xfldtime = "fldtime_verify"
+  Else
+    xfldtime = "fldtime_sample"
+  Endif
+
+  antlist = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldanswer) as col from tblsubtestquali where fldanswertype=&1 UNION select flclass from tblsensidrugs", "Drug Sensitivity"))
+  If antlist.Count Then
+    antlist.Sort()
+    hdr = New String[]
+    hdr.Add("SNo")
+    hdr.Add("EncID")
+    hdr.Add("Name")
+    hdr.Add("Gender")
+    hdr.Add("Age")
+
+    hdr.Add("SampleID")
+    hdr.Add("Specimen")
+    hdr.Add("Method")
+    hdr.Add("SamplingDate")
+    hdr.Add("ReportingDate")
+    hdr.Add("VerifyDate")
+
+    hdr.Add("Observation")
+    hdr.Add("Organism")
+    For Each antname In antlist
+      hdr.Add(antname)
+    Next
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        hdr.Add($newColumn[i])
+      Next
+    Endif
+
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+
+    Inc Application.Busy
+    $BillingReport = New CReportHTML(hdr, "", "")
+    $BillingReport.UserData.Add("SENSITIVITY REPORT:: Status: " & cmbstatus.Text & " Specimen: " & sSpecimen, "PARAM1")
+    $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate), "PARAM2")
+
+    j = 1
+    testList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldtestid) as col from " & $tblpatlabtest & " where " & xfldtime & ">=&1 and " & xfldtime & "<=&2 and fldsampletype like &3 and fldid in(select fldtestid from " & $tblpatlabsubtest & " where fldtanswertype=&4 or fldtanswertype=&5)" & xstr, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), sSpecimen, "Drug Sensitivity", "WHO Sensitivity"))
+    For Each sTest In testList
+      ''with sensitivity
+      res = modDatabase.$syConn.Exec("select fldid,fldencounterval,fldtestid,fldsubtest,fldindex from " & $tblpatlabsubtest & " where (fldtanswertype=&1 or fldtanswertype=&2) and fldsubtest like &3 and fldtestid in(select fldid from " & $tblpatlabtest & " where " & xfldtime & ">=&4 and " & xfldtime & "<=&5 and fldsampletype like &6 and fldtestid=&7)" & xstr, "Drug Sensitivity", "WHO Sensitivity", "%", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), sSpecimen, sTest)
+      If res.Available Then
+        For Each res
+          res1 = modDatabase.$syConn.Exec("select fldid,fldmethod,fldsampleid,fldsampletype,flduserid_sample,fldtime_sample,flduserid_report,fldtime_report,flduserid_verify,fldtime_verify from " & $tblpatlabtest & " where fldid=&1" & xstr, res["fldtestid"])
+
+          With asx
+            .Add(CStr(j))
+            .Add(res["fldencounterval"])
+            .Add(modPatient.GetPatientNameByEnc(res["fldencounterval"], modDatabase.$syConn))
+            .Add(modPatient.GetPatientSex(res["fldencounterval"], modDatabase.$syConn))
+            .Add(modPatient.GetPatientAgeString(res["fldencounterval"], res1["fldtime_sample"]))
+
+            .Add(res1["fldsampleid"])
+            .Add(res1["fldsampletype"])
+            .Add(res1["fldmethod"])
+            .Add(modReportVar.GetDateTimeReport(res1["fldtime_sample"], gb.GeneralDate))
+            .Add(modReportVar.GetDateTimeReport(res1["fldtime_report"], gb.GeneralDate))
+            .Add(modReportVar.GetDateTimeReport(res1["fldtime_verify"], gb.GeneralDate))
+
+            .Add(modLabTest.GetLabTestValueString(res["fldtestid"], MMain.$defUnit, True, res["fldencounterval"]))
+            If res.Available Then
+              .Add(res["fldsubtest"])
+              aColl = GetSensitivityValue(res["fldtestid"], res["fldid"], res["fldindex"], sType)
+              For Each antname In antlist
+                If aColl[antname] Then
+                  .Add(aColl[antname])
+                Else
+                  .Add("")
+                Endif
+              Next
+            Else
+              .Add("")
+              For Each antname In antlist
+                .Add("")
+              Next
+            Endif
+
+            If $newColumn.Count Then
+              For i = 0 To $newColumn.Count - 1
+                .Add(modCustPatient.NewColValue(Me.Tag, $newColumn[i], res["fldencounterval"]))
+              Next
+            Endif
+
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          $ProgressBar1.Value = (res1.Index + 1) / res1.Count
+          Wait
+          j = j + 1
+
+        Next
+      Endif
+
+      ''without sensitivity
+      $ProgressBar1.Value = 0
+      res3 = modDatabase.$syConn.Exec("select fldid,fldencounterval,fldtestid,fldmethod,fldsampleid,fldsampletype,flduserid_sample,fldtime_sample,flduserid_report,fldtime_report,flduserid_verify,fldtime_verify from " & $tblpatlabtest & " where fldtestid=&1 and " & xfldtime & ">=&2 and " & xfldtime & "<=&3 and fldsampletype like &4 and fldid not in(select fldtestid from " & $tblpatlabsubtest & ")" & xstr, sTest, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), sSpecimen)
+      If res3.Available Then
+        For Each res3
+          res4 = modDatabase.$syConn.Exec("select fldid,fldencounterval,fldtestid,fldsubtest,fldindex from " & $tblpatlabsubtest & " where fldtestid=&1" & xstr, res3["fldid"])
+
+          With asx
+            .Add(CStr(j))
+            .Add(res3["fldencounterval"])
+            .Add(modPatient.GetPatientNameByEnc(res3["fldencounterval"], modDatabase.$syConn))
+            .Add(modPatient.GetPatientSex(res3["fldencounterval"], modDatabase.$syConn))
+            .Add(modPatient.GetPatientAgeString(res3["fldencounterval"], res3["fldtime_sample"]))
+
+            .Add(res3["fldsampleid"])
+            .Add(res3["fldsampletype"])
+            .Add(res3["fldmethod"])
+            .Add(modReportVar.GetDateTimeReport(res3["fldtime_sample"], gb.GeneralDate))
+            .Add(modReportVar.GetDateTimeReport(res3["fldtime_report"], gb.GeneralDate))
+            .Add(modReportVar.GetDateTimeReport(res3["fldtime_verify"], gb.GeneralDate))
+
+            .Add(modLabTest.GetLabTestValueString(res3["fldid"], MMain.$defUnit, True, res3["fldencounterval"]))
+            If res4.Available Then
+              .Add(res4["fldsubtest"])
+              aColl = GetSensitivityValue(res4["fldtestid"], res4["fldid"], res4["fldindex"], sType)
+              For Each antname In antlist
+                If aColl[antname] Then
+                  .Add(aColl[antname])
+                Else
+                  .Add("")
+                Endif
+              Next
+            Else
+              .Add("")
+              For Each antname In antlist
+                .Add("")
+              Next
+            Endif
+
+            If $newColumn.Count Then
+              For i = 0 To $newColumn.Count - 1
+                .Add(modCustPatient.NewColValue(Me.Tag, $newColumn[i], res3["fldencounterval"]))
+              Next
+            Endif
+
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          $ProgressBar1.Value = (res3.Index + 1) / res3.Count
+          Wait
+          j = j + 1
+
+        Next
+      Endif
+
+    Next
+    Dec Application.Busy
+  Endif
+
+  modControlSub.OpenHTMLPreview("", $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Public Sub chkchart_Click()
+
+  TabStrip1.Index = 1
+
+End
+
+Public Sub mnuaddcolumn_Click()
+
+  Dim hForm As FmAddNewColumn
+
+  hForm = New FmAddNewColumn(Me.Tag)
+  hForm.ShowModal
+
+End
+
+Public Sub mnucountuni_Click()
+
+  Dim Column As Integer
+  Dim xFieColm As String
+  Dim res As Result
+  Dim yval As Variant
+  Dim xList As String[]
+
+  Dim xVar As Variant[]
+  Dim xFldList As String[]
+  Dim xPath As String
+
+  Column = ListIndex("Column Index", modGridView.GetGridViewColumns(GridView1))
+  If Column + 1 > 0 Then
+    xFldList = GetSQLColumns()
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+      $ProgressBar1.Visible = True
+      $ProgressBar1.Value = 0
+    Endif
+
+    Inc Application.Busy
+    xFieColm = xFldList[Column]
+    res = ExecuteQuery([xFieColm])
+    xList = New String[]
+    If res.Available Then
+      For Each res
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If yval Then
+          xList.Add(yval)
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    If xList.Count Then
+      xVar = modString.GetUnivariateSummary(xList)
+      xPath = modCHTMLReport.CreateHTMLReportFromArray(["Variable", "Count"], xVar, GridView1.Columns[Column].Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+    Endif
+    Dec Application.Busy
+
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnucolumns_Click()
+
+  If Message.Question(modGridView.GetColumnsListString(GridView1), ("OK"), ("Setting")) = 2 Then
+    fmChartSetting.Close
+    fmChartSetting.ShowModal
+  Endif
+
+End
+
+Public Sub mnuexpocolumn_Click()
+
+  Dim hForm As FmCustColumnSet
+
+  hForm = New FmCustColumnSet(Me.Tag)
+  hForm.ShowModal
+
+End

@@ -1,0 +1,564 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $totalrec As Long
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  cmbcategory.List = ["Audio File", "Document", "Image File", "Public File", "Video File"]
+  rbpersonal.Value = True
+  ButtonSetting()
+  SpinBox1.Value = 0
+  BlankAll()
+  cmbcategory.Text = "Document"
+  cmbcategory.SetFocus
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Private Sub BlankAll()
+
+  txtdetail.Text = ""
+  cmbcategory.Text = ""
+
+End
+
+Public Sub cmbcategory_Click()
+
+  If cmbcategory.Text = "Image File" Then
+    Frame3.Enabled = False
+    Frame1.Enabled = True
+
+  Else
+    txtmedia.Text = ""
+    Frame3.Enabled = True
+    Frame1.Enabled = False
+
+  Endif
+
+End
+
+Public Sub cmbcategory_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcategory)
+  modFillContainer.RestrictComboToContent(cmbcategory)
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim rtot As Result
+
+  If rbpersonal.Value = True Then
+    rtot = modDatabase.$syConn.Exec("select perid from tblpersonal where flduserid=&1 and fldcateg=&2", modBasic.$lbluser, cmbcategory.Text)
+  Else If rbshared.Value = True Then
+    rtot = modDatabase.$syConn.Exec("select perid from tblpersonal where fldcateg=&1 and perid in(select fldperid from tblfileshare where fldshared=&2 and fldstatus=&3) UNION ALL select perid from tblpersonal where fldcateg=&4", cmbcategory.Text, modBasic.$lbluser, "Shared", "Public File")                       ''
+  Endif
+  $totalrec = rtot.Count
+  SpinBox1.MaxValue = CInt(Floor($totalrec / 50))
+  SHowGridData()
+
+End
+
+Private Sub SHowGridData()
+
+  Dim sql As String
+  Dim stint As Integer
+
+  stint = SpinBox1.Value * 50
+  If rbpersonal.Value = True Then
+    sql = "select perid,fldtime,fldcateg,flddetail,fldextension,fldlink,flduserid from tblpersonal where flduserid=&1 and fldcateg=&2 ORDER by perid DESC LIMIT 50 OFFSET &3"   '$
+    $rData = modDatabase.$syConn.Exec(sql, modBasic.$lbluser, cmbcategory.Text, stint)
+  Else If rbshared.Value = True Then
+    sql = "select perid,fldtime,fldcateg,flddetail,fldextension,fldlink,flduserid from tblpersonal where fldcateg=&1 and perid in(select fldperid from tblfileshare where fldshared=&2 and fldstatus=&3) UNION ALL select perid,fldtime,fldcateg,flddetail,fldextension,fldlink,flduserid from tblpersonal where fldcateg=&4 ORDER by perid DESC LIMIT 50 OFFSET &5"   '$
+    $rData = modDatabase.$syConn.Exec(sql, cmbcategory.Text, modBasic.$lbluser, "Shared", "Public File", stint)
+  Endif
+  lbltotal.Text = modMisc.RecordNumberLabel(SpinBox1.Value * 50, 50, $totalrec)
+  FillPersonalGridImage()
+
+End
+
+Public Sub btntxtsearch_Click()
+
+  Dim sql As String
+  Dim xx As String
+
+  xx = InputBox("Enter File Extension", cmbcategory.Text, "")
+  If xx Then
+    If cmbcategory.Text Then
+      If rbpersonal.Value = True Then
+        sql = "select perid,fldtime,fldcateg,flddetail,fldextension,fldlink,flduserid from tblpersonal where flduserid=&1 and fldcateg=&2 and fldextension like &3 ORDER by perid"   '$
+        $rData = modDatabase.$syConn.Exec(sql, modBasic.$lbluser, cmbcategory.Text, xx)
+      Else If rbshared.Value = True Then
+        sql = "select perid,fldtime,fldcateg,flddetail,fldextension,fldlink,flduserid from tblpersonal where fldcateg=&1 and perid in(select fldperid from tblfileshare where fldshared=&2 and fldstatus=&3) and fldextension like &4 UINON ALL select perid,fldtime,fldcateg,flddetail,fldextension,fldlink,flduserid from tblpersonal where fldcateg=&5 and fldextension like &4 ORDER by perid DESC"   '$
+        $rData = modDatabase.$syConn.Exec(sql, cmbcategory.Text, modBasic.$lbluser, "Shared", xx, "Public File")
+      Endif
+      lbltotal.Text = ""
+    Endif
+    FillPersonalGridImage()
+
+  Endif
+
+End
+
+Private Sub FillPersonalGridImage()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Rows.Height = 1.5 * modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 325 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[3].Text = "Description"
+    .Columns[4].Text = "Ext"
+    .Columns[6].Text = "Owner"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldtime"], gb.GeneralDate)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+    GridView1.Data.WordWrap = True
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Column = 4 Then
+    OpenMediaGrid()
+  Else
+    txtdetail.Text = GridView1[GridView1.Row, 3].Text
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim res As Result
+
+  Dim hFile As String
+  Dim saveOk As Boolean
+  Dim xauto As String
+
+  Dim xtempdf As String
+  Dim xblobfile As String
+
+  xauto = modBasic.$UploadMaxSize
+  If cmbcategory.Text = "Audio File" Or cmbcategory.text = "Video File" Then
+    If xauto Then
+      If txtsize.Value < CFloat(xauto) * 1024 Then
+        saveOk = True
+      Else
+        saveOk = False
+      Endif
+    Else
+      saveOk = True
+    Endif
+  Else
+    saveOk = True
+  Endif
+
+  If saveOk = True Then
+    If cmbcategory.text = "Image File" Then
+      hFile = PictureBox1.Tag
+    Else
+      hFile = txtmedia.Text
+      If txtpass.Text Then
+        If LCase(File.Ext(hFile)) = "pdf" Then
+          xtempdf = Temp() & ".pdf"
+          modDevAll.GetEncryptPDF(hFile, xtempdf, txtpass.Text)
+          hFile = xtempdf
+        Endif
+      Endif
+    Endif
+
+    If modMisc.BlobTarget("Personal") = "FTP" Then
+      xblobfile = modFTPSub.SendBlobToFTP(hFile, modBasic.$lbluser, "Personal")
+    Else
+      xblobfile = File.Load(hFile)
+    Endif
+    If xblobfile Then
+      Inc Application.Busy
+      res = modDatabase.$myConn.Create("tblpersonal")
+      res["fldcateg"] = cmbcategory.Text
+      If modMisc.BlobTarget("Personal") = "FTP" Then
+        res["fldblob"] = ""
+        res["fldlink"] = xblobfile
+      Else
+        res["fldblob"] = xblobfile
+        res["fldlink"] = ""
+      Endif
+      res["flddetail"] = txtdetail.Text
+      res["fldextension"] = File.Ext(hFile)
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = True
+      res.Update()
+      Dec Application.Busy
+      SHowGridData()
+      Balloon.Info(("Data saved"), btnOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+
+  Else
+    If xauto Then
+      Message.Warning(("File larger than ") & CStr(CFloat(xauto) * 1024) & " KB", ("OK"))
+    Endif
+  Endif
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    res = modDatabase.$myConn.Edit("tblpersonal", "perid=&1", GridView1[GridView1.Row, 0].Text)
+    res["flddetail"] = txtdetail.Text
+    res.Update()
+    SHowGridData()
+    Balloon.Info(("Information updated"), btnChange)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+'''''----------------------------------------  file types ----------------------------------
+Public Sub btnopenmedia_Click()
+
+  txtdetail.Text = ""
+  If cmbcategory.Text = "Audio File" Then
+    Dialog.Filter = ["*.ogg;*.mp3", "Audio files"]
+    If Dialog.OpenFile() Then Return
+    txtmedia.Text = Dialog.Path
+
+  Else If cmbcategory.Text = "Video File" Then
+    Dialog.Filter = ["*", "Video File"]
+    If Dialog.OpenFile() Then Return
+    txtmedia.Text = Dialog.Path
+
+  Else If cmbcategory.Text = "Document" Or If cmbcategory.Text = "Public File" Then
+    Dialog.Filter = ["*.odt;*.doc;*.docx;*.odp;*.ppt;*.pptx;*.pps;*.ods;*.xls;*.xlsx;*.pdf;*.djvu;*.html;*.txt", "Document File"]
+    If Dialog.OpenFile() Then Return
+    txtmedia.Text = Dialog.Path
+
+  Endif
+  txtsize.Value = Round(Stat(txtmedia.Text).Size / 1024, -3)
+
+End
+
+Public Sub chkshow_Click()
+
+  If chkshow.Value = True Then
+    txtpass.Password = False
+  Else If chkshow.Value = False Then
+    txtpass.Password = True
+  Endif
+
+End
+
+Public Sub btnPlaymedia_Click()
+
+  If txtmedia.Text Then
+    modDevice.DesktopOpenFile(txtmedia.Text)
+  Endif
+
+End
+
+Public Sub btnclearmedia_Click()
+
+  txtmedia.Text = ""
+
+End
+
+Public Sub btnwebvideo_Click()
+
+  Dim yy As Integer
+  Dim sTemp As String
+
+  If cmbcategory.Text = "Video File" Then
+    txtdetail.Text = ""
+    yy = InputValue(("Enter Webcam Video duration in seconds"), ("Webcam"), "10")
+    If yy Then
+      Inc Application.Busy
+      sTemp = modDevAll.GetWebCamVideo(yy, modDevice.WebCamDevice())
+      Dec Application.Busy
+      If Exist(sTemp) Then
+        txtmedia.Text = sTemp
+        txtsize.Value = Round(Stat(sTemp).Size / 1024, -3)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnOpen_Click()
+
+  txtdetail.Text = ""
+  Dialog.Filter = ["*.jpg;*.jpeg;*.png;*.bmp", "Picture files"]
+  If Dialog.OpenFile() Then Return
+  PictureBox1.Tag = Dialog.Path
+  PictureBox1.Image = Image.Load(Dialog.Path)
+
+End
+
+Public Sub btnwebcam_Click()
+
+  txtdetail.Text = ""
+  PictureBox1.Tag = modImage.GetWebCamValue(modDevice.WebCamDevice())
+  If PictureBox1.Tag Then
+    PictureBox1.Image = Image.Load(PictureBox1.Tag)
+  Endif
+
+End
+
+Public Sub btnpencil_Click()
+
+  Dim xxx As String[]
+
+  txtdetail.Text = ""
+  xxx = CustomDraw()
+  If xxx Then
+    PictureBox1.Tag = xxx[0]
+    If PictureBox1.Tag Then
+      PictureBox1.Image = Image.Load(PictureBox1.Tag)
+    Endif
+  Endif
+
+End
+
+Public Sub btnimgedit_Click()
+
+  If PictureBox1.Tag Then
+    modDevice.DesktopOpenFile(PictureBox1.Tag)
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub btnback_Click()
+
+  SpinBox1.Value = SpinBox1.Value - 1
+  SHowGridData()
+
+End
+
+Public Sub btnforward_Click()
+
+  SpinBox1.Value = SpinBox1.Value + 1
+  SHowGridData()
+
+End
+
+Private Sub ButtonSetting()
+
+  If rbpersonal.Value = True Then
+    btnsharenew.Enabled = True
+    btnpersonew.Enabled = True
+    btndeletenew.Enabled = True
+  Else If rbshared.Value = True Then
+    btnsharenew.Enabled = False
+    btnpersonew.Enabled = False
+    btndeletenew.Enabled = False
+  Endif
+
+End
+
+Private Sub OpenMediaGrid()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xPath = GetPersonalFile(GridView1[GridView1.Row, 0].Text)
+    If cmbcategory.Text = "Audio File" Or If cmbcategory.Text = "Video File" Then
+      If modBasic.$MultiMediaFormat = "Embedded" Then
+        fmMediaPlay.MediaView1.URL = Dialog.Path
+        fmMediaPlay.Enabled = True
+      Else
+        modDevice.DesktopOpenFile(xPath)
+      Endif
+    Else
+      modDevice.DesktopOpenFile(xPath)
+    Endif
+  Endif
+
+End
+
+Private Function GetPersonalFile(serial As Long) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  If modHelpVariable.$ApplKey < 2 Then
+    sql = "select fldcateg,fldblob,flddetail,fldextension,fldlink from tblpersonal where perid=&1"
+    res = modDatabase.$myConn.Exec(sql, serial)
+    If res.Available Then
+      tempFile = Temp() & "." & res["fldextension"]
+      If res["fldlink"] Then
+        Inc Application.Busy
+        aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+        If Exist(aFile) Then
+          Copy aFile To tempFile
+        Endif
+        Dec Application.Busy
+      Else
+        hFile = res["fldblob"]
+        If hFile.Length Then
+          File.Save(tempFile, hFile.Data)
+        Endif
+      Endif
+    Endif
+    Return tempFile
+  Else
+    Message.Warning(("File extraction disabled. Please insert validation key"), ("OK"))
+  Endif
+
+End
+
+Public Sub btnclear_Click()
+
+  If PictureBox1.Tag Then
+    PictureBox1.Image.Clear()
+    PictureBox1.Refresh()
+    Wait
+  Endif
+
+End
+
+Public Sub Slider1_Change()
+
+  PictureBox1.Zoom = Slider1.Value / 100
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, modBasic.$lbluser, cmbcategory.Text)
+
+End
+
+Public Sub btnforwardnew_Click()
+
+  Dim hForm As FmSendFile
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hForm = New FmSendFile(GetPersonalFile(GridView1[GridView1.Row, 0].Text))
+    hForm.ShowModal()
+  Endif
+
+End
+
+Public Sub btnemailnew_Click()
+
+  Dim hForm As FmRemoteMail
+  Dim xx As String[]
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Desktop.NetworkAvailable = True Then
+      xx = New String[]
+      hForm = New FmRemoteMail(xx, GetPersonalFile(GridView1[GridView1.Row, 0].Text), "Personal File", GridView1[GridView1.Row, 3].Text)
+      hForm.ShowModal()
+    Endif
+  Endif
+
+End
+
+Public Sub btnsharenew_Click()
+
+  Dim hForm As FmSharedUserList
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If rbpersonal.Value = True Then
+      hForm = New FmSharedUserList(GridView1[GridView1.Row, 0].Text)
+      hForm.ShowModal()
+    Endif
+  Endif
+
+End
+
+Public Sub btnpersonew_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If rbpersonal.Value = True Then
+      modDatabase.$myConn.Delete("tblfileshare", "flduserid=&1 and fldperid=&2", modBasic.$lbluser, GridView1[GridView1.Row, 0].Text)
+      Message.Info(("File personalized"), ("OK"))
+    Endif
+  Endif
+
+End
+
+Public Sub btndeletenew_Click()
+
+  Dim sLink As String
+  Dim xfile As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+
+      sLink = GridView1[GridView1.Row, 5].Text
+      If sLink Then
+        modFTPSub.DeleteBlobFIleFTP(sLink)
+        xfile = GetPersonalFile(GridView1[GridView1.Row, 0].Text)
+        If Not Exist(xfile) Then
+          modDatabase.$myConn.Delete("tblpersonal", "perid=&1 and flduserid=&2", GridView1[GridView1.Row, 0].Text, modBasic.$lbluser)
+          SHowGridData()
+        Endif
+      Else
+        modDatabase.$myConn.Delete("tblpersonal", "perid=&1 and flduserid=&2", GridView1[GridView1.Row, 0].Text, modBasic.$lbluser)
+        SHowGridData()
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub rbpersonal_Click()
+
+  ButtonSetting()
+
+End
+
+Public Sub rbshared_Click()
+
+  ButtonSetting()
+
+End
+
+Public Sub btnopennew_Click()
+
+  OpenMediaGrid()
+
+End

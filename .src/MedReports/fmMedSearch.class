@@ -1,0 +1,3115 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+Private $xtitle As String
+Private $tbl As String
+Private $ProgressBar1 As ProgressBar
+
+Private $encList As String[]
+Private $SSQLFields As String[]
+Private $ColCount As Integer
+Private $newColumn As String[]
+Private $RepoStr As String
+
+Private $tblpatbilling As String
+Private $tblpatlabtest As String
+Private $tblpatlabsubtest As String
+
+Public Sub Form_Open()
+  
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  If MMain.$WebReport = "Multiple" Then
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      Panel13.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+  Else
+    Panel13.Visible = False
+  Endif
+  btnmnuqty.Menu = "mnuchart"
+  btnmnufreq.Menu = "mnufreq"
+  
+  cmbsex.List = ["%", "Male", "Female", "Other"]
+  cmbsex.Text = "%"
+  cmbcategory.List = FillCategCombo()
+  cmbtime.List = ["Before", "After", "AnyTime"]
+  cmbtime.Text = "AnyTime"
+  cmbproctype.List = ["Delivery", "Procedure", "Medicine"]
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  rbmetric.Value = True
+  rball.Value = True
+  modAccount.PasInvoiceSetting(cmbfiscal, True)
+  LoadTableNames()
+  
+End
+
+Public Sub Form_Resize()
+  
+  modGeneralMain.ShowSelectedFormMenu(Me)
+  
+End
+
+Public Sub Form_Close()
+  
+  modGeneralMain.RecordFormExit(Me)
+  
+End
+
+Public Sub cmblocation_Click()
+  
+  cmbvalue.Clear()
+  If cmblocation.Text Then
+    cmbvalue.List = modDataRepo.GetRepoValueListType(cmblocation.Text)
+  Endif
+  
+End
+
+Private Sub LoadTableNames()
+  
+  Dim res As Result
+  
+  If cmbfiscal.Text = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatlabtest = "tblpatlabtest"
+    $tblpatlabsubtest = "tblpatlabsubtest"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatlabtest,fldpatlabsubtest from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatlabtest"] Then
+        $tblpatlabtest = res["fldpatlabtest"]
+      Else
+        $tblpatlabtest = "tblpatlabtest"
+      Endif
+      If res["fldpatlabsubtest"] Then
+        $tblpatlabsubtest = res["fldpatlabsubtest"]
+      Else
+        $tblpatlabsubtest = "tblpatlabsubtest"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatlabtest = "tblpatlabtest"
+      $tblpatlabsubtest = "tblpatlabsubtest"
+    Endif
+  Endif
+  
+End
+
+Public Sub cmbfiscal_Click()
+  
+  LoadTableNames()
+  
+End
+
+Public Sub btndiagno_Click()
+  
+  Dim xList As String[]
+  
+  xList = ICDGridView("select DIsease")
+  If xList Then
+    cmbdiagno.Text = xList[0]
+    cmbdiagno.Tag = xList[1]
+  Endif
+  
+End
+
+Private Function FillCategCombo() As String[]
+  
+  Dim xx As String[]
+  
+  xx = New String[]
+  xx.Add("Provisional Diagnosis")
+  xx.Add("Final Diagnosis")
+  xx.Add("Disease surveillance")
+  xx.Add("-------------")
+  xx.Add("Patient Demographics")
+  xx.Add("Clinical Demographics")
+  xx.Add("Presenting Complaints")
+  xx.Add("Patient Symptoms")
+  xx.Add("Examination")
+  xx.Add("Laboratory Tests")
+  xx.Add("Radio Diagnostics")
+  xx.Add("Allergic Drugs")
+  xx.Add("Narcotic Drugs")
+  xx.Add("Prescribed Drugs")
+  xx.Add("Major Procedures")
+  xx.Add("Extra Procedures")
+  xx.Add("Equipment")
+  xx.Add("Device Use")
+  xx.Add("Obstetrics")
+  
+  Return xx
+  
+End
+
+Public Sub dtnepfir_Click()
+  
+  Dim xx As String
+  
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+  
+End
+
+Public Sub dtneplast_Click()
+  
+  Dim xx As String
+  
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+  
+End
+
+Public Sub btnrefresh_Click()
+  
+  FillListBox()
+  
+End
+
+Private Sub FillListBox()
+  
+  rball.Value = True
+  If cmbcategory.Text Then
+    Select cmbcategory.Text
+      Case "Final Diagnosis"
+        GetDiagnosisList("Final Diagnosis")
+      Case "Provisional Diagnosis"
+        GetDiagnosisList("Provisional Diagnosis")
+      Case "Disease surveillance"
+        GetSurveillanceList()
+      Case "Obstetrics"
+        GeObstetricList()
+      Case Else
+        GetParticularsList()
+    End Select
+  Endif
+  
+End
+
+Private Sub GetDiagnosisList(sType As String)
+  
+  Dim sql As String
+  
+  $tbl = "tblpatfindings"
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  sql = "select fldcodenew as col,fldcodenew from tblpatfindings where fldtype=&1 and fldsave=&2 and fldcodenew IS NOT NULL" & $RepoStr & " GROUP BY fldcodenew"
+  $rData1 = modDatabase.$syConn.Exec(sql, sType, True)
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(listitem, $rData1, $aMyFields1)
+  
+  With listitem
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+  End With
+  
+End
+
+Private Sub GetSurveillanceList()
+  
+  Dim sql As String
+  
+  $tbl = "tblpatfindings"
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  sql = "select fldcodenew as col,fldcodenew from tblsurveillance where fldcodenew IS NOT NULL" & $RepoStr & " GROUP BY fldcodenew"
+  $rData1 = modDatabase.$syConn.Exec(sql)
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(listitem, $rData1, $aMyFields1)
+  
+  With listitem
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+  End With
+  
+End
+
+Private Sub GeObstetricList()
+  
+  Dim xList As String[]
+  Dim Row As Integer
+  
+  $tbl = "tblpatfindings"
+  xList = modPathoSub.$ObstetricParam
+  
+  listitem.Clear
+  listitem.Columns.Count = 1
+  listitem.Rows.Count = xList.Count
+  For Row = 0 To xList.Count - 1
+    listitem[Row, 0].Text = xList[Row]
+  Next
+  listitem.Rows.Height = modBasic.$AppGridRowHeight
+  
+End
+
+Private Sub GetParticularsList()
+  
+  Dim sql As String
+  
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  If cmbcategory.Text = "Allergic Drugs" Then
+    $tbl = "tblpatfindings"
+    sql = "select distinct(fldcode) as col from tblpatfindings where fldtype=&1 and fldsave=&2" & $RepoStr & " ORDER BY fldcode"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Allergic Drugs", True)
+    
+  Else If cmbcategory.Text = "Laboratory Tests" Then
+    $tbl = $tblpatlabtest
+    sql = "select distinct(fldtestid) as col from " & $tblpatlabtest & " where (fldstatus=&1 or fldstatus=&2)" & $RepoStr & " ORDER BY fldtestid"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Reported", "Verified")
+    
+  Else If cmbcategory.Text = "Major Procedures" Then
+    $tbl = "tblpatsubgeneral"
+    sql = "select distinct(fldreportquali) as col from tblpatsubgeneral where fldchapter=&1 and flditemid in(select fldid from tblpatgeneral where fldinput=&2 and fldreportquali=&3)" & $RepoStr & " ORDER BY fldreportquali"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Components", "Procedures", "Done")
+    
+  Else If cmbcategory.Text = "Equipment" Then
+    $tbl = "tblpattiming"
+    sql = "select distinct(flditem) as col from tblpattiming where fldtype=&1 and fldsecondsave=&2" & $RepoStr & " ORDER BY flditem"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Equipment", True)
+    
+  Else If cmbcategory.Text = "Device Use" Then
+    $tbl = "tblpatevents"
+    sql = "select distinct(flditem) as col from tblpatevents where fldtype=&1 and fldsecondsave=&2" & $RepoStr & " ORDER BY flditem"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Devices", True)
+    
+  Else If cmbcategory.Text = "Radio Diagnostics" Then
+    $tbl = "tblpatradiotest"
+    sql = "select distinct(fldtestid) as col from tblpatradiotest where (fldstatus=&1 or fldstatus=&2)" & $RepoStr & " ORDER BY fldtestid"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Reported", "Verified")
+    
+  Else If cmbcategory.Text = "Examination" Then
+    $tbl = "tblpatientexam"
+    sql = "select distinct(fldhead) as col from tblpatientexam where fldsave=&1" & $RepoStr & " ORDER BY fldhead"
+    $rData1 = modDatabase.$syConn.Exec(sql, True)
+    
+  Else If cmbcategory.Text = "Narcotic Drugs" Then
+    $tbl = "tblpatdosing"
+    sql = "select distinct(flditem) as col from tblpatdosing where flditem in(select fldbrandid from tblmedbrand where fldnarcotic=&1)" & $RepoStr & " ORDER BY flditem"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Yes")
+    
+  Else If cmbcategory.Text = "Prescribed Drugs" Then
+    $tbl = "tblpatdosing"
+    sql = "select distinct(fldcodename) as col from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid in(select flditem from tblpatdosing where fldsave_order=&1" & $RepoStr & "))" & " ORDER BY fldcodename"
+    $rData1 = modDatabase.$syConn.Exec(sql, True)
+    
+  Else If cmbcategory.Text = "Patient Symptoms" Then
+    $tbl = "tblexamgeneral"
+    sql = "select distinct(flditem) as col from tblexamgeneral where fldinput=&1 and fldsave=&2" & $RepoStr & " ORDER BY flditem"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Patient Symptoms", True)
+    
+  Else If cmbcategory.Text = "Presenting Complaints" Then
+    $tbl = "tblexamgeneral"
+    sql = "select distinct(flditem) as col from tblexamgeneral where fldinput=&1 and fldsave=&2" & $RepoStr & " ORDER BY flditem"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Presenting Symptoms", True)
+    
+  Else If cmbcategory.Text = "Clinical Demographics" Then
+    $tbl = "tblexamgeneral"
+    sql = "select distinct(flditem) as col from tblexamgeneral where fldinput=&1" & $RepoStr & " ORDER BY flditem"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Demographics")
+    
+  Else If cmbcategory.Text = "Patient Demographics" Then
+    $tbl = "tblpataccgeneral"
+    sql = "select distinct(flditem) as col from tblpataccgeneral where fldinput=&1" & $RepoStr & " ORDER BY flditem"
+    $rData1 = modDatabase.$syConn.Exec(sql, "Demographics")
+    
+  Endif
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(listitem, $rData1, $aMyFields1)
+  listitem.Rows.Height = modBasic.$AppGridRowHeight
+  
+End
+
+Public Sub listitem_Data(Row As Integer, Column As Integer)
+  
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(listitem, Row)
+  If cmbcategory.Text = "Final Diagnosis" Or If cmbcategory.Text = "Provisional Diagnosis" Or If cmbcategory.Text = "Disease surveillance" Then
+    If Column = 1 Then
+      listitem.Data.Text = modPathology.GetNewDiagnoCodeValue($rData1[$aMyFields1[Column]])
+    Else
+      listitem.Data.Text = $rData1[$aMyFields1[Column]]
+    Endif
+  Else
+    listitem.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+  listitem.Rows[Row].Height = Max(listitem.Rows[Row].Height, listitem.Data.Font.RichTextHeight(listitem.Data.Text, listitem.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (listitem.Rows.Height - listitem.Font.Height))
+  listitem.Data.WordWrap = True
+  
+End
+
+Public Sub txtcustom_Change()
+  
+  FillListBox()
+  
+End
+
+Public Sub cmbproctype_LostFocus()
+  
+  cmbprocname.Clear()
+  If cmbproctype.Text = "Procedure" Then
+    cmbprocname.List = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select DISTINCT(flditem) as col from tblpatgeneral where fldinput=&1", "Procedures"))
+    cmbprocname.Add("%")
+  Endif
+  
+End
+
+Public Sub listitem_Click()
+  
+  Dim xType As String
+  Dim xitem As String
+  
+  cmbmethod.Clear()
+  xitem = listitem[listitem.Row, 0].Text
+  If cmbcategory.Text = "Examination" Then
+    cmbmethod.Enabled = True
+    xType = modFixClinic.GetExaminationType(xitem)
+    If xType = "Quantitative" Then
+      cmbmethod.List = modFixClinic.MethodsForClinExam(xitem)
+    Else
+    Endif
+  Else If cmbcategory.Text = "Laboratory Tests" Then
+    cmbmethod.Enabled = True
+    xType = modFixLab.GetLabTestType(xitem)
+    If xType = "Quantitative" Then
+      cmbmethod.List = modFixLab.MethodsForLabTest(xitem)
+    Else
+    Endif
+  Else If cmbcategory.Text = "Radio Diagnostics" Then
+    cmbmethod.Enabled = True
+    xType = modFixRadio.GetRadioTestType(xitem)
+    If xType = "Quantitative" Then
+      cmbmethod.List = modFixRadio.MethodsForRadioTest(xitem)
+    Else
+    Endif
+  Else If cmbcategory.Text = "Clinical Demographics" Then
+    cmbmethod.Enabled = True
+    cmbmethod.List = modFixPatho.GetDemographicOptionList(xitem, modFixPatho.GetDemographicType(xitem))
+  Else If cmbcategory.Text = "Patient Demographics" Then
+    cmbmethod.Enabled = True
+    cmbmethod.List = modPatient.GetAccDemographicOptionList(xitem, modPatient.GetAccDemographicType(xitem))
+  Else If cmbcategory.Text = "Provisional Diagnosis" Then
+    cmbmethod.Enabled = True
+  Else If cmbcategory.Text = "Final Diagnosis" Then
+    cmbmethod.Enabled = True
+  Else
+    cmbmethod.Enabled = False
+  Endif
+  cmbmethod.Add("%")
+  cmbmethod.Text = "%"
+  
+End
+
+Private Function LabUnit() As String
+  
+  Dim xx As String
+  
+  If rbsi.Value = True Then
+    xx = "SI"
+  Else
+    xx = "Metric"
+  Endif
+  Return xx
+  
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+  
+  Dim xxx As Variant
+  Dim i As Integer
+  
+  If Column = 1 Then
+    xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+  Else If Column = 2 Then
+    If $xtitle Then
+      xxx = modCustPatient.FormatColValue(xVariable)
+    Else
+      xxx = xVariable
+    Endif
+  Else If Column = 3 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
+  Else If Column = 4 Then
+    xxx = modMedReports.GetPatientPastAgeString($tbl, xVariable)
+  Else If Column = 5 Then
+    xxx = modPatient.GetPatientSex(xVariable, modDatabase.$syConn)
+  Else If Column = 6 Then
+    xxx = modReportVar.GetDateTimeReport(modPatient.GetRecordDate(xVariable), gb.MediumDate)
+  Else If Column = 7 Then
+    xxx = modPatient.GetPatientNoByEnc(xVariable)
+  Else If Column = 9 Then
+    Select cmbcategory.Text
+      Case "Narcotic Drugs", "Prescribed Drugs"
+        xxx = modPharmacy.GetStockIDFromDosing(xVariable) & Space(1) & modPharmacy.GetDoseRegimenString(xVariable, True)
+      Case "Laboratory Tests"
+        xxx = modLabTest.GetLabTestValueSubString(xVariable, LabUnit(), True, $tblpatlabtest, $tblpatlabsubtest)
+      Case "Examination"
+        xxx = modClinic.GetExamValueSubString(xVariable)
+      Case "Radio Diagnostics"
+        xxx = modRadioTest.GetRadiobTestValueSubString(xVariable, True)
+      Case "Equipment"
+        xxx = modPatPatho.GetEquipServiceInterval(xVariable)
+      Case "Device Use"
+        xxx = modPatPatho.GetEventDuration(xVariable)
+      Case "Patient Symptoms"
+        xxx = modPatPatho.GetSymptomTypePatient(xVariable)
+      Case "Presenting Complaints"
+        xxx = modPatPatho.GetComplaintsPatient(xVariable)
+      Case "Major Procedures", "Clinical Demographics", "Patient Demographics", "Final Diagnosis", "Provisional Diagnosis", "Disease surveillance", "Allergic Drugs", "Obstetrics"
+        xxx = xVariable
+      Case Else
+        xxx = ""
+    End Select
+  Else If Column = 10 Then
+    xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+  Else
+    xxx = xVariable
+  Endif
+  
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      If Column = $ColCount + i Then
+        xxx = modCustPatient.NewColValue(Me.Tag, $newColumn[i], xVariable)
+      Endif
+    Next
+  Endif
+  Return xxx
+  
+End
+
+Private Function GetSQLColumns() As String[]
+  
+  Dim xFldList As String[]
+  Dim i As Integer
+  
+  GetFieldList()
+  modCustPatient.FillNewCOlumnCollection(Me.Tag)
+  $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+  xFldList = $SSQLFields.Copy()
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      xFldList.Add("fldencounterval")
+    Next
+  Endif
+  Return xFldList
+  
+End
+
+Private Function GetObsFieldList(sItem As String) As String[]
+  
+  Dim xList As String[]
+  Dim xFldList As String[]
+  Dim xhospfld As String
+  Dim xField As String
+  Dim i As Integer
+  
+  xField = modPathoSub.GetObstetricField(sItem)
+  xList = New String[]
+  
+  If txtagelast.Value Then
+    xList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", Quote(sItem), "t1." & xField]
+    xhospfld = modDataRepo.HospitalField("t1")
+    If xhospfld Then
+      xList.Add(xhospfld)
+    Endif
+  Else
+    xhospfld = modDataRepo.HospitalField()
+    xList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", Quote(sItem), xField]
+    If xhospfld Then
+      xList.Add(xhospfld)
+    Endif
+  Endif
+  $SSQLFields = xList
+  
+  modCustPatient.FillNewCOlumnCollection(Me.Tag)
+  $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+  xFldList = $SSQLFields.Copy()
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      xFldList.Add("fldencounterval")
+    Next
+  Endif
+  
+  Return xFldList
+  
+End
+
+Public Sub btnfilldata_Click()
+  
+  Dim xtestname As String
+  Dim xFldList As String[]
+  
+  If cmbcategory.Text Then
+    TabStrip1.Index = 0
+    $encList = New String[]
+    
+    Inc Application.Busy
+    $xtitle = modSettings.ShowSettingFromFIle("FormatColumn" & "/" & "Title")
+    modCustPatient.FillFormatCOlumnCollection()
+    If cmbcategory.Text = "Obstetrics" Then
+      If cmbtime.Text = "AnyTime" Then
+        If listitem.Rows.Selection.Count Then
+          xFldList = GetObsFieldList(listitem[listitem.Row, 0].Text)
+        Endif
+      Endif
+    Else
+      xFldList = GetSQLColumns()
+    Endif
+    
+    If rbsel.Value = True Then
+      If chkcustom.Value = True Then
+        xtestname = Trim(txtcustom.Text) & "%"
+      Else
+        xtestname = listitem[listitem.Row, 0].Text
+      Endif
+      
+      If xtestname Then
+        If cmbtime.Text = "AnyTime" Then
+          $rData = ExecuteAllTime(xFldList, xtestname, modDatabase.$syConn)
+        Else
+          If cmbproctype.Text = "Delivery" Then
+            $rData = ExecuteDeliveryTime(xFldList, xtestname, modDatabase.$syConn)
+          Else If cmbproctype.Text = "Procedure" Then
+            $rData = ExecuteProcedureTime(xFldList, xtestname, modDatabase.$syConn)
+          Endif
+        Endif
+        
+        If chkgrid.Value = True Then
+          FillTransferGrid()
+        Endif
+        
+        If chkchart.Value = True Then
+          FillChartData(xtestname)
+        Endif
+        
+      Endif
+      
+    Else If rball.Value = True Then
+      If cmbtime.Text = "AnyTime" Then
+        $rData = ExecuteAllTime(xFldList, "%", modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          $rData = ExecuteDeliveryTime(xFldList, "%", modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          $rData = ExecuteProcedureTime(xFldList, "%", modDatabase.$syConn)
+        Endif
+      Endif
+      
+      If chkgrid.Value = True Then
+        FillTransferGrid()
+      Endif
+      
+    Endif
+    
+    If chkfreq.Value = True Then
+      If cmbcategory.Text = "Clinical Demographics" Or If cmbcategory.Text = "Patient Demographics" Then
+        mnuttest.Enabled = False
+        mnuchisq.Enabled = True
+      Else
+        mnuttest.Enabled = True
+        mnuchisq.Enabled = False
+      Endif
+      MakeFreqDistribution(listitem[listitem.Row, 0].Text)
+    Endif
+    
+    Dec Application.Busy
+    modExternal.$ExecValueColl.Clear()
+  Endif
+  
+End
+
+Private Sub FillTransferGrid()
+  
+  Dim i As Integer
+  
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  $ColCount = $SSQLFields.Count
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    If $xtitle Then
+      .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    Else
+      .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    Endif
+    .Columns[3].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 300 * modBasic.$AppWidthRatio
+    
+    .Columns[1].Text = "Date"
+    If $xtitle Then
+      .Columns[2].Text = $xtitle
+    Else
+      .Columns[2].Text = "EncID"
+    Endif
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Age"
+    .Columns[5].Text = "Gender"
+    .Columns[6].Text = "DOReg"
+    .Columns[7].Text = "PatientNo"
+    .Columns[8].Text = "Variable"
+    .Columns[9].Text = "Observation"
+    
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        .Columns[$ColCount + i].Text = $newColumn[i]
+        .Columns[$ColCount + i].Width = 150 * modBasic.$AppWidthRatio
+      Next
+    Endif
+  End With
+  
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+  
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 9 Then
+    GridView1.Data.RichText = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+    If modBasic.$RichtextResizeRow = "Yes" Then
+      GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.RichText, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+    Endif
+  Else
+    If Column > $SSQLFields.Count - 1 Then
+      GridView1.Data.RichText = modString.TextToHTML(GetGridViewValue(Column, $rData[$aMyFields[Column]]))
+    Else
+      GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+    Endif
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+  
+End
+
+Private Sub MakeFreqDistribution(sItem As String)
+  
+  Dim xLst As String[]
+  Dim xval As Float
+  
+  xLst = New String[]
+  $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  
+  ''for ratio data frequency distribution
+  If cmbcategory.Text = "Laboratory Tests" Then
+    If modFixLab.GetLabTestType(sItem) = "Quantitative" Then
+      For Each $rData
+        xval = modLabTest.GetTestQuantiValueLabID($rData["fldencounterval"], $rData["fldid"], LabUnit(), $tblpatlabtest)
+        If txtvalmax.Value > txtvalmin.Value Then
+          If xval >= txtvalmin.Value And If xval <= txtvalmax.Value Then
+            xLst.Add(Format(xval, gb.Fixed))
+          Endif
+        Else
+          xLst.Add(Format(xval, gb.Fixed))
+        Endif
+        $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+        Wait
+      Next
+      If xLst.Count Then
+        MakeFreqIntervalData(sItem, xLst, PictureBox1)
+      Endif
+    Endif
+    
+  Else If cmbcategory.Text = "Equipment" Then
+    
+  Else If cmbcategory.Text = "Device Use" Then
+    
+  Else If cmbcategory.Text = "Examination" Then
+    If modFixClinic.GetExaminationType(sItem) = "Quantitative" Then
+      For Each $rData
+        xval = modClinic.GetExamValueByID($rData["fldid"])
+        If txtvalmax.Value > txtvalmin.Value Then
+          If xval >= txtvalmin.Value And If xval <= txtvalmax.Value Then
+            xLst.Add(Format(xval, gb.Fixed))
+          Endif
+        Else
+          xLst.Add(Format(xval, gb.Fixed))
+        Endif
+        $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+        Wait
+      Next
+      If xLst.Count Then
+        MakeFreqIntervalData(sItem, xLst, PictureBox1)
+      Endif
+    Endif
+    
+  Else If cmbcategory.Text = "Prescribed Drugs" Then
+    For Each $rData
+      xval = modPharmacy.GetDailyDoseFromDosing($rData["fldid"])
+      If txtvalmax.Value > txtvalmin.Value Then
+        If xval >= txtvalmin.Value And If xval <= txtvalmax.Value Then
+          xLst.Add(Format(xval, gb.Fixed))
+        Endif
+      Else
+        xLst.Add(Format(xval, gb.Fixed))
+      Endif
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Next
+    If xLst.Count Then
+      MakeFreqIntervalData(sItem, xLst, PictureBox1)
+    Endif
+    
+  Else If cmbcategory.Text = "Presenting Complaints" Then
+    For Each $rData
+      xval = modPatPatho.GetComplainDayByID($rData["fldid"])
+      If txtvalmax.Value > txtvalmin.Value Then
+        If xval >= txtvalmin.Value And If xval <= txtvalmax.Value Then
+          xLst.Add(Format(xval, gb.Fixed))
+        Endif
+      Else
+        xLst.Add(Format(xval, gb.Fixed))
+      Endif
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Next
+    If xLst.Count Then
+      MakeFreqIntervalData(sItem, xLst, PictureBox1)
+    Endif
+    
+    ''for nominal data bar chart
+  Else If cmbcategory.Text = "Clinical Demographics" Or If cmbcategory.Text = "Patient Demographics" Then
+    For Each $rData
+      xLst.Add($rData["fldreportquali"])
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Next
+    If xLst.Count Then
+      MakeFreqBarCHart(sItem, xLst, PictureBox1)
+    Endif
+    
+  Endif
+  
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+  
+End
+
+''-------------------------------------- Grid Report -------------------------------------
+Public Sub GridView1_Menu()
+  
+  mnugridreport.Popup()
+  
+End
+
+Public Sub GridView1_DblClick()
+  
+  Dim xx As Integer
+  Dim yy As Integer
+  
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+  
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+  
+End
+
+Public Sub mnuenchart_Click()
+  
+  Dim xx As String
+  Dim xField As String
+  Dim Column As Integer
+  Dim res As Result
+  Dim xval As Variant
+  Dim hFile As CUnivariate
+  Dim xFldList As String[]
+  Dim sOrder As String[]
+  
+  Dim hUniv As FmAnalyzeSett
+  
+  hUniv = New FmAnalyzeSett("Univariate", modGridView.GetGridViewColumns(GridView1))
+  hUniv.ShowModal
+  
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  Inc Application.Busy
+  hFile = New CUnivariate
+  
+  Column = modCustPatient.GetUnivariateColumn(2)
+  xField = xFldList[Column]
+  If rbsel.Value = True Then
+    If listitem.Rows.Selection.Count Then
+      If cmbtime.Text = "AnyTime" Then
+        res = ExecuteAllTime([xField], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          res = ExecuteDeliveryTime([xField], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          res = ExecuteProcedureTime([xField], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Endif
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    If cmbtime.Text = "AnyTime" Then
+      res = ExecuteAllTime([xField], "%", modDatabase.$syConn)
+    Else
+      If cmbproctype.Text = "Delivery" Then
+        res = ExecuteDeliveryTime([xField], "%", modDatabase.$syConn)
+      Else If cmbproctype.Text = "Procedure" Then
+        res = ExecuteProcedureTime([xField], "%", modDatabase.$syConn)
+      Endif
+    Endif
+  Endif
+  
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Column, res[xField])
+      If xval Then
+        hFile.Add(xval)
+      Endif
+      
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  
+  If modSettings.ShowSettingFromFIle("UnivariateAnalysis/DataType") = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetEncChartGridNew(hFile.GetSPSSFile(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+  
+End
+
+Public Sub mnucrosstab_Click()
+  
+  Dim xx As String
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+  
+  Dim hFile As CBivariate
+  Dim xFldList As String[]
+  Dim sOrder As String[]
+  Dim hBivar As FmAnalyzeSett
+  
+  hBivar = New FmAnalyzeSett("Bivariate", modGridView.GetGridViewColumns(GridView1))
+  hBivar.ShowModal
+  
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  
+  Inc Application.Busy
+  hFile = New CBivariate
+  Row = modCustPatient.GetCrossVarRow(2)
+  xFieRow = xFldList[Row]
+  Column = modCustPatient.GetCrossVarColumn(2)
+  xFieColm = xFldList[Column]
+  
+  If rbsel.Value = True Then
+    If listitem.Rows.Selection.Count Then
+      If cmbtime.Text = "AnyTime" Then
+        res = ExecuteAllTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          res = ExecuteDeliveryTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          res = ExecuteProcedureTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Endif
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    If cmbtime.Text = "AnyTime" Then
+      res = ExecuteAllTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+    Else
+      If cmbproctype.Text = "Delivery" Then
+        res = ExecuteDeliveryTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+      Else If cmbproctype.Text = "Procedure" Then
+        res = ExecuteProcedureTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+      Endif
+    Endif
+  Endif
+  
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Row, res[xFieRow])
+      yval = GetGridViewValue(Column, res[xFieColm])
+      If xval And If yval Then
+        hFile.Add([xval, yval])
+      Endif
+      
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  
+  If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetCrossTabStatNew(hFile.GetSPSSFile(), hFile.GetGroups(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+  
+End
+
+Public Sub mnuregresion_Click()
+  
+  Dim xx As String
+  Dim res As Result
+  Dim xFieldList As String[]
+  
+  Dim DepCol As Integer
+  Dim Indep1Col As Integer
+  Dim Indep2Col As Integer
+  Dim Indep3Col As Integer
+  Dim Indep4Col As Integer
+  Dim Indep5Col As Integer
+  
+  Dim xDepField As String
+  Dim xIndep1Field As String
+  Dim xIndep2Field As String
+  Dim xIndep3Field As String
+  Dim xIndep4Field As String
+  Dim xIndep5Field As String
+  
+  Dim Depvalue As Variant
+  Dim Indep1Val As Variant
+  Dim Indep2Val As Variant
+  Dim Indep3Val As Variant
+  Dim Indep4Val As Variant
+  Dim Indep5Val As Variant
+  
+  Dim DepData As Variant[]
+  Dim Indep1Data As Variant[]
+  Dim Indep2Data As Variant[]
+  Dim Indep3Data As Variant[]
+  Dim Indep4Data As Variant[]
+  Dim Indep5Data As Variant[]
+  Dim xFldList As String[]
+  
+  xFldList = GetSQLColumns()
+  Inc Application.Busy
+  xFieldList = New String[]
+  DepData = New Variant[]
+  Indep1Data = New Variant[]
+  Indep2Data = New Variant[]
+  Indep3Data = New Variant[]
+  Indep4Data = New Variant[]
+  Indep5Data = New Variant[]
+  
+  GetFieldList()
+  DepCol = modCustPatient.GetRegressionDepVal(2)
+  xDepField = xFldList[DepCol]
+  xFieldList.Add(xDepField)
+  
+  If modCustPatient.$RegVar1UseGridVal = "Yes" Or If modCustPatient.$RegVar1Variable Or If modCustPatient.$RegVar1SQLText Then
+    Indep1Col = modCustPatient.GetRegressionVar1Val(2)
+    xIndep1Field = xFldList[Indep1Col]
+    xFieldList.Add(xIndep1Field)
+  Endif
+  If modCustPatient.$RegVar2UseGridVal = "Yes" Or If modCustPatient.$RegVar2Variable Or If modCustPatient.$RegVar2SQLText Then
+    Indep2Col = modCustPatient.GetRegressionVar2Val(2)
+    xIndep2Field = xFldList[Indep2Col]
+    xFieldList.Add(xIndep2Field)
+  Endif
+  If modCustPatient.$RegVar3UseGridVal = "Yes" Or If modCustPatient.$RegVar3Variable Or If modCustPatient.$RegVar3SQLText Then
+    Indep3Col = modCustPatient.GetRegressionVar3Val(2)
+    xIndep3Field = xFldList[Indep3Col]
+    xFieldList.Add(xIndep3Field)
+  Endif
+  If modCustPatient.$RegVar4UseGridVal = "Yes" Or If modCustPatient.$RegVar4Variable Or If modCustPatient.$RegVar4SQLText Then
+    Indep4Col = modCustPatient.GetRegressionVar4Val(2)
+    xIndep4Field = xFldList[Indep4Col]
+    xFieldList.Add(xIndep4Field)
+  Endif
+  If modCustPatient.$RegVar5UseGridVal = "Yes" Or If modCustPatient.$RegVar5Variable Or If modCustPatient.$RegVar5SQLText Then
+    Indep5Col = modCustPatient.GetRegressionVar5Val(2)
+    xIndep5Field = xFldList[Indep5Col]
+    xFieldList.Add(xIndep5Field)
+  Endif
+  
+  If rbsel.Value = True Then
+    If listitem.Rows.Selection.Count Then
+      If cmbtime.Text = "AnyTime" Then
+        res = ExecuteAllTime(xFieldList, listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          res = ExecuteDeliveryTime(xFieldList, listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          res = ExecuteProcedureTime(xFieldList, listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Endif
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    If cmbtime.Text = "AnyTime" Then
+      res = ExecuteAllTime(xFieldList, "%", modDatabase.$syConn)
+    Else
+      If cmbproctype.Text = "Delivery" Then
+        res = ExecuteDeliveryTime(xFieldList, "%", modDatabase.$syConn)
+      Else If cmbproctype.Text = "Procedure" Then
+        res = ExecuteProcedureTime(xFieldList, "%", modDatabase.$syConn)
+      Endif
+    Endif
+  Endif
+  
+  If res.Available Then
+    For Each res
+      Depvalue = GetGridViewValue(DepCol, res[xDepField])
+      If xIndep1Field Then
+        Indep1Val = GetGridViewValue(Indep1Col, res[xIndep1Field])
+      Else
+        Indep1Val = "__"
+      Endif
+      If xIndep2Field Then
+        Indep2Val = GetGridViewValue(Indep2Col, res[xIndep2Field])
+      Else
+        Indep2Val = "__"
+      Endif
+      If xIndep3Field Then
+        Indep3Val = GetGridViewValue(Indep3Col, res[xIndep3Field])
+      Else
+        Indep3Val = "__"
+      Endif
+      If xIndep4Field Then
+        Indep4Val = GetGridViewValue(Indep4Col, res[xIndep4Field])
+      Else
+        Indep4Val = "__"
+      Endif
+      If xIndep5Field Then
+        Indep5Val = GetGridViewValue(Indep5Col, res[xIndep5Field])
+      Else
+        Indep5Val = "__"
+      Endif
+      
+      If Depvalue And If Indep1Val And If Indep2Val And If Indep3Val And If Indep4Val And If Indep5Val Then
+        modCustPatient.AddFormatRegressionDepToList(DepData, Depvalue)
+        modCustPatient.AddFormatRegressionVar1ToList(Indep1Data, Indep1Val)
+        modCustPatient.AddFormatRegressionVar2ToList(Indep2Data, Indep2Val)
+        modCustPatient.AddFormatRegressionVar3ToList(Indep3Data, Indep3Val)
+        modCustPatient.AddFormatRegressionVar4ToList(Indep4Data, Indep4Val)
+        modCustPatient.AddFormatRegressionVar5ToList(Indep5Data, Indep5Val)
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  
+  xx = modPSPP.RegressionChartGridNew(DepData, Indep1Data, Indep2Data, Indep3Data, Indep4Data, Indep5Data)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+  
+End
+
+Public Sub mnutimeseries_Click()
+  
+  Dim xx As String
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+  Dim xData As Variant[]
+  Dim yData As Variant[]
+  Dim xFldList As String[]
+  
+  xFldList = GetSQLColumns()
+  Inc Application.Busy
+  xData = New Variant[]
+  yData = New Variant[]
+  Row = modCustPatient.GetTimeVarRow(2)
+  xFieRow = xFldList[Row]
+  Column = modCustPatient.GetTimeVarColumn(2)
+  xFieColm = xFldList[Column]
+  
+  If rbsel.Value = True Then
+    If listitem.Rows.Selection.Count Then
+      If cmbtime.Text = "AnyTime" Then
+        res = ExecuteAllTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          res = ExecuteDeliveryTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          res = ExecuteProcedureTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Endif
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    If cmbtime.Text = "AnyTime" Then
+      res = ExecuteAllTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+    Else
+      If cmbproctype.Text = "Delivery" Then
+        res = ExecuteDeliveryTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+      Else If cmbproctype.Text = "Procedure" Then
+        res = ExecuteProcedureTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+      Endif
+    Endif
+  Endif
+  
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Row, res[xFieRow])
+      yval = GetGridViewValue(Column, res[xFieColm])
+      If xval And If yval Then
+        modCustPatient.AddFormatTimeVarRowToList(xData, xval)
+        modCustPatient.AddFormatTimeVarColumnToList(yData, yval)
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  
+  xx = modPSPP.GetTimeChartGrid(xData, yData)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+  
+End
+
+Public Sub mnucrotab_Click()
+  
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+  
+  Dim hForm As FmGridCrossTab
+  Dim xForm As CCrossTab
+  Dim xFldList As String[]
+  Dim hGdChr As FmAnalyzeSett
+  
+  hGdChr = New FmAnalyzeSett("GridCrossTab", modGridView.GetGridViewColumns(GridView1))
+  hGdChr.ShowModal
+  
+  xFldList = GetSQLColumns()
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  
+  If modCustPatient.$TabRowColumn And If modCustPatient.$TabFieldColumn Then
+    xForm = New CCrossTab
+    Inc Application.Busy
+    Row = CInt(modCustPatient.$TabRowColumn) - 1
+    xFieRow = xFldList[Row]
+    Column = CInt(modCustPatient.$TabFieldColumn) - 1
+    xFieColm = xFldList[Column]
+    
+    If rbsel.Value = True Then
+      If listitem.Rows.Selection.Count Then
+        If cmbtime.Text = "AnyTime" Then
+          res = ExecuteAllTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Else
+          If cmbproctype.Text = "Delivery" Then
+            res = ExecuteDeliveryTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+          Else If cmbproctype.Text = "Procedure" Then
+            res = ExecuteProcedureTime([xFieRow, xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+          Endif
+        Endif
+      Endif
+    Else If rball.Value = True Then
+      If cmbtime.Text = "AnyTime" Then
+        res = ExecuteAllTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          res = ExecuteDeliveryTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          res = ExecuteProcedureTime([xFieRow, xFieColm], "%", modDatabase.$syConn)
+        Endif
+      Endif
+    Endif
+    
+    If res.Available Then
+      For Each res
+        xval = GetGridViewValue(Row, res[xFieRow])
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If xval And If yval Then
+          xForm.Add([xval, yval])
+        Endif
+        
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    Dec Application.Busy
+    
+    hForm = New FmGridCrossTab(GridView1.Columns[Row].Text, xForm.GetSPSSFile())
+    hForm.ShowModal
+    modExternal.$ExecValueColl.Clear()
+  Endif
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  
+End
+
+Public Sub mnugridsummary_Click()
+  
+  Dim xx As String
+  Dim ChapCol As String
+  Dim GropCol As String
+  Dim xChapList As String[]
+  Dim xGropList As String[]
+  
+  Dim res As Result
+  Dim valCol As String
+  Dim xFieldList As String[]
+  
+  Dim xFinList As Variant[]
+  Dim xrowVar As Variant[]
+  Dim xchapval As String
+  Dim xgroup As String
+  Dim xPath As String
+  Dim xFldList As String[]
+  
+  Dim hGdSum As FmAnalyzeSett
+  
+  hGdSum = New FmAnalyzeSett("GridSummary", modGridView.GetGridViewColumns(GridView1))
+  hGdSum.ShowModal
+  
+  xFldList = GetSQLColumns()
+  Inc Application.Busy
+  xFieldList = New String[]
+  If modCustPatient.$SumChapterColumn Then
+    ChapCol = xFldList[modCustPatient.$SumChapterColumn - 1]
+    xFieldList.Add(ChapCol)
+  Endif
+  GropCol = xFldList[modCustPatient.$SumGroupColumn - 1]
+  valCol = xFldList[modCustPatient.$SumValueColumn - 1]
+  xFieldList.Add(GropCol)
+  xFieldList.Add(valCol)
+  
+  xChapList = New String[]
+  xGropList = New String[]
+  xFinList = New Variant[]
+  If rbsel.Value = True Then
+    If listitem.Rows.Selection.Count Then
+      If cmbtime.Text = "AnyTime" Then
+        res = ExecuteAllTime(xFieldList, listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          res = ExecuteDeliveryTime(xFieldList, listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          res = ExecuteProcedureTime(xFieldList, listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Endif
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    If cmbtime.Text = "AnyTime" Then
+      res = ExecuteAllTime(xFieldList, "%", modDatabase.$syConn)
+    Else
+      If cmbproctype.Text = "Delivery" Then
+        res = ExecuteDeliveryTime(xFieldList, "%", modDatabase.$syConn)
+      Else If cmbproctype.Text = "Procedure" Then
+        res = ExecuteProcedureTime(xFieldList, "%", modDatabase.$syConn)
+      Endif
+    Endif
+  Endif
+  
+  If res.Available Then
+    For Each res
+      xrowVar = New Variant[]
+      If modCustPatient.$SumChapterColumn Then
+        xchapval = GetGridViewValue(modCustPatient.$SumChapterColumn - 1, res[ChapCol])
+        xrowVar.Add(xchapval)
+        xChapList.Add(xchapval)
+      Endif
+      xgroup = GetGridViewValue(modCustPatient.$SumGroupColumn - 1, res[GropCol])
+      xrowVar.Add(xgroup)
+      xGropList.Add(xgroup)
+      
+      xrowVar.Add(GetGridViewValue(modCustPatient.$SumValueColumn - 1, res[valCol]))
+      xFinList.Add(xrowVar)
+    Next
+  Endif
+  Dec Application.Busy
+  
+  xx = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  If modCustPatient.$SumGroupColumn And If modCustPatient.$SumValueColumn Then
+    If modCustPatient.$SumChapterColumn Then
+      If modCustPatient.$SummaryType = "Summation(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapterTableReport("Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else If modCustPatient.$SummaryType = "Count(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapCountTableReport("Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else
+        xPath = modCHTMLReport.SummaryGridChapterReport("Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Endif
+    Else
+      xPath = modCHTMLReport.SummaryGridReport("Report Summary", xx, modString.GetDistinctStringArray(xGropList), xFinList)
+    Endif
+    modControlSub.DisplayReportExport(xPath)
+  Endif
+  
+End
+
+Public Sub mnureportall_Click()
+  
+  If GridView1.Rows.Count > 0 Then
+    If modPatientSub.AllowEncIDHistory(GridView1[GridView1.Row, 2].Text, modDatabase.$syConn) = True Then
+      modPatReports.GetSelectedPatientValues(GridView1[GridView1.Row, 2].Text, LabUnit(), cmbfiscal.Text)
+    Endif
+  Endif
+  
+End
+
+Public Sub mnuaddreport_Click()
+  
+  If GridView1.Rows.Count > 0 Then
+    If modPatientSub.AllowEncIDHistory(GridView1[GridView1.Row, 2].Text, modDatabase.$syConn) = True Then
+      $encList.Add(GridView1[GridView1.Row, 2].Text)
+    Else
+      Message.Warning(("Not allowed"), ("OK"))
+    Endif
+  Endif
+  
+End
+
+Public Sub mnuhiderow_Click()
+  
+  GridView1.Rows[GridView1.Row].Height = 0
+  
+End
+
+''------------------------------------ first picture -----------------------------
+Private Sub FillChartData(sItem As String)
+  
+  Dim xLst As String[]
+  
+  xLst = New String[]
+  $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  For Each $rData
+    If Not modBasic.$HospCode And If MMain.$WebReport = "Multiple" Then
+      xLst.Add($rData["fldhospcode"])
+    Else
+      If cmbcategory.Text = "Laboratory Tests" Then
+        xLst.Add(DateDiff(dtfir.Value, $rData["fldtime_sample"], modChart.GetDateIntegerFromSetting()))
+      Else If cmbcategory.Text = "Radio Diagnostics" Then
+        xLst.Add(DateDiff(dtfir.Value, $rData["fldtime_report"], modChart.GetDateIntegerFromSetting()))
+      Else
+        xLst.Add(DateDiff(dtfir.Value, $rData["fldtime"], modChart.GetDateIntegerFromSetting()))
+      Endif
+    Endif
+    $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+    Wait
+  Next
+  MakeFreqNominalData(sItem, xLst, PictureBox2)
+  
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+  
+End
+
+Private Sub MakeFreqNominalData(sItem As String, xLst As String[], pictbox As ImageView)
+  
+  Dim sFile As String
+  Dim xchart As String
+  
+  sFile = Temp()
+  File.Save(sFile, xLst.Join(gb.NewLine))
+  mnuexpochart.Tag = sItem
+  If Not modBasic.$HospCode And If MMain.$WebReport = "Multiple" Then
+    If modBasic.$ChartExecStat = "PSPP" Then
+      xchart = modChart.FrequencyBarPlot(sFile, sItem & " : Patient Count")
+    Else
+      xchart = modChart.FrequencyBarPlot(sFile, sItem & " : Patient Count")
+    Endif
+  Else
+    If modBasic.$ChartExecStat = "PSPP" Then
+      xchart = modChart.FrequencyChart(sFile, sItem & " : Patient Count")
+    Else
+      xchart = modChart.FrequencyChart(sFile, sItem & " : Patient Count")
+    Endif
+  Endif
+  modImage.StretchtPictureToBox(pictbox, xchart)
+  mnustatschart.Tag = sFile
+  
+End
+
+Public Sub PictureBox2_Menu()
+  
+  mnuchart.Popup
+  
+End
+
+Public Sub mnuexpochart_Click()
+  
+  If Dialog.SelectDirectory() Then Return
+  PictureBox2.Image.Save(Dialog.Path &/ mnuexpochart.Tag & ".png")
+  
+End
+
+Public Sub mnustatschart_Click()
+  
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("freqtable", mnustatschart.Tag))
+  Else
+    modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("freqtable", mnustatschart.Tag))
+  Endif
+  
+End
+
+''------------------------ second picture --------------------------------
+Private Sub MakeFreqIntervalData(sItem As String, xLst As String[], pictbox As ImageView)
+  
+  Dim sFile As String
+  Dim ximg As String
+  
+  sFile = Temp()
+  File.Save(sFile, xLst.Join(gb.NewLine))
+  mnuexpofreq.Tag = sItem
+  If modBasic.$ChartExecStat = "PSPP" Then
+    ximg = modPSPP.CreatePSPPStatFIle("frequency", sFile)
+  Else
+    ximg = modChart.FrequencyChart(sFile, sItem & " : Frequency Distribution")
+  Endif
+  modImage.StretchtPictureToBox(pictbox, ximg)
+  mnustatsfreq.Tag = sFile
+  
+End
+
+Private Sub MakeFreqBarCHart(sItem As String, xLst As String[], pictbox As ImageView)
+  
+  Dim sFile As String
+  Dim ximg As String
+  
+  sFile = Temp()
+  File.Save(sFile, xLst.Join(gb.NewLine))
+  mnuexpofreq.Tag = sItem
+  If modBasic.$ChartExecStat = "PSPP" Then
+    ximg = modPSPP.CreatePSPPStatFIle("barplot", sFile)
+  Else
+    ximg = modChart.FrequencyBarPlot(sFile, sItem & " : Patient Count")
+  Endif
+  modImage.StretchtPictureToBox(pictbox, ximg)
+  mnustatsfreq.Tag = sFile
+  
+End
+
+Public Sub PictureBox1_Menu()
+  
+  mnufreq.Popup
+  
+End
+
+Public Sub mnuexpofreq_Click()
+  
+  If Dialog.SelectDirectory() Then Return
+  PictureBox1.Image.Save(Dialog.Path &/ mnuexpofreq.Tag & ".png")
+  
+End
+
+Public Sub mnustatsfreq_Click()
+  
+  Dim hForm As Fmgnustat
+  
+  If modBasic.$ChartExecStat = "PSPP" Then
+    If cmbcategory.Text = "Clinical Demographics" Or If cmbcategory.Text = "Patient Demographics" Then
+      modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("statistics-string", mnustatsfreq.Tag))
+    Else
+      modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("statistics", mnustatsfreq.Tag))
+    Endif
+  Else
+    hForm = New Fmgnustat(mnustatsfreq.Tag)
+    hForm.ShowModal
+  Endif
+  
+End
+
+Public Sub mnuttest_Click()
+  
+  modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("t-test", mnustatsfreq.Tag))
+  
+End
+
+Public Sub mnuchisq_Click()
+  
+  modControlSub.OpenBrowser(modPSPP.CreatePSPPStatFIle("chisquare", mnustatsfreq.Tag))
+  
+End
+
+''---------------------------------------- Other Reports ----------------------------------
+Public Sub btnfullrep_Click()
+  
+  Dim xHeader As String[]
+  Dim xhide As Integer[]
+  Dim Column As Integer
+  Dim xCollRow As Collection
+  Dim xColum As Integer
+  
+  Dim $hGridExportTable As CExportResult
+  Dim xparam1 As String
+  Dim xparam2 As String
+  Dim encColumn As Integer
+  
+  Dim xFldList As String[]
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  
+  xHeader = New String[]
+  xhide = New Integer[]
+  For Column = 0 To GridView1.Columns.Count - 1
+    xHeader.Add(GridView1.Columns[Column].Text)
+    If GridView1.Columns[Column].Width < 5 Then
+      xhide.Add(Column)
+    Endif
+  Next
+  xparam1 = "Medical Report"
+  xparam2 = modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  encColumn = 2
+  $hGridExportTable = New CExportResult(Me.Tag, xHeader, xhide, xparam1, xparam2, encColumn)
+  
+  Inc Application.Busy
+  xFldList = GetSQLColumns()
+  
+  For Each $rData
+    xCollRow = New Collection
+    For xColum = 0 To xFldList.Count - 1
+      xCollRow.Add(GetGridViewValue(xColum, $rData[xFldList[xColum]]), CStr(xColum))
+    Next
+    $hGridExportTable.Add($rData.Index, xCollRow)
+    
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Endif
+  Next
+  
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  modControlSub.DisplayReportExport($hGridExportTable.HTMLPath())
+  
+End
+
+Public Sub mnushowcompare_Click()
+  
+  Dim xxx As String[]
+  Dim xPath As String
+  
+  Dim encid As String
+  Dim xList As String[]
+  Dim laball As String[]
+  Dim radioall As String[]
+  Dim lablist As String[]
+  Dim radiolist As String[]
+  
+  xxx = InputList("Encounters", $encList)
+  If xxx Then
+    
+    xList = SelectMedBody("")
+    Wait
+    If xList Then
+      laball = New String[]
+      radioall = New String[]
+      For Each encid In xxx
+        laball.Insert(modLabTest.PaientAllTestNameArray(encid, $tblpatlabtest))
+        radioall.Insert(modRadioTest.PaientAllRadioNameArray(encid))
+      Next
+      lablist = modString.BinaryDistinctStringArray(laball, gb.Ascent)
+      radiolist = modString.BinaryDistinctStringArray(radioall, gb.Ascent)
+    Endif
+    
+    Inc Application.Busy
+    xPath = modMultiPatReports.MultiShowCompleteReport(xList, xxx, lablist, radiolist, LabUnit())
+    Dec Application.Busy
+    modControlSub.DisplayReportExport(xPath)
+  Endif
+  
+End
+
+Public Sub mnuformat_Click()
+  
+  fmFormatColumn.Close
+  fmFormatColumn.ShowModal
+  
+End
+
+Public Sub mnuaddcolumn_Click()
+  
+  Dim hForm As FmAddNewColumn
+  
+  hForm = New FmAddNewColumn(Me.Tag)
+  hForm.ShowModal
+  
+End
+
+Public Sub mnuexpocolumn_Click()
+  
+  Dim hForm As FmCustColumnSet
+  
+  hForm = New FmCustColumnSet(Me.Tag)
+  hForm.ShowModal
+  
+End
+
+Public Sub mnumedaudit_Click()
+  
+  modBasic.MedicineDoseSetting()
+  modMedError.MedicalAuditReport(dtfir.Value, dtlast.Value)
+  
+End
+
+''Age Group wise report
+Public Sub ShowDHOReport(sCon As Connection, sType As String)
+  
+  Dim xPath As String
+  
+  Inc Application.Busy
+  If cmbcategory.Text = "Final Diagnosis" Or If cmbcategory.Text = "Provisional Diagnosis" Or If cmbcategory.Text = "Allergic Drugs" Then
+    If listitem.Rows.Selection.Count Then
+      xPath = modRHTMLHealth.ShowDiseaseHealthReport(sCon, cmbcategory.Text, dtfir.Value, dtlast.Value, sType, cmblocation.Text, cmbvalue.Text, listitem[listitem.Row, 0].Text)
+    Else
+      xPath = modRHTMLHealth.ShowDiseaseHealthReport(sCon, cmbcategory.Text, dtfir.Value, dtlast.Value, sType, cmblocation.Text, cmbvalue.Text)
+    Endif
+    
+  Else If cmbcategory.Text = "Laboratory Tests" Then
+    If listitem.Rows.Selection.Count Then
+      xPath = modRHTMLHealth.ShowDiagnosisHealthReport(sCon, dtfir.Value, dtlast.Value, sType, cmblocation.Text, cmbvalue.Text, listitem[listitem.Row, 0].Text)
+    Else
+      xPath = modRHTMLHealth.ShowDiagnosisHealthReport(sCon, dtfir.Value, dtlast.Value, sType, cmblocation.Text, cmbvalue.Text)
+    Endif
+    
+  Else If cmbcategory.Text = "Examination" Then
+    If listitem.Rows.Selection.Count Then
+      xPath = modRHTMLHealth.ShowExamsHealthReport(sCon, dtfir.Value, dtlast.Value, sType, cmblocation.Text, cmbvalue.Text, listitem[listitem.Row, 0].Text)
+    Else
+      xPath = modRHTMLHealth.ShowExamsHealthReport(sCon, dtfir.Value, dtlast.Value, sType, cmblocation.Text, cmbvalue.Text)
+    Endif
+    
+  Endif
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  
+End
+
+Public Sub mnuenc_Click()
+  
+  ShowDHOReport(modDatabase.$syConn, "Encounter")
+  
+End
+
+Public Sub mnuitem_Click()
+  
+  ShowDHOReport(modDatabase.$syConn, "Item")
+  
+End
+
+''SUmmary reports
+Private Sub SHowSummPerReport(sCon As Connection, sType As String)
+  
+  Dim xPath As String
+  
+  Inc Application.Busy
+  If sType = "Final Diagnosis" Then
+    xPath = SummaryStatTotalReport(sCon, "tblpatfindings", "fldid", "fldcodenew", "fldtime", dtfir.Value, dtlast.Value, "fldtype", "Final Diagnosis", "fldsave", True)
+  Else If sType = "Provisional Diagnosis" Then
+    xPath = SummaryStatTotalReport(sCon, "tblpatfindings", "fldid", "fldcodenew", "fldtime", dtfir.Value, dtlast.Value, "fldtype", "Provisional Diagnosis", "fldsave", True)
+  Else If sType = "Disease surveillance" Then
+    
+  Else If sType = "Allergic Drugs" Then
+    xPath = SummaryStatTotalReport(sCon, "tblpatfindings", "fldid", "fldcode", "fldtime", dtfir.Value, dtlast.Value, "fldtype", "Allergic Drugs", "fldsave", True)
+    
+  Else If sType = "Laboratory Tests" Then
+    xPath = SummaryStatTotalReport(sCon, $tblpatlabtest, "fldid", "fldtestid", "fldtime_sample", dtfir.Value, dtlast.Value)
+    
+  Else If sType = "Examination" Then
+    xPath = SummaryStatTotalReport(sCon, "tblpatientexam", "fldid", "fldhead", "fldtime", dtfir.Value, dtlast.Value, "fldsave", True)
+    
+  Else If sType = "Major Procedures" Then
+    xPath = SummaryStatTotalReport(sCon, "tblpatgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Procedures")
+    
+  Else If sType = "Equipment" Then
+  Else If sType = "Device Use" Then
+    
+  Else If sType = "Radio Diagnostics" Then
+    xPath = SummaryStatTotalReport(sCon, "tblpatradiotest", "fldid", "fldtestid", "fldtime_report", dtfir.Value, dtlast.Value)
+    
+  Else If sType = "Narcotic Drugs" Then
+  Else If sType = "Prescribed Drugs" Then
+    
+  Else If sType = "Patient Symptoms" Then
+    xPath = SummaryStatTotalReport(sCon, "tblexamgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Patient Symptoms", "fldsave", True)
+    
+  Else If sType = "Presenting Complaints" Then
+    xPath = SummaryStatTotalReport(sCon, "tblexamgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Presenting Symptoms", "fldsave", True)
+    
+  Else If sType = "Clinical Demographics" Then
+    xPath = SummaryStatTotalReport(sCon, "tblexamgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Demographics")
+    
+  Else If cmbcategory.Text = "Patient Demographics" Then
+    xPath = SummaryStatTotalReport(sCon, "tblpataccgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Demographics")
+    
+  Endif
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  
+End
+
+Private Sub SHowSummReport(sCon As Connection, sType As String)
+  
+  Dim xPath As String
+  
+  Inc Application.Busy
+  If sType = "Final Diagnosis" Then
+    xPath = SummaryStatSexReport(sCon, "tblpatfindings", "fldid", "fldcodenew", "fldtime", dtfir.Value, dtlast.Value, "fldtype", "Final Diagnosis", "fldsave", True)
+  Else If sType = "Provisional Diagnosis" Then
+    xPath = SummaryStatSexReport(sCon, "tblpatfindings", "fldid", "fldcodenew", "fldtime", dtfir.Value, dtlast.Value, "fldtype", "Provisional Diagnosis", "fldsave", True)
+  Else If sType = "Disease surveillance" Then
+    
+  Else If sType = "Allergic Drugs" Then
+    xPath = SummaryStatSexReport(sCon, "tblpatfindings", "fldid", "fldcode", "fldtime", dtfir.Value, dtlast.Value, "fldtype", "Allergic Drugs", "fldsave", True)
+    
+  Else If sType = "Laboratory Tests" Then
+    xPath = SummaryStatSexReport(sCon, $tblpatlabtest, "fldid", "fldtestid", "fldtime_sample", dtfir.Value, dtlast.Value)
+    
+  Else If sType = "Examination" Then
+    xPath = SummaryStatSexReport(sCon, "tblpatientexam", "fldid", "fldhead", "fldtime", dtfir.Value, dtlast.Value, "fldsave", True)
+    
+  Else If sType = "Major Procedures" Then
+    xPath = SummaryStatSexReport(sCon, "tblpatgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Procedures")
+    
+  Else If sType = "Equipment" Then
+  Else If sType = "Device Use" Then
+    
+  Else If sType = "Radio Diagnostics" Then
+    xPath = SummaryStatSexReport(sCon, "tblpatradiotest", "fldid", "fldtestid", "fldtime_report", dtfir.Value, dtlast.Value)
+    
+  Else If sType = "Narcotic Drugs" Then
+  Else If sType = "Prescribed Drugs" Then
+    
+  Else If sType = "Patient Symptoms" Then
+    xPath = SummaryStatSexReport(sCon, "tblexamgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Patient Symptoms", "fldsave", True)
+    
+  Else If sType = "Presenting Complaints" Then
+    xPath = SummaryStatSexReport(sCon, "tblexamgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Presenting Symptoms", "fldsave", True)
+    
+  Else If sType = "Clinical Demographics" Then
+    xPath = SummaryStatSexReport(sCon, "tblexamgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Demographics")
+    
+  Else If cmbcategory.Text = "Patient Demographics" Then
+    xPath = SummaryStatSexReport(sCon, "tblpataccgeneral", "fldid", "flditem", "fldtime", dtfir.Value, dtlast.Value, "fldinput", "Demographics")
+    
+  Endif
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  
+End
+
+Public Sub mnusummary_Click()
+  
+  SHowSummReport(modDatabase.$syConn, cmbcategory.Text)
+  
+End
+
+Public Sub mnusummaryper_Click()
+  
+  SHowSummPerReport(modDatabase.$syConn, cmbcategory.Text)
+  
+End
+
+Public Sub chkchart_Click()
+  
+  TabStrip1.Index = 1
+  
+End
+
+Public Sub chkfreq_Click()
+  
+  TabStrip1.Index = 2
+  
+End
+
+Private Function SummaryStatTotalReport(conn As Connection, tbltarget As String, fldindex As String, fldtarget As String, flddate As String, dt1 As Date, dt2 As Date, Optional wherefield As String, Optional whereText As Variant, Optional wherefield1 As String, Optional whereText1 As Variant) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim sql1 As String
+  Dim sql As String
+  Dim tot As Integer
+  Dim res As Result
+  Dim res1 As Result
+  Dim sql2 As String
+  Dim res2 As Result
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xperc As Float
+  Dim xtotal As Integer
+  Dim stot As Integer
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  $BillingReport = New CReportHTML([("SNo"), ("Variables"), ("Count"), ("Percent")], "", "")
+  sql = Subst("select COUNT(&1) as cnt from &2", fldindex, tbltarget)
+  If wherefield And If wherefield1 Then
+    res = conn.Exec(sql & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3 and " & wherefield1 & "=&4", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText, whereText1)
+  Else
+    If wherefield Then
+      res = conn.Exec(sql & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText)
+    Else
+      res = conn.Exec(sql & " where " & flddate & ">=&1 and " & flddate & "<=&2", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+    Endif
+  Endif
+  tot = res["cnt"]
+  
+  $BillingReport.UserData.Add("SUMMARY: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM1")
+  $BillingReport.UserData.Add("TOTAL: " & modReportVar.GetLocaleNumberFormat(tot, 0), "PARAM2")
+  
+  If tot Then
+    sql1 = Subst("select &1 as fld from &2", fldtarget, tbltarget)
+    If wherefield And If wherefield1 Then
+      res1 = conn.Exec(sql1 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3 and " & wherefield1 & "=&4 GROUP BY " & fldtarget & " ORDER BY COUNT(" & fldindex & ") DESC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText, whereText1)
+    Else
+      If wherefield Then
+        res1 = conn.Exec(sql1 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3 GROUP BY " & fldtarget & " ORDER BY COUNT(" & fldindex & ") DESC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText)
+      Else
+        res1 = conn.Exec(sql1 & " where " & flddate & ">=&1 and " & flddate & "<=&2 GROUP BY " & fldtarget & " ORDER BY COUNT(" & fldindex & ") DESC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Endif
+    Endif
+    If res1.Available Then
+      i = 1
+      stot = 0
+      
+      For Each res1
+        If res1["fld"] Then
+          xtotal = 0
+          xperc = 0
+          
+          sql2 = Subst("select COUNT(&1) as cnt from &2", fldindex, tbltarget)
+          If wherefield And If wherefield1 Then
+            res2 = conn.Exec(sql2 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & fldtarget & "=&3 and " & wherefield & "=&4 and " & wherefield1 & "=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res1["fld"], whereText, whereText1)
+          Else
+            If wherefield Then
+              res2 = conn.Exec(sql2 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & fldtarget & "=&3 and " & wherefield & "=&4", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res1["fld"], whereText)
+            Else
+              res2 = conn.Exec(sql2 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & fldtarget & "=&3", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res1["fld"])                                                      ''
+            Endif
+          Endif
+          If res2.Available And If res2["cnt"] Then
+            xtotal = res2["cnt"]
+          Else
+            xtotal = 0
+          Endif
+          stot = stot + xtotal
+          xperc = Round(xtotal * 100 / tot, -3)
+          
+          With asx
+            .Add(i)
+            If TypeOf(res1["fld"]) = gb.Boolean Then
+              If res1["fld"] = True Then
+                .Add("Flagged")
+              Else
+                .Add("Others")
+              Endif
+            Else
+              If tbltarget = "tblpatfindings" And If fldtarget = "fldcodenew" Then
+                .Add("[" & res1["fld"] & "] " & modPathology.GetNewDiagnoCodeValue(res1["fld"]))
+              Else
+                .Add(res1["fld"])
+              Endif
+            Endif
+            .Add(modReportVar.GetLocaleNumberFormat(xtotal, 0))
+            .Add(modReportVar.GetLocaleNumberFormat(xperc, 0))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Endif
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = res1.Index / res1.Count
+        Endif
+        Wait
+      Next
+      
+      With asx
+        .Add("")
+        .Add("***")
+        .Add(modReportVar.GetLocaleNumberFormat(stot, 0))
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+  Endif
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+''For all tables containg fldencounterval (except tblencounter)
+Private Function SummaryStatSexReport(conn As Connection, tbltarget As String, fldindex As String, fldtarget As String, flddate As String, dt1 As Date, dt2 As Date, Optional wherefield As String, Optional whereText As Variant, Optional wherefield1 As String, Optional whereText1 As Variant) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim sql1 As String
+  Dim sql As String
+  Dim tot As Integer
+  Dim res As Result
+  Dim res1 As Result
+  Dim sql2 As String
+  Dim res2 As Result
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim total As Integer
+  
+  Dim xsex As String
+  Dim sexlst As String[]
+  Dim xmale As Integer
+  Dim xfemale As Integer
+  Dim xother As Integer
+  Dim xtotal As Integer
+  
+  Dim smale As Integer
+  Dim sFemale As Integer
+  Dim sOther As Integer
+  Dim stot As Integer
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  $BillingReport = New CReportHTML([("SNo"), ("Variables"), ("Male"), ("Female"), ("Other"), ("Total")], "", "")
+  sql = Subst("select COUNT(&1) as cnt from &2", fldindex, tbltarget)
+  If wherefield And If wherefield1 Then
+    res = conn.Exec(sql & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3 and " & wherefield1 & "=&4", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText, whereText1)
+  Else
+    If wherefield Then
+      res = conn.Exec(sql & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText)
+    Else
+      res = conn.Exec(sql & " where " & flddate & ">=&1 and " & flddate & "<=&2", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+    Endif
+  Endif
+  tot = res["cnt"]
+  
+  $BillingReport.UserData.Add("SUMMARY: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM1")
+  $BillingReport.UserData.Add("TOTAL: " & modReportVar.GetLocaleNumberFormat(tot, 0), "PARAM2")
+  sexlst = ["Male", "Female", "Other"]
+  
+  If tot Then
+    sql1 = Subst("select distinct(&1) as fld from &2", fldtarget, tbltarget)
+    If wherefield And If wherefield1 Then
+      res1 = conn.Exec(sql1 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3 and " & wherefield1 & "=&4 ORDER BY " & fldtarget & " ASC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText, whereText1)
+    Else
+      If wherefield Then
+        res1 = conn.Exec(sql1 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & wherefield & "=&3 ORDER BY " & fldtarget & " ASC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), whereText)
+      Else
+        res1 = conn.Exec(sql1 & " where " & flddate & ">=&1 and " & flddate & "<=&2 ORDER BY " & fldtarget & " ASC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Endif
+    Endif
+    If res1.Available Then
+      i = 1
+      smale = 0
+      sFemale = 0
+      sOther = 0
+      stot = 0
+      
+      For Each res1
+        If res1["fld"] Then
+          xmale = 0
+          xfemale = 0
+          xother = 0
+          xtotal = 0
+          
+          For Each xsex In sexlst
+            sql2 = Subst("select COUNT(&1) as cnt from &2", fldindex, tbltarget)
+            If wherefield And If wherefield1 Then
+              res2 = conn.Exec(sql2 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & fldtarget & "=&3 and " & wherefield & "=&4 and " & wherefield1 & "=&5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&6))", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res1["fld"], whereText, whereText1, xsex)
+            Else
+              If wherefield Then
+                res2 = conn.Exec(sql2 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & fldtarget & "=&3 and " & wherefield & "=&4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&5))", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res1["fld"], whereText, xsex)
+              Else
+                res2 = conn.Exec(sql2 & " where " & flddate & ">=&1 and " & flddate & "<=&2 and " & fldtarget & "=&3 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex=&4))", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res1["fld"], xsex)                                                      ''
+              Endif
+            Endif
+            total = res2["cnt"]
+            If xsex = "Male" Then
+              xmale = xmale + total
+            Else If xsex = "Female" Then
+              xfemale = xfemale + total
+            Else If xsex = "Other" Then
+              xother = xother + total
+            Endif
+          Next
+          xtotal = xmale + xfemale + xother
+          
+          smale = smale + xmale
+          sFemale = sFemale + xfemale
+          sOther = sOther + xother
+          stot = stot + xtotal
+          
+          With asx
+            .Add(i)
+            If TypeOf(res1["fld"]) = gb.Boolean Then
+              If res1["fld"] = True Then
+                .Add("Flagged")
+              Else
+                .Add("Others")
+              Endif
+            Else
+              If tbltarget = "tblpatfindings" And If fldtarget = "fldcodenew" Then
+                .Add("[" & res1["fld"] & "] " & modPathology.GetNewDiagnoCodeValue(res1["fld"]))
+              Else
+                .Add(res1["fld"])
+              Endif
+            Endif
+            .Add(modReportVar.GetLocaleNumberFormat(xmale, 0))
+            .Add(modReportVar.GetLocaleNumberFormat(xfemale, 0))
+            .Add(modReportVar.GetLocaleNumberFormat(xother, 0))
+            .Add(modReportVar.GetLocaleNumberFormat(xtotal, 0))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Endif
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = res1.Index / res1.Count
+        Endif
+        Wait
+      Next
+      
+      With asx
+        .Add("")
+        .Add("***")
+        .Add(modReportVar.GetLocaleNumberFormat(smale, 0))
+        .Add(modReportVar.GetLocaleNumberFormat(sFemale, 0))
+        .Add(modReportVar.GetLocaleNumberFormat(sOther, 0))
+        .Add(modReportVar.GetLocaleNumberFormat(stot, 0))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+  Endif
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+Public Sub mnucountuni_Click()
+  
+  Dim Column As Integer
+  Dim xFieColm As String
+  Dim res As Result
+  Dim yval As Variant
+  Dim xList As String[]
+  
+  Dim xVar As Variant[]
+  Dim xFldList As String[]
+  Dim xPath As String
+  
+  Column = ListIndex("Column Index", modGridView.GetGridViewColumns(GridView1))
+  If Column + 1 > 0 Then
+    xFldList = GetSQLColumns()
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+      $ProgressBar1.Visible = True
+      $ProgressBar1.Value = 0
+    Endif
+    
+    Inc Application.Busy
+    xFieColm = xFldList[Column]
+    If rbsel.Value = True Then
+      If listitem.Rows.Selection.Count Then
+        If cmbtime.Text = "AnyTime" Then
+          res = ExecuteAllTime([xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+        Else
+          If cmbproctype.Text = "Delivery" Then
+            res = ExecuteDeliveryTime([xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+          Else If cmbproctype.Text = "Procedure" Then
+            res = ExecuteProcedureTime([xFieColm], listitem[listitem.Row, 0].Text, modDatabase.$syConn)
+          Endif
+        Endif
+      Endif
+    Else If rball.Value = True Then
+      If cmbtime.Text = "AnyTime" Then
+        res = ExecuteAllTime([xFieColm], "%", modDatabase.$syConn)
+      Else
+        If cmbproctype.Text = "Delivery" Then
+          res = ExecuteDeliveryTime([xFieColm], "%", modDatabase.$syConn)
+        Else If cmbproctype.Text = "Procedure" Then
+          res = ExecuteProcedureTime([xFieColm], "%", modDatabase.$syConn)
+        Endif
+      Endif
+    Endif
+    
+    xList = New String[]
+    If res.Available Then
+      For Each res
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If yval Then
+          xList.Add(yval)
+        Endif
+        
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    If xList.Count Then
+      xVar = modString.GetUnivariateSummary(xList)
+      xPath = modCHTMLReport.CreateHTMLReportFromArray(["Variable", "Count"], xVar, GridView1.Columns[Column].Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+    Endif
+    Dec Application.Busy
+    
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+  
+End
+
+Public Sub mnucolumns_Click()
+  
+  If Message.Question(modGridView.GetColumnsListString(GridView1), ("OK"), ("Setting")) = 2 Then
+    fmChartSetting.Close
+    fmChartSetting.ShowModal
+  Endif
+  
+End
+
+''================================== Field List ====================================================
+Private Sub GetFieldList()
+  
+  Dim xFldList As String[]
+  Dim xhospfld As String
+  
+  xFldList = New String[]
+  If cmbtime.Text = "AnyTime" Then
+    If txtagelast.Value Then
+      
+      If cmbcategory.Text = "Final Diagnosis" Or If cmbcategory.Text = "Provisional Diagnosis" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldcodenew", "t1.fldcode"]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Disease surveillance"
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldcodenew", "t1.fldcode"]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Allergic Drugs" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldcodenew", "t1.fldcode"]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Laboratory Tests" Then
+        xFldList = ["t1.fldid", "t1.fldtime_sample", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldtestid", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Examination" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldhead", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Radio Diagnostics" Then
+        xFldList = ["t1.fldid", "t1.fldtime_report", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldtestid", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Major Procedures" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldreportquali", "t1.fldreport"]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Equipment" Then
+        xFldList = ["t1.fldid", "t1.fldfirsttime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Device Use" Then
+        xFldList = ["t1.fldid", "t1.fldfirsttime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Narcotic Drugs" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Prescribed Drugs" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Patient Symptoms" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Presenting Complaints" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", modDataRepo.SerialField("t1")]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Clinical Demographics" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", "t1.fldreportquali"]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Patient Demographics" Then
+        xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.flditem", "t1.fldreportquali"]
+        xhospfld = modDataRepo.HospitalField("t1")
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Endif
+      
+    Else
+      xhospfld = modDataRepo.HospitalField()
+      If cmbcategory.Text = "Final Diagnosis" Or If cmbcategory.Text = "Provisional Diagnosis" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldcodenew", "fldcode"]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Disease surveillance" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldcodenew", "fldcode"]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Allergic Drugs" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldcodenew", "fldcode"]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Laboratory Tests" Then
+        xFldList = ["fldid", "fldtime_sample", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldtestid", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Examination" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldhead", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Radio Diagnostics" Then
+        xFldList = ["fldid", "fldtime_report", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldtestid", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Major Procedures" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldreportquali", "fldreport"]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Equipment" Then
+        xFldList = ["fldid", "fldfirsttime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Device Use" Then
+        xFldList = ["fldid", "fldfirsttime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Narcotic Drugs" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Prescribed Drugs" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Patient Symptoms" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Presenting Complaints" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", modDataRepo.SerialField()]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Clinical Demographics" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", "fldreportquali"]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Else If cmbcategory.Text = "Patient Demographics" Then
+        xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "flditem", "fldreportquali"]
+        If xhospfld Then
+          xFldList.Add(xhospfld)
+        Endif
+      Endif
+      
+    Endif
+  Else
+    If cmbproctype.Text = "Delivery" Then
+      If txtagelast.Value Then
+        If cmbcategory.Text = "Laboratory Tests" Then
+          xFldList = ["t1.fldid", "t1.fldtime_sample", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldtestid", modDataRepo.SerialField("t1")]
+          xhospfld = modDataRepo.HospitalField("t1")
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Else If cmbcategory.Text = "Examination" Then
+          xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldhead", modDataRepo.SerialField("t1")]
+          xhospfld = modDataRepo.HospitalField("tblpatientexam")
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Endif
+      Else
+        xhospfld = modDataRepo.HospitalField()
+        If cmbcategory.Text = "Laboratory Tests" Then
+          xFldList = ["fldid", "fldtime_sample", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldtestid", modDataRepo.SerialField()]
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Else If cmbcategory.Text = "Examination" Then
+          xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldhead", modDataRepo.SerialField()]
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Endif
+      Endif
+      
+    Else If cmbproctype.Text = "Procedure" Then
+      If txtagelast.Value Then
+        If cmbcategory.Text = "Laboratory Tests" Then
+          xFldList = ["t1.fldid", "t1.fldtime_sample", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldtestid", modDataRepo.SerialField("t1")]
+          xhospfld = modDataRepo.HospitalField("t1")
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Else If cmbcategory.Text = "Examination" Then
+          xFldList = ["t1.fldid", "t1.fldtime", "t1.fldencounterval", "t1.fldencounterval", modDataRepo.SerialField("t1"), "t1.fldencounterval", "t1.fldencounterval", "t1.fldencounterval", "t1.fldhead", modDataRepo.SerialField("t1")]
+          xhospfld = modDataRepo.HospitalField("t1")
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Endif
+      Else
+        xhospfld = modDataRepo.HospitalField()
+        If cmbcategory.Text = "Laboratory Tests" Then
+          xFldList = ["fldid", "fldtime_sample", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldtestid", modDataRepo.SerialField()]
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Else If cmbcategory.Text = "Examination" Then
+          xFldList = ["fldid", "fldtime", "fldencounterval", "fldencounterval", modDataRepo.SerialField(), "fldencounterval", "fldencounterval", "fldencounterval", "fldhead", modDataRepo.SerialField()]
+          If xhospfld Then
+            xFldList.Add(xhospfld)
+          Endif
+        Endif
+      Endif
+    Endif
+    
+  Endif
+  
+  $SSQLFields = xFldList
+  
+End
+
+''================================== Queries ============================================================
+''---- with event time consideration for procedure
+Private Function ExecuteProcedureTime(xFldList As String[], sItem As String, scon As Connection) As Result
+  
+  Dim sql As String
+  Dim xdtstr As String
+  Dim xdiagno As String
+  Dim xdelstr As String
+  Dim xwhen As String
+  Dim xdstenc As String
+  
+  Dim res As Result
+  
+  If Not cmbmethod.Text Then
+    cmbmethod.Text = "%"
+  Endif
+  
+  If Not cmbprocname.Text Then
+    cmbprocname.Text = "%"
+  Endif
+  
+  If cmbtime.Text = "Before" Then
+    xwhen = ">"
+  Else If cmbtime.Text = "After" Then
+    xwhen = "<"
+  Endif
+  
+  If txtagelast.Value Then
+    If cmbcategory.Text = "Laboratory Tests" Then
+      xdtstr = GetAgeStringByTable($tblpatlabtest, scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &{10} and fldsave=&{11})"
+      Endif
+      xdelstr = " and t1.fldencounterval in(select fldencounterval from tblpatgeneral where tblpatgeneral.fldtime" & xwhen & "t1.fldtime_sample and tblpatgeneral.fldinput=&{12} and tblpatgeneral.flditem like &{13})"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (" & $tblpatlabtest & " AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime_sample>=&1 and t1.fldtime_sample<=&2 and (t1.fldstatus=&3 or t1.fldstatus=&4) and t1.fldtestid like &5 and t1.fldmethod like &6 and t3.fldptsex like &7 and " & xdtstr & ">=&8 and  " & xdtstr & "<&9" & xdiagno & xdelstr & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                    ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True, "Procedures", cmbprocname.Text)
+      
+    Else If cmbcategory.Text = "Examination" Then
+      xdtstr = GetAgeStringByTable("tblpatientexam", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      xdelstr = " and t1.fldencounterval in(select fldencounterval from tblpatgeneral where tblpatgeneral.fldtime" & xwhen & "t1.fldtime and tblpatgeneral.fldinput=&{11} and tblpatgeneral.flditem like &{12})"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatientexam AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldsave=&3 and t1.fldhead like &4 and t1.fldmethod like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8" & xdiagno & xdelstr & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True, "Procedures", cmbprocname.Text)
+      
+    Endif
+    
+  Else
+    $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+    If cmbcategory.Text = "Laboratory Tests" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      xdelstr = " and fldencounterval in(select fldencounterval from tblpatgeneral where tblpatgeneral.fldtime" & xwhen & $tblpatlabtest & ".fldtime_sample and tblpatgeneral.fldinput=&{10} and tblpatgeneral.flditem like &{11})"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from " & $tblpatlabtest & " where fldtime_sample>=&1 and fldtime_sample<=&2 and (fldstatus=&3 or fldstatus=&4) and fldtestid like &5 and fldmethod like &6 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &7))" & xdiagno & xdelstr & $RepoStr & xdstenc                                    ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True, "Procedures", cmbprocname.Text)
+      
+    Else If cmbcategory.Text = "Examination" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      xdelstr = " and fldencounterval in(select fldencounterval from tblpatgeneral where tblpatgeneral.fldtime" & xwhen & "tblpatientexam.fldtime and tblpatgeneral.fldinput=&9 and tblpatgeneral.flditem like &{10})"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldsave=&3 and fldhead like &4 and fldmethod like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6))" & xdiagno & xdelstr & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True, "Procedures", cmbprocname.Text)
+      
+    Endif
+    
+  Endif
+  Return res
+  
+End
+
+''---- with event time consideration for delivery
+Private Function ExecuteDeliveryTime(xFldList As String[], sItem As String, scon As Connection) As Result
+  
+  Dim sql As String
+  Dim xdtstr As String
+  Dim xdiagno As String
+  Dim xdelstr As String
+  Dim xwhen As String
+  Dim xdstenc As String
+  
+  Dim res As Result
+  
+  If Not cmbmethod.Text Then
+    cmbmethod.Text = "%"
+  Endif
+  
+  If cmbtime.Text = "Before" Then
+    xwhen = ">"
+  Else If cmbtime.Text = "After" Then
+    xwhen = "<"
+  Endif
+  
+  If txtagelast.Value Then
+    If cmbcategory.Text = "Laboratory Tests" Then
+      xdtstr = GetAgeStringByTable($tblpatlabtest, scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &{10} and fldsave=&{11})"
+      Endif
+      xdelstr = " and t1.fldencounterval in(select fldencounterval from tblconfinement where tblconfinement.flddeltime" & xwhen & "t1.fldtime_sample)"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (" & $tblpatlabtest & " AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime_sample>=&1 and t1.fldtime_sample<=&2 and (t1.fldstatus=&3 or t1.fldstatus=&4) and t1.fldtestid like &5 and t1.fldmethod like &6 and t3.fldptsex like &7 and " & xdtstr & ">=&8 and  " & xdtstr & "<&9" & xdiagno & xdelstr & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                     ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Examination" Then
+      xdtstr = GetAgeStringByTable("tblpatientexam", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      xdelstr = " and t1.fldencounterval in(select fldencounterval from tblconfinement where tblconfinement.flddeltime" & xwhen & "t1.fldtime)"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatientexam AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldsave=&3 and t1.fldhead like &4 and t1.fldmethod like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8" & xdiagno & xdelstr & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Endif
+    
+  Else
+    $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+    If cmbcategory.Text = "Laboratory Tests" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      xdelstr = " and fldencounterval in(select fldencounterval from tblconfinement where tblconfinement.flddeltime" & xwhen & $tblpatlabtest & ".fldtime_sample)"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from " & $tblpatlabtest & " where fldtime_sample>=&1 and fldtime_sample<=&2 and (fldstatus=&3 or fldstatus=&4) and fldtestid like &5 and fldmethod like &6 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &7))" & xdiagno & xdelstr & $RepoStr & xdstenc                                   ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Examination" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      xdelstr = " and fldencounterval in(select fldencounterval from tblconfinement where tblconfinement.flddeltime" & xwhen & "tblpatientexam.fldtime)"
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldsave=&3 and fldhead like &4 and fldmethod like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6))" & xdiagno & xdelstr & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Endif
+    
+  Endif
+  Return res
+  
+End
+
+''---without consideration of event time
+Private Function ExecuteAllTime(xFldList As String[], sItem As String, scon As Connection) As Result
+  
+  Dim sql As String
+  Dim xdtstr As String
+  Dim xdiagno As String
+  Dim xdstenc As String
+  
+  Dim res As Result
+  
+  If Not cmbmethod.Text Then
+    cmbmethod.Text = "%"
+  Endif
+  
+  If txtagelast.Value Then
+    If cmbcategory.Text = "Final Diagnosis" Or If cmbcategory.Text = "Provisional Diagnosis" Then
+      xdtstr = GetAgeStringByTable("tblpatfindings", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &{10} and fldsave=&{11})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatfindings AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldtype=&3 and t1.fldcodenew like &4 and t1.fldcode like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8 and t1.fldsave=&9" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                   ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbcategory.Text, sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Allergic Drugs" Then
+      xdtstr = GetAgeStringByTable("tblpatfindings", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatfindings AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldtype=&3 and t1.fldcode like &4 and t3.fldptsex like &5 and " & xdtstr & ">=&6 and " & xdtstr & "<&7 and t1.fldsave=&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                     ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Allergic Drugs", sItem, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Disease surveillance"
+      xdtstr = GetAgeStringByTable("tblpatfindings", scon)
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatfindings AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and (t1.fldtype=&3 or t1.fldtype=&4) and t1.fldcodenew in(select tblsurveillance.fldcodenew from tblsurveillance where tblsurveillance.flddisease like &5) and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8 and t1.fldsave=&9" & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                  ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Provisional Diagnosis", "Final Diagnosis", sItem, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, True)
+      
+    Else If cmbcategory.Text = "Laboratory Tests" Then
+      xdtstr = GetAgeStringByTable($tblpatlabtest, scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &{10} and fldsave=&{11})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (" & $tblpatlabtest & " AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime_sample>=&1 and t1.fldtime_sample<=&2 and (t1.fldstatus=&3 or t1.fldstatus=&4) and t1.fldtestid like &5 and t1.fldmethod like &6 and t3.fldptsex like &7 and " & xdtstr & ">=&8 and  " & xdtstr & "<&9" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                     ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Examination" Then
+      xdtstr = GetAgeStringByTable("tblpatientexam", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatientexam AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldsave=&3 and t1.fldhead like &4 and t1.fldmethod like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Radio Diagnostics" Then
+      xdtstr = GetAgeStringByTable("tblpatradiotest", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &{10} and fldsave=&{11})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatradiotest AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime_report>=&1 and t1.fldtime_report<=&2 and (t1.fldstatus=&3 or t1.fldstatus=&4) and t1.fldtestid like &5 and t1.fldmethod like &6 and t3.fldptsex like &7 and " & xdtstr & ">=&8 and  " & xdtstr & "<&9" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                  ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Major Procedures" Then
+      xdtstr = GetAgeStringByTable("tblpatsubgeneral", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &{10} and fldsave=&{11})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatsubgeneral AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldchapter=&1 and t1.fldtime>=&2 and t1.fldtime<=&3 and t1.fldreportquali like &4 and t1.flditemid in(select fldid from tblpatgeneral where fldinput=&5 and fldreportquali=&6) and t3.fldptsex like &7 and  " & xdtstr & ">=&8 and  " & xdtstr & "<&9" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, "Components", modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), sItem, "Procedures", "Done", cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Equipment" Then
+      xdtstr = GetAgeStringByTable("tblpattiming", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpattiming AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldfirsttime>=&1 and t1.fldfirsttime<=&2 and t1.fldtype=&3 and t1.flditem like &4 and t3.fldptsex like &5 and  " & xdtstr & ">=&6 and  " & xdtstr & "<&7 and t1.fldsecondsave=&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Equipment", sItem, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Device Use" Then
+      xdtstr = GetAgeStringByTable("tblpatevents", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatevents AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldfirsttime>=&1 and t1.fldfirsttime<=&2 and t1.fldtype=&3 and t1.flditem like &4 and t3.fldptsex like &5 and  " & xdtstr & ">=&6 and  " & xdtstr & "<&7 and t1.fldsecondsave=&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Devices", sItem, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Narcotic Drugs" Then
+      xdtstr = GetAgeStringByTable("tblpatdosing", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatdosing AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.flditem like &3 and t1.flditem in(select tblmedbrand.fldbrandid from tblmedbrand where tblmedbrand.fldnarcotic=&4) and t3.fldptsex like &5 and " & xdtstr & ">=&6 and " & xdtstr & "<&7" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), sItem, "Yes", cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Prescribed Drugs" Then
+      xdtstr = GetAgeStringByTable("tblpatdosing", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpatdosing AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldsave_order=&3 and t1.flditem in(select tblmedbrand.fldbrandid from tblmedbrand where tblmedbrand.flddrug in(select tbldrug.flddrug from tbldrug where tbldrug.fldcodename like &4)) and t3.fldptsex like &5 and " & xdtstr & ">=&6 and " & xdtstr & "<&7" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc                                               ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Patient Symptoms" Then
+      xdtstr = GetAgeStringByTable("tblexamgeneral", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblexamgeneral AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldinput=&3 and t1.fldsave=&4 and t1.flditem like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Patient Symptoms", True, sItem, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Presenting Complaints" Then
+      xdtstr = GetAgeStringByTable("tblexamgeneral", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblexamgeneral AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldinput=&3 and t1.fldsave=&4 and t1.flditem like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Presenting Symptoms", True, sItem, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Clinical Demographics" Then
+      xdtstr = GetAgeStringByTable("tblexamgeneral", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblexamgeneral AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldinput=&3 and t1.flditem like &4 and t1.fldreportquali like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Demographics", sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Patient Demographics" Then
+      xdtstr = GetAgeStringByTable("tblpataccgeneral", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &9 and fldsave=&{10})"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblpataccgeneral AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.fldinput=&3 and t1.flditem like &4 and t1.fldreportquali like &5 and t3.fldptsex like &6 and " & xdtstr & ">=&7 and " & xdtstr & "<&8" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Demographics", sItem, cmbmethod.Text, cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Obstetrics" Then
+      xdtstr = GetAgeStringByTable("tblobstetrics", scon)
+      If cmbdiagno.Text Then
+        xdiagno = " and t1.fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&7)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY t1.fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from (tblobstetrics AS t1 inner join tblencounter AS t2 on t1.fldencounterval=t2.fldencounterval) inner join tblpatientinfo AS t3 on t2.fldpatientval=t3.fldpatientval where t1.fldlast>=&1 and t1.fldlast<=&2 and t3.fldptsex like &3 and " & xdtstr & ">=&4 and " & xdtstr & "<&5" & xdiagno & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, "t1") & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbsex.Text, txtagefir.Value * 365, txtagelast.Value * 365, cmbdiagno.Tag, True)
+      
+    Endif
+    
+  Else
+    $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+    If cmbcategory.Text = "Final Diagnosis" Or If cmbcategory.Text = "Provisional Diagnosis" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldcodenew like &4 and fldcode like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6)) and fldsave=&7" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbcategory.Text, sItem, cmbmethod.Text, cmbsex.Text, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Allergic Drugs" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatfindings where fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldcode like &4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5)) and fldsave=&6" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Allergic Drugs", sItem, cmbsex.Text, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Disease surveillance" Then
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatfindings where fldtime>=&1 and fldtime<=&2 and (fldtype=&3 or fldtype=&4) and fldcodenew in(select fldcodenew from tblsurveillance where flddisease like &5) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6)) and fldsave=&7" & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Provisional Diagnosis", "Final Diagnosis", sItem, cmbsex.Text, True)
+      
+    Else If cmbcategory.Text = "Laboratory Tests" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from " & $tblpatlabtest & " where fldtime_sample>=&1 and fldtime_sample<=&2 and (fldstatus=&3 or fldstatus=&4) and fldtestid like &5 and fldmethod like &6 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &7))" & xdiagno & $RepoStr & xdstenc                                      ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Examination" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldsave=&3 and fldhead like &4 and fldmethod like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6))" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Radio Diagnostics" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatradiotest where fldtime_report>=&1 and fldtime_report<=&2 and (fldstatus=&3 or fldstatus=&4) and fldtestid like &5 and fldmethod like &6 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &7))" & xdiagno & $RepoStr & xdstenc                                    ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Reported", "Verified", sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Major Procedures" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &8 and fldsave=&9)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatsubgeneral where fldchapter=&1 and fldtime>=&2 and fldtime<=&3 and fldreportquali like &4 and flditemid in(select fldid from tblpatgeneral where fldinput=&5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6)) and fldreportquali=&7)" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, "Components", modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), sItem, "Procedures", cmbsex.Text, "Done", cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Equipment" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpattiming where fldfirsttime>=&1 and fldfirsttime<=&2 and fldtype=&3 and flditem like &4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5)) and fldsecondsave=&6" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Equipment", sItem, cmbsex.Text, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Device Use" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatevents where fldfirsttime>=&1 and fldfirsttime<=&2 and fldtype=&3 and flditem like &4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5)) and fldsecondsave=&6" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Devices", sItem, cmbsex.Text, True, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Narcotic Drugs" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &6 and fldsave=&7)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatdosing where fldtime>=&1 and fldtime<=&2 and flditem like &3 and flditem in(select fldbrandid from tblmedbrand where fldnarcotic=&4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5))" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), sItem, "Yes", cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Prescribed Drugs" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &6 and fldsave=&7)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpatdosing where fldtime>=&1 and fldtime<=&2 and fldsave_order=&3 and flditem in(select fldbrandid from tblmedbrand where flddrug in(select flddrug from tbldrug where fldcodename like &4)) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5))" & xdiagno & $RepoStr & xdstenc                                                ''
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), True, sItem, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Patient Symptoms" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblexamgeneral where fldtime>=&1 and fldtime<=&2 and fldinput=&3 and fldsave=&4 and flditem like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6))" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Patient Symptoms", True, sItem, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Presenting Complaints" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblexamgeneral where fldtime>=&1 and fldtime<=&2 and fldinput=&3 and fldsave=&4 and flditem like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6))" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Presenting Symptoms", True, sItem, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Clinical Demographics" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblexamgeneral where fldtime>=&1 and fldtime<=&2 and fldinput=&3 and flditem like &4 and fldreportquali like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6))" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Demographics", sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Patient Demographics" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &7 and fldsave=&8)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblpataccgeneral where fldtime>=&1 and fldtime<=&2 and fldinput=&3 and flditem like &4 and fldreportquali like &5 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &6))" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), "Demographics", sItem, cmbmethod.Text, cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Else If cmbcategory.Text = "Obstetrics" Then
+      If cmbdiagno.Text Then
+        xdiagno = " and fldencounterval in(select fldencounterval from tblpatfindings where fldcodenew like &4 and fldsave=&5)"
+      Endif
+      If chkdstenc.Value = True Then
+        xdstenc = " GROUP BY fldencounterval"
+      Else
+        xdstenc = ""
+      Endif
+      sql = "select " & xFldList.Join(",") & " from tblobstetrics where fldlast>=&1 and fldlast<=&2 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &3))" & xdiagno & $RepoStr & xdstenc
+      res = scon.Exec(sql, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbsex.Text, cmbdiagno.Tag, True)
+      
+    Endif
+    
+  Endif
+  
+  Return res
+  
+End
+
+Private Function GetAgeStringByTable(sTable As String, $con As Connection) As String
+  
+  Dim xdtstr As String
+  
+  If sTable = "tblpatfindings" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblpatlabtest" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime_sample", "t3.fldptbirday", $con)
+  Else If sTable = "tblpatradiotest" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime_report", "t3.fldptbirday", $con)
+  Else If sTable = "tblpatientexam" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblpatdosing" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblpatsubgeneral" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblpatgeneral" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblexamgeneral" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblpataccgeneral" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblpattiming" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldfirsttime", "t3.fldptbirday", $con)
+  Else If sTable = "tblconsult" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldconsulttime", "t3.fldptbirday", $con)
+  Else If sTable = "tblopvisit" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldconsulttime", "t3.fldptbirday", $con)
+  Else If sTable = "tblconfinement" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.flddeltime", "t3.fldptbirday", $con)
+  Else If sTable = "tblpatientdate" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Else If sTable = "tblextradosing" Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.flddosetime", "t3.fldptbirday", $con)
+  Else If modBasic.$YearlabtestList.Exist(sTable) Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime_sample", "t3.fldptbirday", $con)
+  Else If modBasic.$YearpatexamList.Exist(sTable) Then
+    xdtstr = modDate.GetSQLDateDiffStr("t1.fldtime", "t3.fldptbirday", $con)
+  Endif
+  Return xdtstr
+  
+End

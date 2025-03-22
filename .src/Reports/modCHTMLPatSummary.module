@@ -1,0 +1,1102 @@
+' Gambas module file
+
+Public Function GetVitalValReport(encList As String[], sDept As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim enc As String
+  Dim examList As String[]
+  Dim colmList As String[]
+  Dim xexam As String
+
+  colmList = [("BedNo"), ("EncID"), ("Name"), ("Age/Sex")]
+  examList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldexamid) as col from tblcompexam where fldcomp=&1 and fldcategory=&2", "%", "Essential Examinations"))
+  If examList Then
+    colmList.Insert(examList)
+  Endif
+  $BillingReport = New CReportHTML(colmList, "", "")
+  $BillingReport.UserData.Add("LATEST ESSENTIAL EXAMINATIONS : " & sDept, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each enc In encList
+    With asx
+      .Add(modPatient.GetPatientLocation(enc))
+      .Add(enc)
+      .Add(modPatient.GetPatientNameByEnc(enc, modDatabase.$syConn))
+      .Add(modPatient.GetPatientAgeString(enc, Now()) & "/" & modPatient.GetPatientSex(enc))
+      If examList Then
+        For Each xexam In examList
+          .Add(modClinic.GetCurrExamValueFromID("Last", enc, xexam))
+        Next
+      Endif
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetClinicalNotesReport(encList As String[], sDept As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim enc As String
+
+  $BillingReport = New CReportHTML([("BedNo"), ("EncID"), ("Name"), ("Age/Sex"), ("Nurses Note"), ("Clinicians Note"), ("Progress Note"), ("Transfer Note")], "", "")
+  $BillingReport.UserData.Add("LATEST CLINICAL NOTES : " & sDept, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each enc In encList
+    With asx
+      .Add(modPatient.GetPatientLocation(enc))
+      .Add(enc)
+      .Add(modPatient.GetPatientNameByEnc(enc, modDatabase.$syConn))
+      .Add(modPatient.GetPatientAgeString(enc, Now()) & "/" & modPatient.GetPatientSex(enc))
+      .Add(modPatPatho.ShowSelectedNotesWithSumm(enc, "Nurses Note"))
+      .Add(modPatPatho.ShowSelectedNotesWithSumm(enc, "Clinicians Note"))
+      .Add(modPatPatho.ShowSelectedNotesWithSumm(enc, "Progress Note"))
+      .Add(modPatPatho.ShowSelectedNotesWithSumm(enc, "Transfer Note"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetHandOverReport(encList As String[], sDept As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim enc As String
+  Dim ximpres As String
+  Dim xplan As String
+  Dim xdate As Date
+  Dim xuser As String
+
+  $BillingReport = New CReportHTML([("BedNo"), ("EncID"), ("Name"), ("Age/Sex"), ("Diagnosis"), ("Vitals"), ("Impression"), ("Nursing Plan"), ("Date"), ("User")], "", "")
+  $BillingReport.UserData.Add("LATEST PROGRESS REPORT : " & sDept, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each enc In encList
+    res = modDatabase.$syConn.Exec("select fldtime,fldproblem,fldplan,flduserid from tblpatplanning where fldencounterval=&1 and fldplancategory=&2", enc, "IP Monitoring")
+    If res.Available Then
+      res.MoveLast
+      ximpres = res["fldproblem"]
+      xplan = res["fldplan"]
+      xdate = res["fldtime"]
+      xuser = modGeneral.GetUserFullName(res["flduserid"])
+    Else
+      ximpres = ""
+      xplan = ""
+      xdate = ""
+      xuser = ""
+    Endif
+
+    With asx
+      .Add(modPatient.GetPatientLocation(enc))
+      .Add(enc)
+      .Add(modPatient.GetPatientNameByEnc(enc, modDatabase.$syConn))
+      .Add(modPatient.GetPatientAgeString(enc, Now()) & "/" & modPatient.GetPatientSex(enc))
+      .Add(modPatient.PatientDiagnoCurrentList(enc).Join(gb.NewLine))
+      .Add(modPatReports.GetSelectFindingReport(enc, "Essential Examinations").Join(gb.NewLine))
+      .Add(ximpres)
+      .Add(xplan)
+      .Add(modReportVar.GetDateTimeReport(xdate, gb.GeneralDate))
+      .Add(xuser)
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetPlannedFoodReport(xDate As Date, encList As String[], sDept As String, sState As String, sFormat As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim enc As String
+  Dim i As Integer
+
+  Dim sColmList As String[] = [("Time"), ("Particulars"), ("Dose")]
+  Dim xFinal As Variant[]
+  Dim xRowVal As Collection
+
+  $BillingReport = New CReportHTML([("SNo"), ("Encounter"), ("Name"), ("Age/Sex"), ("Bed"), ("Description")], "", "")
+  $BillingReport.UserData.Add("NUTRITION : " & sDept & "   STATUS: " & sState, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(xDate, gb.MediumDate), "PARAM2")
+
+  i = 1
+  For Each enc In encList
+    If sState = "Planned" Then
+      res = modDatabase.$syConn.Exec("select fldid,fldcategory,flditem,flddose,flddosetime,flddosecode from tblextradosing where fldencounterval=&1 and fldstatus=&2 and flddosetime>=&3 and flddosetime<=&4 and fldsave=&5 ORDER BY flddosetime", enc, "Planned", modDate.StartSqlDate(xDate), modDate.EndSqlDate(xDate), False)
+    Else If sState = "Continue" Then
+      res = modDatabase.$syConn.Exec("select fldid,fldcategory,flditem,flddose,flddosetime,flddosecode from tblextradosing where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and flddosetime>=&4 and flddosetime<=&5 ORDER BY flddosetime", enc, "Planned", "Continue", modDate.StartSqlDate(xDate), modDate.EndSqlDate(xDate))
+    Endif
+    xFinal = New Variant[]
+    If res.Available Then
+      For Each res
+        xRowVal = New Collection
+        xRowVal.Add(modReportVar.GetDateTimeReport(res["flddosetime"], gb.ShortTime), CStr(0))
+        If res["fldcategory"] = "Mixture" Then
+          If sFormat = "Mixture Name" Then
+            xRowVal.Add(modMedConstant.GetDietMixNameFromCode(res["flditem"]), CStr(1))
+          Else If sFormat = "Mixture Code" Then
+            xRowVal.Add(res["flditem"], CStr(1))
+          Endif
+        Else
+          xRowVal.Add(res["flditem"], CStr(1))
+        Endif
+        xRowVal.Add(res["flddose"], CStr(2))
+        ' ' xRowVal.Add(res["flddosecode"], CStr(3))
+        xFinal.Add(xRowVal)
+      Next
+    Endif
+
+    With asx
+      .Add(CStr(i))
+      .Add(enc)
+      .Add(modPatient.GetPatientNameByEnc(enc, modDatabase.$syConn))
+      .Add(modPatient.GetPatientAgeString(enc, Now()) & "/" & modPatient.GetPatientSex(enc))
+      .Add(modPatient.GetPatientLocation(enc))
+      If xFinal.Count Then
+        .Add(modString.GetRichTableStringFromVariant(sColmList, xFinal))
+      Else
+        .Add("")
+      Endif
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    i = i + 1
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetDietPatientReportMonthly($con As Connection, dt1 As Date, dt2 As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+
+  Dim xHead As String[]
+  Dim dtlst As Date[]
+  Dim dt As Date
+  Dim res As Result
+
+  dtlst = modDate.GetSelectDateArrayBetween(gb.Day, dt1, dt2)
+  xHead = [("SNo"), ("EncID"), ("Name"), ("Age/Sex"), ("DOA"), ("DOD"), ("Bed")]
+  For Each dt In dtlst
+    xHead.Add(modReportVar.GetDateTimeReport(dt, gb.MediumDate))
+  Next
+  $BillingReport = New CReportHTML(xHead, "", "")
+  $BillingReport.UserData.Add("MIXTURE COMPOSITION REPORT", "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  i = 1
+  res = $con.Exec("select distinct(fldencounterval) as fldencounterval from tblextradosing where flddosetime>=&1 and flddosetime<=&2 and fldtype=&3 and (fldstatus=&4 or fldstatus=&5)", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "Input Food/Fluid", "Continue", "Completed")
+  If res.Available Then
+    For Each res
+      With asx
+        .Add(CStr(i))
+        .Add(res["fldencounterval"])
+        .Add(modPatient.GetPatientNameByEnc(res["fldencounterval"], $con))
+        .Add(modPatient.GetPatientAgeString(res["fldencounterval"], Now()) & "/" & modPatient.GetPatientSex(res["fldencounterval"]))
+        .Add(modReportVar.GetDateTimeReport(modPatient.GetAdmissionDate(res["fldencounterval"]), gb.GeneralDate))
+        .Add(modReportVar.GetDateTimeReport(modPatient.GetDischargeDate(res["fldencounterval"]), gb.GeneralDate))
+        .Add(modPatient.GetPatientLocation(res["fldencounterval"], $con))
+
+        For Each dt In dtlst
+          .Add(modString.GetUniColumnTableFromList(modPatPatho.GetDietUsePatient(res["fldencounterval"], dt)))
+        Next
+
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetMixtureContentReport($con As Connection, dt1 As Date, dt2 As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+  Dim i As Integer
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("QTY")], "", "")
+  $BillingReport.UserData.Add("DIET CONTENT REPORT", "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  res = $con.Exec("select distinct(flditemname) as flditemname from tblfoodgroup ORDER BY flditemname")
+  If res.Available Then
+    i = 1
+    For Each res
+
+      res1 = $con.Exec("select SUM(tblextradosing.flddose*tblfoodgroup.flditemamt) as xtot from tblextradosing inner join tblfoodgroup on tblextradosing.flditem=tblfoodgroup.fldgroup where tblextradosing.flddosetime>=&1 and tblextradosing.flddosetime<=&2 and tblextradosing.fldtype=&3 and (tblextradosing.fldstatus=&4 or tblextradosing.fldstatus=&5) and tblextradosing.fldcategory=&6 and tblfoodgroup.flditemname=&7", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "Input Food/Fluid", "Continue", "Completed", "Mixture", res["flditemname"])''and tblextradosing.fldcategory=&6
+      If res1.Available And If res1["xtot"] Then
+        With asx
+          .Add(CStr(i))
+          .Add(res["flditemname"])
+          .Add(res1["xtot"])
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+      Endif
+
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowFollowMedicineReport($dt As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim encid As String
+  Dim encList As String[]
+
+  $BillingReport = New CReportHTML([("StartDate"), ("Regimen"), ("DispQTY"), ("ReqQTY")], "", "")
+  $BillingReport.UserData.Add("FOLLOW UP MEDICINES", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport($dt, gb.MediumDate), "PARAM2")
+
+  encList = modPharmacy.GetMedicineFollowPatient($dt)
+  For Each encid In encList
+    $BillingReport.AddChapter("ENCOUNTER: " & encid & "<br>" & "NAME: " & modPatient.GetPatientNameByEnc(encid, modDatabase.$syConn) & "<br>" & "ADDRESS: " & modPatient.GetPatientAddressByEnc(encid, modDatabase.$syConn) & "<br>" & "CONTACT: " & modPatient.GetPatientContactByEnc(encid))
+    res = modDatabase.$syConn.Exec("select fldid,fldstarttime,fldroute,flditem,flddose,fldfreq,flddays,fldqtydisp from tblpatdosing where fldsave_order=&1 and fldendtime>&2 and fldencounterval=&3", True, $dt, encid)
+    For Each res
+      If Ceil(modMedConstant.GetQuantityDosing(res["flditem"], res["flddose"], res["fldfreq"], res["flddays"])) > res["fldqtydisp"] And If DateDiff(res["fldstarttime"], $dt, gb.Day) > modMedConstant.GetDrugUseDurationDosing(res["flditem"], res["flddose"], res["fldfreq"], res["fldqtydisp"]) Then
+        With asx
+          .Add(modReportVar.GetDateTimeReport(res["fldstarttime"], gb.GeneralDate))
+          .Add(modPharmacy.GetMedFormatForMedReport(res["flditem"], res["fldroute"]) & Space(1) & modPharmacy.GetDoseRegimenString(res["fldid"], True, True))
+          .Add(res["fldqtydisp"])
+          .Add(Ceil(modMedConstant.GetQuantityDosing(res["flditem"], res["flddose"], res["fldfreq"], res["flddays"])))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''------------------------------------------ Bed management ----------------------------------------------------
+Public Function ShowBedOccupancyReport(sType As String, Optional sDepart As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim dept As String[]
+  Dim xx As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim i As Integer
+
+  $BillingReport = New CReportHTML([("SNo"), ("BedNo"), ("EncID"), ("Name"), ("Age/Sex"), ("Package"), ("Consult"), ("DOA"), ("Stay")], "", "")
+  $BillingReport.UserData.Add("CURRENT BED OCCUPANCY", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  If sDepart Then
+    dept = [sDepart]
+  Else
+    dept = modGeneral.GetDepartmentWithBedList()
+  Endif
+  For Each xx In dept
+    $BillingReport.AddSection(xx, True)
+
+    i = 1
+    res = modDatabase.$syConn.Exec("select fldbed from tbldepartmentbed where flddept=&1", xx)
+    For Each res
+      If sType = "Outstanding" Then
+        res1 = modDatabase.$syConn.Exec("select fldencounterval,fldadmission,flddisctype,flduserid,flddoa from tblencounter where fldcurrlocat=&1 and fldadmission=&2 and flddoa<&3", res["fldbed"], "Admitted", modDate.StartSqlDate(Now()))
+      Else
+        res1 = modDatabase.$syConn.Exec("select fldencounterval,fldadmission,flddisctype,flduserid,flddoa from tblencounter where fldcurrlocat=&1 and fldadmission=&2", res["fldbed"], "Admitted")
+      Endif
+      If res1.Available Then
+        With asx
+          .Add(CStr(i))
+          .Add(res["fldbed"])
+          .Add(res1["fldencounterval"])
+          .Add(modPatient.GetPatientNameByEnc(res1["fldencounterval"], modDatabase.$syConn))
+          .Add(modPatient.GetPatientAgeString(res1["fldencounterval"], Now()) & "/" & modPatient.GetPatientSex(res1["fldencounterval"], modDatabase.$syConn))
+          .Add(res1["flddisctype"])
+          .Add(modGeneral.GetUserFullName(res1["flduserid"]))
+          .Add(modReportVar.GetDateTimeReport(res1["flddoa"], gb.MediumDate))
+          .Add(Round(DateDiff(res1["flddoa"], Now(), gb.Hour) / 24, -2) & " days")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+      Endif
+    Next
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowBedOccupConsultReport(sType As String, Optional sDepart As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+  Dim i As Integer
+
+  $BillingReport = New CReportHTML([("SNo"), ("BedNo"), ("EncID"), ("Name"), ("Age/Sex"), ("Package"), ("Department"), ("DOA"), ("Stay")], "", "")
+  $BillingReport.UserData.Add("CURRENT BED OCCUPANCY", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  If sDepart Then
+    res = modDatabase.$syConn.Exec("select distinct(flduserid) as col from tblencounter where fldadmission=&1 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &2)", "Admitted", sDepart)
+  Else
+    res = modDatabase.$syConn.Exec("select distinct(flduserid) as col from tblencounter where fldadmission=&1", "Admitted")
+  Endif
+  For Each res
+    $BillingReport.AddSection(modGeneral.GetUserFullName(res["col"]), True)
+
+    i = 1
+    If sDepart Then
+      If sType = "Outstanding" Then
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,flddisctype,flduserid,flddoa from tblencounter where flduserid=&1 and fldadmission=&2 and flddoa<&3 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &4)", res["col"], "Admitted", modDate.StartSqlDate(Now()), sDepart)
+      Else
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,flddisctype,flduserid,flddoa from tblencounter where flduserid=&1 and fldadmission=&2 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &3)", res["col"], "Admitted", sDepart)
+      Endif
+    Else
+      If sType = "Outstanding" Then
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,flddisctype,flduserid,flddoa from tblencounter where flduserid=&1 and fldadmission=&2 and flddoa<&3", res["col"], "Admitted", modDate.StartSqlDate(Now()))
+      Else
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,flddisctype,flduserid,flddoa from tblencounter where flduserid=&1 and fldadmission=&2", res["col"], "Admitted")
+      Endif
+    Endif
+    If res1.Available Then
+      For Each res1
+        With asx
+          .Add(CStr(i))
+          .Add(res1["fldcurrlocat"])
+          .Add(res1["fldencounterval"])
+          .Add(modPatient.GetPatientNameByEnc(res1["fldencounterval"], modDatabase.$syConn))
+          .Add(modPatient.GetPatientAgeString(res1["fldencounterval"], Now()) & "/" & modPatient.GetPatientSex(res1["fldencounterval"], modDatabase.$syConn))
+          .Add(res1["flddisctype"])
+          .Add(modGeneral.GetDepartmentNameFromBed(res1["fldcurrlocat"]))
+          .Add(modReportVar.GetDateTimeReport(res1["flddoa"], gb.MediumDate))
+          .Add(Round(DateDiff(res1["flddoa"], Now(), gb.Hour) / 24, -2) & " days")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+      Next
+    Endif
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowBedOccupPackageDetail(sType As String, Optional sDepart As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+  Dim i As Integer
+
+  $BillingReport = New CReportHTML([("SNo"), ("BedNo"), ("EncID"), ("Name"), ("Age/Sex"), ("Package"), ("Bed No"), ("DOA"), ("Stay")], "", "")
+  $BillingReport.UserData.Add("CURRENT BED OCCUPANCY", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  If sDepart Then
+    res = modDatabase.$syConn.Exec("select distinct(flddisctype) as col from tblencounter where fldadmission=&1 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &2)", "Admitted", sDepart)
+  Else
+    res = modDatabase.$syConn.Exec("select distinct(flddisctype) as col from tblencounter where fldadmission=&1", "Admitted")
+  Endif
+  For Each res
+    $BillingReport.AddSection(res["col"], True)
+
+    i = 1
+    If sDepart Then
+      If sType = "Outstanding" Then
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,fldcurrlocat,flduserid,flddoa from tblencounter where flddisctype=&1 and fldadmission=&2 and flddoa<&3 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &4)", res["col"], "Admitted", modDate.StartSqlDate(Now()), sDepart)
+      Else
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,fldcurrlocat,flduserid,flddoa from tblencounter where flddisctype=&1 and fldadmission=&2 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &3)", res["col"], "Admitted", sDepart)
+      Endif
+    Else
+      If sType = "Outstanding" Then
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,fldcurrlocat,flduserid,flddoa from tblencounter where flddisctype=&1 and fldadmission=&2 and flddoa<&3", res["col"], "Admitted", modDate.StartSqlDate(Now()))
+      Else
+        res1 = modDatabase.$syConn.Exec("select fldcurrlocat,fldencounterval,fldadmission,fldcurrlocat,flduserid,flddoa from tblencounter where flddisctype=&1 and fldadmission=&2", res["col"], "Admitted")
+      Endif
+    Endif
+    If res1.Available Then
+      For Each res1
+        With asx
+          .Add(CStr(i))
+          .Add(res1["fldcurrlocat"])
+          .Add(res1["fldencounterval"])
+          .Add(modPatient.GetPatientNameByEnc(res1["fldencounterval"], modDatabase.$syConn))
+          .Add(modPatient.GetPatientAgeString(res1["fldencounterval"], Now()) & "/" & modPatient.GetPatientSex(res1["fldencounterval"], modDatabase.$syConn))
+          .Add(res1["fldcurrlocat"])
+          .Add(modGeneral.GetDepartmentNameFromBed(res1["fldcurrlocat"]))
+          .Add(modReportVar.GetDateTimeReport(res1["flddoa"], gb.MediumDate))
+          .Add(Round(DateDiff(res1["flddoa"], Now(), gb.Hour) / 24, -2) & " days")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+      Next
+    Endif
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowBedOccupPackageReport() As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim chapList As String[]
+  Dim packList As String[]
+  Dim xpack As String
+  Dim dept As String
+  Dim deptList As String[]
+  Dim xcount As Integer
+  Dim xtotal As Integer
+
+  packList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(flddisctype) as col from tblencounter where fldadmission=&1 and fldcurrlocat in(select fldbed from tbldepartmentbed)", "Admitted"))
+  chapList = New String[]
+  chapList.Add("Department")
+  If packList And If packList.Count Then
+    chapList.Insert(packList)
+  Endif
+  chapList.Add("Total")
+  $BillingReport = New CReportHTML(chapList, "", "")
+  $BillingReport.UserData.Add("CURRENT BED OCCUPANCY", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  deptList = modGeneral.GetDepartmentWithBedList()
+  For Each dept In deptList
+    xtotal = 0
+    With asx
+      .Add(dept)
+      For Each xpack In packList
+        xcount = 0
+        res = modDatabase.$syConn.Exec("select COUNT(fldencounterval) as xcnt from tblencounter where flddisctype=&1 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept=&2) and fldadmission=&3", xpack, dept, "Admitted")
+        If res.Available And If res["xcnt"] Then
+          xcount = res["xcnt"]
+        Else
+          xcount = 0
+        Endif
+        xtotal = xtotal + xcount
+        .Add(modReportVar.GetLocaleNumberFormat(xcount, 0))
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(xtotal, 0))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''============================== Registration/Booking List ----------------------------------------
+Public Function ShowBookingReport(dtfir As Date, dtlast As Date, sDept As String, sBillMode As String, sStatus As String, sComp As String, Optional sUser As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+
+  Dim xdate As Date[]
+  Dim datlist As Date[]
+  Dim xx As Date
+  Dim xdoc As String
+
+  If sUser Then
+    xdoc = sUser
+  Else
+    xdoc = "%"
+  Endif
+
+  $BillingReport = New CReportHTML([("Time"), ("Mode"), ("Department"), ("Consultant"), ("BookID"), ("Name"), ("Age/Sex"), ("Contact")], "", "")
+  $BillingReport.UserData.Add("BOOKING REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate), "PARAM2")
+
+  res = modDatabase.$syConn.Exec("select fldconsultdate from tblpatientbook where fldadmitlocat like &1 and flduserid like &2 and fldbillingmode like &3 and fldstate=&4 and fldconsultdate>=&5 and fldconsultdate<=&6 and fldcomp like &7", sDept, xdoc, sBillMode, sStatus, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp)                                                                            ''
+  xdate = New Date[]
+  If res.Available Then
+    For Each res
+
+      If xdate.Count = 0 Then
+        xdate.Add(modDate.StartSqlDate(res["fldconsultdate"]))
+      Else
+        If xdate.Exist(modDate.StartSqlDate(res["fldconsultdate"])) = False Then
+          xdate.Add(modDate.StartSqlDate(res["fldconsultdate"]))
+        Endif
+      Endif
+
+    Next
+  Endif
+  If xdate Then
+    xdate.Sort()
+  Endif
+  datlist = xdate
+
+  For Each xx In datlist
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xx, gb.MediumDate), True)
+    res1 = modDatabase.$syConn.Exec("select fldbookingval,fldconsultdate,fldadmitlocat,fldid,fldptsex,fldptcontact,flduserid,fldcomment,fldbillingmode from tblpatientbook where fldadmitlocat like &1 and flduserid like &2 and fldbillingmode like &3 and fldstate=&4 and fldconsultdate>=&5 and fldconsultdate<=&6 and fldcomp like &7", sDept, xdoc, sBillMode, sStatus, modDate.StartSqlDate(xx), modDate.EndSqlDate(xx), sComp)                                                                            ''
+    For Each res1
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res1["fldconsultdate"], gb.MediumTime))
+        .Add(res1["fldbillingmode"])
+        .Add(res1["fldadmitlocat"])
+        If res1["flduserid"] Then
+          .Add(modGeneral.GetUserFullName(res1["flduserid"]))
+        Else
+          .Add("")
+        Endif
+        .Add(res1["fldbookingval"])
+        .Add(modPatient.GetPatFullNameBooking(res1["fldbookingval"]))
+        .Add(res1["fldptsex"])
+        .Add(res1["fldptcontact"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+    With asx
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowRegisterConsultReport(dtfir As Date, dtlast As Date, sDept As String, sBillMode As String, sBilled As String, sStatus As String, sComp As String, Optional sUser As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+
+  Dim xdate As Date[]
+  Dim datlist As Date[]
+  Dim xx As Date
+  Dim xdoc As String
+
+  If sUser Then
+    xdoc = sUser
+  Else
+    xdoc = "%"
+  Endif
+
+  $BillingReport = New CReportHTML([("Time"), ("Mode"), ("Department"), ("Consultant"), ("EncID"), ("Name"), ("Age/Sex"), ("Contact")], "", "")
+  $BillingReport.UserData.Add("CONSULTATION REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate), "PARAM2")
+
+  If sBilled = "Billed" Then
+    res = modDatabase.$syConn.Exec("select fldconsulttime from tblconsult where fldconsultname like &1 and flduserid like &2 and fldbillingmode like &3 and fldstatus=&4 and fldconsulttime>=&5 and fldconsulttime<=&6 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&7 and fldsave=&8) and fldcomp like &9", sDept, xdoc, sBillMode, sStatus, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "General Services", True, sComp)                                                                            ''
+  Else
+    res = modDatabase.$syConn.Exec("select fldconsulttime from tblconsult where fldconsultname like &1 and flduserid like &2 and fldbillingmode like &3 and fldstatus=&4 and fldconsulttime>=&5 and fldconsulttime<=&6 and fldcomp like &7", sDept, xdoc, sBillMode, sStatus, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp)                                                                            ''
+  Endif
+  xdate = New Date[]
+  If res.Available Then
+    For Each res
+
+      If xdate.Count = 0 Then
+        xdate.Add(modDate.StartSqlDate(res["fldconsulttime"]))
+      Else
+        If xdate.Exist(modDate.StartSqlDate(res["fldconsulttime"])) = False Then
+          xdate.Add(modDate.StartSqlDate(res["fldconsulttime"]))
+        Endif
+      Endif
+
+    Next
+  Endif
+  If xdate Then
+    xdate.Sort()
+  Endif
+  datlist = xdate
+
+  For Each xx In datlist
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xx, gb.MediumDate), True)
+    If sBilled = "Billed" Then
+      res1 = modDatabase.$syConn.Exec("select fldid,fldconsulttime,fldconsultname,fldencounterval,flduserid,fldbillingmode from tblconsult where fldconsultname like &1 and flduserid like &2 and fldbillingmode like &3 and fldstatus=&4 and fldconsulttime>=&5 and fldconsulttime<=&6 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&7 and fldsave=&8) and fldcomp like &9", sDept, xdoc, sBillMode, sStatus, modDate.StartSqlDate(xx), modDate.EndSqlDate(xx), "General Services", True, sComp)                                                                            ''
+    Else
+      res1 = modDatabase.$syConn.Exec("select fldid,fldconsulttime,fldconsultname,fldencounterval,flduserid,fldbillingmode from tblconsult where fldconsultname like &1 and flduserid like &2 and fldbillingmode like &3 and fldstatus=&4 and fldconsulttime>=&5 and fldconsulttime<=&6 and fldcomp like &7", sDept, xdoc, sBillMode, sStatus, modDate.StartSqlDate(xx), modDate.EndSqlDate(xx), sComp)                                                                            ''
+    Endif
+    For Each res1
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res1["fldconsulttime"], gb.MediumTime))
+        .Add(res1["fldbillingmode"])
+        .Add(res1["fldconsultname"])
+        If res1["flduserid"] Then
+          .Add(modGeneral.GetUserFullName(res1["flduserid"]))
+        Else
+          .Add("")
+        Endif
+        .Add(res1["fldencounterval"])
+        .Add(modPatient.GetPatientNameByEnc(res1["fldencounterval"], modDatabase.$syConn))
+        .Add(modPatient.GetPatientSex(res1["fldencounterval"], modDatabase.$syConn))
+        .Add(modPatient.GetPatientContactByEnc(res1["fldencounterval"]))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+    With asx
+      .Add("Count")
+      .Add("....")
+      .Add("....")
+      .Add("....")
+      .Add(modReportVar.GetLocaleNumberFormat(res1.Count, 0))
+      .Add("....")
+      .Add("....")
+      .Add("....")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    With asx
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowRegisterConsultantwiseReport(dtfir As Date, dtlast As Date, sDept As String, sBillMode As String, sBilled As String, sComp As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Dim xdate As Date[]
+  Dim datlist As Date[]
+  Dim xx As Date
+  Dim xvalid As Integer
+  Dim xcanx As Integer
+  Dim totvalid As Integer
+  Dim totcan As Integer
+
+  $BillingReport = New CReportHTML([("Date"), ("Consultant"), ("Valid"), ("Cancelled")], "", "")
+  $BillingReport.UserData.Add("CONSULTATION REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate) & " Mode: " & sBillMode & "     Department: " & sDept & "   Billing: " & sBilled, "PARAM2")
+
+  If sBilled = "Billed" Then
+    res1 = modDatabase.$syConn.Exec("select distinct(flduserid) as col from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&5 and fldsave=&6) and fldcomp like &7", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "General Services", True, sComp)
+  Else
+    res1 = modDatabase.$syConn.Exec("select distinct(flduserid) as col from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and fldcomp like &5", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp)
+  Endif
+  For Each res1
+    If res1["col"] Then
+      $BillingReport.AddSection(modGeneral.GetUserFullName(res1["col"]), True)
+
+      totvalid = 0
+      totcan = 0
+      If sBilled = "Billed" Then
+        res = modDatabase.$syConn.Exec("select fldconsulttime from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&6 and fldsave=&7) and fldcomp like &8", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], "General Services", True, sComp)                                                                            ''
+      Else
+        res = modDatabase.$syConn.Exec("select fldconsulttime from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldcomp like &6", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], sComp)                                                                            ''
+      Endif
+      xdate = New Date[]
+      If res.Available Then
+        For Each res
+
+          If xdate.Count = 0 Then
+            xdate.Add(modDate.StartSqlDate(res["fldconsulttime"]))
+          Else
+            If xdate.Exist(modDate.StartSqlDate(res["fldconsulttime"])) = False
+              xdate.Add(modDate.StartSqlDate(res["fldconsulttime"]))
+            Endif
+          Endif
+
+        Next
+      Endif
+      If xdate Then
+        xdate.Sort()
+      Endif
+      datlist = xdate
+
+      For Each xx In datlist
+
+        xvalid = 0
+        xcanx = 0
+        If sBilled = "Billed" Then
+          res2 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus<>&6 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&7 and fldsave=&8) and fldcomp like &9", sDept, sBillMode, modDate.StartSqlDate(xx), modDate.EndSqlDate(xx), res1["col"], "Cancelled", "General Services", True, sComp)
+        Else
+          res2 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus<>&6 and fldcomp like &7", sDept, sBillMode, modDate.StartSqlDate(xx), modDate.EndSqlDate(xx), res1["col"], "Cancelled", sComp)
+        Endif
+        If res2["cnt"] Then
+          xvalid = xvalid + res2["cnt"]
+        Endif
+        If sBilled = "Billed" Then
+          res3 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus=&6 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&7 and fldsave=&8) and fldcomp like &9", sDept, sBillMode, modDate.StartSqlDate(xx), modDate.EndSqlDate(xx), res1["col"], "Cancelled", "General Services", True, sComp)
+        Else
+          res3 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus=&6 and fldcomp like &7", sDept, sBillMode, modDate.StartSqlDate(xx), modDate.EndSqlDate(xx), res1["col"], "Cancelled", sComp)
+        Endif
+        If res3["cnt"] Then
+          xcanx = xcanx + res3["cnt"]
+        Endif
+        totvalid = totvalid + xvalid
+        totcan = totcan + xcanx
+        With asx
+          .Add(modReportVar.GetDateTimeReport(xx, gb.MediumDate))
+          .Add(modGeneral.GetUserFullName(res1["col"]))
+          .Add(modReportVar.GetLocaleNumberFormat(xvalid, 0))
+          .Add(modReportVar.GetLocaleNumberFormat(xcanx, 0))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+
+      With asx
+        .Add("")
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(totvalid, 0))
+        .Add(modReportVar.GetLocaleNumberFormat(totcan, 0))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("****")
+        .Add("****")
+        .Add("****")
+        .Add("****")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowRegisterConsultDeptReport(dtfir As Date, dtlast As Date, sDept As String, sBillMode As String, sBilled As String, sComp As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Dim xvalid As Integer
+  Dim xcanx As Integer
+  Dim totvalid As Integer
+  Dim totcan As Integer
+
+  $BillingReport = New CReportHTML([("Department"), ("Consultant"), ("Valid"), ("Cancelled")], "", "")
+  $BillingReport.UserData.Add("CONSULTATION REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dtfir, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate) & " Mode: " & sBillMode & "     Department: " & sDept & "   Billing: " & sBilled, "PARAM2")
+
+  If sBilled = "Billed" Then
+    res1 = modDatabase.$syConn.Exec("select distinct(flduserid) as col from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&5 and fldsave=&6) and fldcomp like &7", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), "General Services", True, sComp)
+  Else
+    res1 = modDatabase.$syConn.Exec("select distinct(flduserid) as col from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and fldcomp like &5", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), sComp)
+  Endif
+  For Each res1
+    If res1["col"] Then
+      $BillingReport.AddSection(modGeneral.GetUserFullName(res1["col"]), True)
+
+      totvalid = 0
+      totcan = 0
+      If sBilled = "Billed" Then
+        res = modDatabase.$syConn.Exec("select distinct(fldconsultname) as col from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&6 and fldsave=&7) and fldcomp like &8", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], "General Services", True, sComp)                                                                            ''
+      Else
+        res = modDatabase.$syConn.Exec("select distinct(fldconsultname) as col from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldcomp like &6", sDept, sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], sComp)                                                                            ''
+      Endif
+      For Each res
+
+        xvalid = 0
+        xcanx = 0
+        If sBilled = "Billed" Then
+          res2 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus<>&6 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&7 and fldsave=&8) and fldcomp like &9", res["col"], sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], "Cancelled", "General Services", True, sComp)
+        Else
+          res2 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus<>&6 and fldcomp like &7", res["col"], sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], "Cancelled", sComp)
+        Endif
+        If res2["cnt"] Then
+          xvalid = xvalid + res2["cnt"]
+        Endif
+        If sBilled = "Billed" Then
+          res3 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus=&6 and fldencounterval in(select fldencounterval from tblpatbilling where flditemtype=&7 and fldsave=&8) and fldcomp like &9", res["col"], sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], "Cancelled", "General Services", True, sComp)
+        Else
+          res3 = modDatabase.$syConn.Exec("select COUNT(fldid) as cnt from tblconsult where fldconsultname like &1 and fldbillingmode like &2 and fldconsulttime>=&3 and fldconsulttime<=&4 and flduserid=&5 and fldstatus=&6 and fldcomp like &7", res["col"], sBillMode, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), res1["col"], "Cancelled", sComp)
+        Endif
+        If res3["cnt"] Then
+          xcanx = xcanx + res3["cnt"]
+        Endif
+        totvalid = totvalid + xvalid
+        totcan = totcan + xcanx
+        With asx
+          .Add(res["col"])
+          .Add(modGeneral.GetUserFullName(res1["col"]))
+          .Add(modReportVar.GetLocaleNumberFormat(xvalid, 0))
+          .Add(modReportVar.GetLocaleNumberFormat(xcanx, 0))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+
+      With asx
+        .Add("")
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(totvalid, 0))
+        .Add(modReportVar.GetLocaleNumberFormat(totcan, 0))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("****")
+        .Add("****")
+        .Add("****")
+        .Add("****")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''--------------------- VISIT REPORT -----------------
+Private Function GetRegistQTYReport(dt1 As Date, dt2 As Date, xDepart As String, xVisit As String, xGender As String, xAge As String) As Integer
+
+  Dim res As Result
+  Dim agesql As String
+  Dim xval As Integer
+
+  agesql = modMedReports.GetAgeStringByTable("tblencounter", modDatabase.$syConn)
+  If xAge = "CHILD" Then
+    res = modDatabase.$syConn.Exec("select COUNT(fldencounterval) as xcnt from tblencounter where fldregdate>=&1 and fldregdate<=&2 and fldadmitlocat like &3 and fldvisit like &4 and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5 and " & agesql & "<&6)", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), xDepart, xVisit, xGender, 4380)
+  Else If xAge = "ADULT" Then
+    res = modDatabase.$syConn.Exec("select COUNT(fldencounterval) as xcnt from tblencounter where fldregdate>=&1 and fldregdate<=&2 and fldadmitlocat like &3 and fldvisit like &4 and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5 and " & agesql & ">=&6)", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), xDepart, xVisit, xGender, 4380)
+  Else If xAge = "%" Then
+    res = modDatabase.$syConn.Exec("select COUNT(fldencounterval) as xcnt from tblencounter where fldregdate>=&1 and fldregdate<=&2 and fldadmitlocat like &3 and fldvisit like &4 and fldpatientval in(select fldpatientval from tblpatientinfo where fldptsex like &5)", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), xDepart, xVisit, xGender)
+  Endif
+  If res.Available Then
+    If res["xcnt"] Then
+      xval = res["xcnt"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Function ShowRegisteredNewOldAgeReport(dt1 As Date, dt2 As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim i As Integer
+
+  $BillingReport = New CReportHTML([("SNO"), ("DEPARTMENT"), ("NEW<br>ADULT<br>MALE"), ("NEW<br>ADULT<br>FEMALE"), ("NEW<br>CHILD<br>MALE"), ("NEW<br>CHILD<br>FEMALE"), ("NEW<br>TOTAL"), ("OLD<br>ADULT<br>MALE"), ("OLD<br>ADULT<br>FEMALE"), ("OLD<br>CHILD<br>MALE"), ("OLD<br>CHILD<br>FEMALE"), ("OLD<br>TOTAL"), ("TOTAL<br>ADULT"), ("TOTAL<br>CHILD"), ("TOTAL<br>ALL")], "", "")
+  $BillingReport.UserData.Add("DEPARTMENT WISE VISIT REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  i = 1
+  res = modDatabase.$syConn.Exec("select distinct(fldadmitlocat) as fldadmitlocat from tblencounter where fldadmitlocat IS NOT NULL and fldregdate>=&1 and fldregdate<=&2", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+  If res.Available Then
+    For Each res
+      With asx
+        .Add(CStr(i))
+        .Add(res["fldadmitlocat"])
+
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "NEW", "Male", "ADULT"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "NEW", "Female", "ADULT"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "NEW", "Male", "CHILD"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "NEW", "Female", "CHILD"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "NEW", "%", "%"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "OLD", "Male", "ADULT"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "OLD", "Female", "ADULT"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "OLD", "Male", "CHILD"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "OLD", "Female", "CHILD"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "OLD", "%", "%"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "%", "%", "ADULT"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "%", "%", "CHILD"), 0))
+        .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["fldadmitlocat"], "%", "%", "%"), 0))
+
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next
+  Endif
+
+  With asx
+    .Add("")
+    .Add("TOTAL")
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "NEW", "Male", "ADULT"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "NEW", "Female", "ADULT"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "NEW", "Male", "CHILD"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "NEW", "Female", "CHILD"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "NEW", "%", "%"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "OLD", "Male", "ADULT"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "OLD", "Female", "ADULT"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "OLD", "Male", "CHILD"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "OLD", "Female", "CHILD"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "OLD", "%", "%"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "%", "%", "ADULT"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "%", "%", "CHILD"), 0))
+    .Add(modReportVar.GetLocaleNumberFormat(GetRegistQTYReport(modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), "%", "%", "%", "%"), 0))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetDoctorClearConsultReport(sTable As String, sUser As String, sDept As String, Optional sdt As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+  Dim i As Integer
+  Dim usrfld As String
+
+  $BillingReport = New CReportHTML([("SNo"), ("DateTime"), ("EncID"), ("Name"), ("Age/Sex"), ("RatePlan"), ("Diagnosis"), ("Comment")], "", "")
+  $BillingReport.UserData.Add("DEPART: " & sDept & "   CONSULTANT: " & modGeneral.GetUserFullName(sUser), "PARAM1")
+  If sdt Then
+    $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(sdt, gb.MediumDate), "PARAM2")
+  Else
+    $BillingReport.UserData.Add("All Dates", "PARAM2")
+  Endif
+
+  If sTable = "tblopvisit" Then
+    usrfld = "flduserid"
+  Else If sTable = "tblconsult" Then
+    usrfld = "fldorduserid"
+  Endif
+
+  If sdt Then
+    res = modDatabase.$syConn.Exec(Subst("select distinct(fldoutcome) as fldoutcome from &1 where &2", sTable, usrfld) & "=&1 and fldstatus=&2 and fldconsulttime>=&3 and fldconsulttime<=&4 and fldconsultname like &5", sUser, "Done", modDate.StartSqlDate(sdt), modDate.EndSqlDate(sdt), sDept)
+  Else
+    res = modDatabase.$syConn.Exec(Subst("select distinct(fldoutcome) as fldoutcome from &1 where &2", sTable, usrfld) & "=&1 and fldstatus=&2 and fldconsultname like &3", sUser, "Done", sDept)
+  Endif
+  If res.Available Then
+    For Each res
+      $BillingReport.AddChapter(res["fldoutcome"])
+
+      If sdt Then
+        res1 = modDatabase.$syConn.Exec(Subst("select fldencounterval,fldbillingmode,fldconsulttime,fldcomment from &1 where &2", sTable, usrfld) & "=&1 and fldstatus=&2 and fldconsulttime>=&3 and fldconsulttime<=&4 and fldconsultname like &5 and fldoutcome=&6", sUser, "Done", modDate.StartSqlDate(sdt), modDate.EndSqlDate(sdt), sDept, res["fldoutcome"])
+      Else
+        res1 = modDatabase.$syConn.Exec(Subst("select fldencounterval,fldbillingmode,fldconsulttime,fldcomment from &1 where &2", sTable, usrfld) & "=&1 and fldstatus=&2 and fldconsultname like &3 and fldoutcome=&4", sUser, "Done", sDept, res["fldoutcome"])
+      Endif
+      If res1.Available Then
+        i = 1
+        For Each res1
+          With asx
+            .Add(CStr(i))
+            .Add(modReportVar.GetDateTimeReport(res1["fldconsulttime"], gb.GeneralDate))
+            .Add(res1["fldencounterval"])
+            .Add(modPatient.GetPatientNameByEnc(res1["fldencounterval"], modDatabase.$syConn))
+            .Add(modPatient.GetPatientAgeString(res1["fldencounterval"], Now()) & "/" & modPatient.GetPatientSex(res1["fldencounterval"], modDatabase.$syConn))
+            .Add(res1["fldbillingmode"])
+            .Add(modString.TextToHTML(modPatient.PatientDiagnoCurrentList(res1["fldencounterval"]).Join(gb.NewLine)))
+            .Add(res1["fldcomment"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next
+      Endif
+
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End

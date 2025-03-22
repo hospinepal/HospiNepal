@@ -1,0 +1,1430 @@
+' Gambas class file
+
+Private $encid As String
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+Private $billno As String
+Private $encounter As String
+Private $xTitle As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1)
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  cmbsamtype.List = modBasic.$LabSpecimenList
+  modSettings.ShowCheckBox(rbwork, "TestSampling/WorkSheet")
+  modSettings.ShowCheckBox(rbbar, "TestSampling/BarCode")
+  modSettings.ShowCheckBox(chkall, "TestSampling/ShowAll")
+  modHelpVariable.ConnectRemoteDiagnostic()
+  rbinvoice.Value = True
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Activate()
+
+  If Not txtnewbill.Text Then
+    txtnewbill.SetFocus
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["O"] And If Key.Control Then
+    btnwebcam_Click()
+  Else If Key.Code = Key["R"] And If Key.Control Then
+    btnrefresh_Click()
+  Else If Key.Code = Key.F1 Then
+
+  Else If Key.Code = Key.F12 Then
+    btnupdate_Click()
+  Else If Key.Code = Key["I"] And If Key.Control Then
+    btnsampid_Click()
+    txtsamid.SetFocus
+  Else If Key.Code = Key["W"] And If Key.Control Then
+    btnwork_Click()
+  Else If Key.Code = Key["Q"] And If Key.Control Then
+    btnbarcode_Click()
+  Else If Key.Code = Key["F"] And If Key.Control Then
+    txtencid.Text = GetEncid()
+  Else If Key.Code = Key.Esc Then
+    txtnewbill.Text = ""
+  Else If Key.Code = Key["X"] And If Key.Control Then
+    Me.Close()
+  Else If Key.Code = Key["B"] And If Key.Control Then
+    Me.Close
+    Wait
+    modWorkSpace.Add(fmSampRemote)
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub btnrefresh_Click()
+
+  If modDatabase.$labConn.Opened Then
+    If rbadv.Value = True Then
+      FillAdvanceEncounters()
+    Else
+      FillSamplingEncounters()
+    Endif
+  Else
+    Message.Warning("Not connected", ("OK"))
+  Endif
+
+End
+
+''---------------------------- sample grids -------------------------
+Private Sub FillSamplingEncounters()
+
+  Dim sql As String
+
+  If txtnewbill.Text Then
+    sql = "select fldbillno,fldencounterval,fldid,fldbilltype,fldchequeno,fldbankname from tbltempbilldetail where fldhostmac IS NULL and fldbillno like &1"
+    $rData2 = modDatabase.$labConn.Exec(sql, txtnewbill.Text)
+  Else
+    sql = "select fldbillno,fldencounterval,fldid,fldbilltype,fldchequeno,fldbankname from tbltempbilldetail where fldhostmac IS NULL and fldbillno like &1"
+    $rData2 = modDatabase.$labConn.Exec(sql, "TMP" & "%")
+  Endif
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData2, $aMyFields2)
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 1
+    .Columns[4].Width = 1
+    .Columns[5].Width = 1
+    .Columns[1].Text = "Encounter"
+  End With
+
+End
+
+Private Sub FillAdvanceEncounters()
+
+  Dim sql As String
+
+  If txtnewbill.Text Then
+    sql = "select fldextracol,fldencounterval,fldid,fldbilltype,fldid,fldacledger from tblpatbilling where fldextrarow IS NULL and fldextracol like &1 and flditemtype=&2 GROUP BY fldextracol"
+    $rData2 = modDatabase.$labConn.Exec(sql, txtnewbill.Text, "Diagnostic Tests")
+  Else
+    sql = "select fldextracol,fldencounterval,fldid,fldbilltype,fldid,fldacledger from tblpatbilling where fldextrarow IS NULL and fldextracol like &1 and flditemtype=&2 GROUP BY fldextracol"
+    $rData2 = modDatabase.$labConn.Exec(sql, "ARC" & "%", "Diagnostic Tests")
+  Endif
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData2, $aMyFields2)
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 1
+    .Columns[4].Width = 1
+    .Columns[5].Width = 1
+    .Columns[1].Text = "Encounter"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  GridView2.Data.Text = $rData2[$aMyFields2[Column]]
+
+End
+
+Public Sub btnaddin_Click()
+
+  If rbadv.Value = True Then
+    AddAdvanceTests()
+    FillAdvanceEncounters()
+  Else
+    AddSampling()
+    FillSamplingEncounters()
+  Endif
+
+End
+
+Public Sub mnuadd_Click()
+
+  If rbadv.Value = True Then
+    AddAdvanceTests()
+    FillAdvanceEncounters()
+  Else
+    AddSampling()
+    FillSamplingEncounters()
+  Endif
+
+End
+
+Private Sub AddAdvanceTests()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim j As Integer
+  Dim res2 As Result
+
+  Dim hField As ResultField
+  Dim resx As Result
+
+  Dim rspat As Result
+  Dim rsenc As Result
+  Dim rspat1 As Result
+  Dim rsenc1 As Result
+  Dim rspatbill As Result
+  Dim rspatbill1 As Result
+  Dim xledger As String
+  Dim xstate As Integer
+
+  If GridView2.Rows.Selection.Count > 0 Then
+    If GridView2[GridView2.Row, 5].Text Then
+      xledger = GridView2[GridView2.Row, 5].Text
+    Else
+      xledger = ""
+    Endif
+
+    resx = modDatabase.$labConn.Exec("select fldpatientval from tblencounter where fldencounterval=&1", GridView2[GridView2.Row, 1].Text)
+    rspat = modDatabase.$labConn.Exec("select *from tblpatientinfo where fldpatientval=&1", resx["fldpatientval"])
+    rspat1 = modDatabase.$myConn.Create("tblpatientinfo")
+    For Each hField In rspat.Fields
+      rspat1[hField.Name] = rspat[hField.Name]
+    Next
+    Try rspat1.Update
+
+    rsenc = modDatabase.$labConn.Exec("select *from tblencounter where fldencounterval=&1", GridView2[GridView2.Row, 1].Text)
+    xstate = GetPatStatusCode(rsenc["fldadmission"])
+    rsenc1 = modDatabase.$myConn.Create("tblencounter")
+    For Each hField In rsenc.Fields
+      rsenc1[hField.Name] = rsenc[hField.Name]
+    Next
+    Try rsenc1.Update
+    txtencid.Text = GridView2[GridView2.Row, 1].Text
+
+    Inc Application.Busy
+    $encounter = ""
+    $xTitle = ""
+    modDatabase.$myConn.Begin
+    $billno = modBillLock.AdvanceReceiptString("Advance Receipt")
+    If $billno Then
+      rspatbill = modDatabase.$labConn.Edit("tblpatbilling", "fldextracol=&1 and flditemtype=&2 and fldalert=&3", GridView2[GridView2.Row, 0].Text, "Diagnostic Tests", True)
+      For Each rspatbill
+        rspatbill1 = modDatabase.$myConn.Create("tblpatbilling")
+        For Each hField In rspatbill.Fields
+          If hField.Name = "fldid" Then
+          Else If hField.Name = "fldextracol" Then
+            rspatbill1[hField.Name] = $billno
+          Else If hField.Name = "fldextrarow" Then
+            rspatbill1[hField.Name] = GridView2[GridView2.Row, 0].Text
+          Else If hField.Name = "fldprint" Then
+            rspatbill1[hField.Name] = False
+          Else If hField.Name = "fldstatus" Then
+            rspatbill1[hField.Name] = "Done"
+          Else If hField.Name = "fldtarget" Then
+            rspatbill1[hField.Name] = modBasic.$compID
+          Else If hField.Name = "flduserid" Then
+            rspatbill1[hField.Name] = modBasic.$lbluser
+          Else If hField.Name = "fldtime" Then
+            rspatbill1[hField.Name] = Now()
+          Else If hField.Name = "fldcomp" Then
+            rspatbill1[hField.Name] = modBasic.$compID
+          Else
+            rspatbill1[hField.Name] = rspatbill[hField.Name]
+          Endif
+        Next
+        rspatbill1.Update
+        rspatbill["fldalert"] = False
+        rspatbill["fldextrarow"] = modBasic.$compID
+        rspatbill.Update
+      Next
+
+      res2 = modDatabase.$myConn.Exec("select fldid,fldencounterval,flditemname,flditemqty,fldretqty,fldbillno,fldrefer,fldreason from tblpatbilling where fldencounterval=&1 and flditemqty>&2 and fldextracol=&3", GridView2[GridView2.Row, 1].Text, 0, $billno)
+      ' If res2.Available Then
+      For Each res2
+        If res2!flditemqty > res2!fldretqty Then
+          res = modDatabase.$myConn.Exec("select distinct(fldtestid) as fldtestid,fldtesttype,fldactive from tblgrouptest where fldgroupname=&1", res2["flditemname"])
+          If res.Available = True Then
+            For Each res
+              For j = 1 To (res2!flditemqty - res2!fldretqty)
+                modLabSub.InsertLabTestOrder(res2["fldencounterval"], res!fldtestid, res!fldtesttype, res!fldactive, res2["fldid"], modGeneral.GetUserFullNamePrint(res2!fldrefer), res2!fldbillno, res2!fldreason)
+              Next
+            Next
+            res1 = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", res2["fldid"])
+            res1["fldtarget"] = modBasic.$compID
+            res1["fldsample"] = "Sampled"
+            res1["fldpayto"] = btnpayto.Tag
+            res1["fldhostmac"] = modHelpVariable.$MACAddress
+            res1["xyz"] = False
+            res1.Update()
+          Endif
+        Endif
+      Next
+    Endif
+    modDatabase.$myConn.Commit
+    txtinvoice.Text = $billno
+    Dec Application.Busy
+    modBILLFormat.AdvanceReceipt(GridView2[GridView2.Row, 1].Text, $billno, "ADVANCE RECEIPT")
+
+    btnshow_Click()
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  RevertAdvanceData(GridView2[GridView2.Row, 0].Text)
+  $billno = ""
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub RevertAdvanceData(sInvNo As String)
+
+  Dim res As Result
+  Dim rspatbill As Result
+
+  res = modDatabase.$labConn.Exec("select fldid from tblpatbilling where fldextrarow=&1 and flditemtype=&2", sInvNo, "Diagnostic Tests")   ''GridView2[GridView2.Row, 0].Text
+  If res.Available Then
+    For Each res
+      rspatbill = modDatabase.$labConn.Edit("tblpatbilling", "fldid=&1", res["fldid"])
+      rspatbill["fldalert"] = True
+      rspatbill.Update
+    Next
+  Endif
+
+End
+
+Private Sub AddSampling()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim j As Integer
+  Dim res2 As Result
+
+  Dim hField As ResultField
+  Dim resx As Result
+  ' Dim hForm As FmCashLab
+
+  Dim rspat As Result
+  Dim rsenc As Result
+  Dim rspat1 As Result
+  Dim rsenc1 As Result
+  Dim rspatbill As Result
+  Dim rspatbill1 As Result
+  Dim restmp As Result
+
+  Dim xledger As String
+  Dim xrefno As String
+
+  Dim xbool As Boolean
+  Dim idLock As Boolean
+  Dim xstate As Integer
+
+  If GridView2.Rows.Selection.Count > 0 Then
+    If GridView2[GridView2.Row, 5].Text Then
+      xledger = GridView2[GridView2.Row, 5].Text
+    Else
+      xledger = ""
+    Endif
+    If GridView2[GridView2.Row, 4].Text Then
+      xrefno = GridView2[GridView2.Row, 4].Text
+    Else
+      xrefno = ""
+    Endif
+
+    resx = modDatabase.$labConn.Exec("select fldpatientval from tblencounter where fldencounterval=&1", GridView2[GridView2.Row, 1].Text)
+    rspat = modDatabase.$labConn.Exec("select *from tblpatientinfo where fldpatientval=&1", resx["fldpatientval"])
+    rspat1 = modDatabase.$myConn.Create("tblpatientinfo")
+    For Each hField In rspat.Fields
+      rspat1[hField.Name] = rspat[hField.Name]
+    Next
+    Try rspat1.Update
+
+    rsenc = modDatabase.$labConn.Exec("select *from tblencounter where fldencounterval=&1", GridView2[GridView2.Row, 1].Text)
+    xstate = GetPatStatusCode(rsenc["fldadmission"])
+    rsenc1 = modDatabase.$myConn.Create("tblencounter")
+    For Each hField In rsenc.Fields
+      rsenc1[hField.Name] = rsenc[hField.Name]
+    Next
+    Try rsenc1.Update
+    txtencid.Text = GridView2[GridView2.Row, 1].Text
+
+    Inc Application.Busy
+    $billno = ""
+    $encounter = ""
+    $xTitle = ""
+    modDatabase.$myConn.Begin
+    idLock = modBillLock.LockTableForID("Invoice")
+    If idLock = True Then
+      ''insert data from remote
+      rspatbill = modDatabase.$labConn.Edit("tblpatbilling", "fldbillno=&1 and fldalert=&2", GridView2[GridView2.Row, 0].Text, True)
+      For Each rspatbill
+        rspatbill1 = modDatabase.$myConn.Create("tblpatbilling")
+        For Each hField In rspatbill.Fields
+          If hField.Name = "fldid" Then
+          Else If hField.Name = "fldextracol" Then
+            rspatbill1[hField.Name] = GridView2[GridView2.Row, 0].Text
+          Else If hField.Name = "fldprint" Then
+            rspatbill1[hField.Name] = False
+          Else If hField.Name = "fldstatus" Then
+            rspatbill1[hField.Name] = "Done"
+          Else If hField.Name = "fldtarget" Then
+            rspatbill1[hField.Name] = modBasic.$compID
+          Else If hField.Name = "flduserid" Then
+            rspatbill1[hField.Name] = modBasic.$lbluser
+          Else If hField.Name = "fldtime" Then
+            rspatbill1[hField.Name] = Now()
+          Else If hField.Name = "fldcomp" Then
+            rspatbill1[hField.Name] = modBasic.$compID
+          Else
+            rspatbill1[hField.Name] = rspatbill[hField.Name]
+          Endif
+        Next
+        rspatbill1.Update
+        rspatbill["fldalert"] = False
+        rspatbill.Update
+      Next
+
+      ' hForm = New FmCashLab(GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 3].Text, xledger, xrefno, GridView2[GridView2.Row, 0].Text)
+      ' hForm.ShowModal
+      xbool = SaveBillingENtry(GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 3].Text, xrefno, xledger, GridView2[GridView2.Row, 0].Text, xstate)
+      If xbool = True Then
+
+        res2 = modDatabase.$myConn.Exec("select fldid,fldencounterval,flditemname,flditemqty,fldretqty,fldbillno,fldrefer,fldreason from tblpatbilling where fldencounterval=&1 and flditemqty>&2 and fldextracol=&3", GridView2[GridView2.Row, 1].Text, 0, GridView2[GridView2.Row, 0].Text)
+        ' If res2.Available Then
+        For Each res2
+          If res2!flditemqty > res2!fldretqty Then
+            res = modDatabase.$myConn.Exec("select distinct(fldtestid) as fldtestid,fldtesttype,fldactive from tblgrouptest where fldgroupname=&1", res2["flditemname"])
+            If res.Available = True Then
+              For Each res
+                For j = 1 To (res2!flditemqty - res2!fldretqty)
+                  modLabSub.InsertLabTestOrder(res2["fldencounterval"], res!fldtestid, res!fldtesttype, res!fldactive, res2["fldid"], modGeneral.GetUserFullNamePrint(res2!fldrefer), res2!fldbillno, res2!fldreason)
+                Next
+              Next
+              res1 = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", res2["fldid"])
+              res1["fldtarget"] = modBasic.$compID
+              res1["fldsample"] = "Sampled"
+              res1["fldpayto"] = btnpayto.Tag
+              res1["fldhostmac"] = modHelpVariable.$MACAddress
+              res1["xyz"] = False
+              res1.Update()
+            Endif
+          Endif
+        Next
+        restmp = modDatabase.$labConn.Edit("tbltempbilldetail", "fldbillno=&1", GridView2[GridView2.Row, 0].Text)
+        restmp["fldhostmac"] = modBasic.$compID  'modHelpVariable.$MACAddress
+        restmp.Update
+        ' Endif
+
+      Endif
+
+      modBillLock.ReleaseLockTable("Invoice")
+    Endif
+    modDatabase.$myConn.Commit
+    txtinvoice.Text = $billno
+    Dec Application.Busy
+    GetInvoicePrint()
+
+    btnshow_Click()
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Invoice")
+  Endif
+  RevertSourceData(GridView2[GridView2.Row, 0].Text)
+  $billno = ""
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub RevertSourceData(sInvNo As String)
+
+  Dim res As Result
+  Dim rspatbill As Result
+  Dim restmp As Result
+
+  res = modDatabase.$labConn.Exec("select fldid from tblpatbilling where fldbillno=&1", sInvNo)   ''GridView2[GridView2.Row, 0].Text
+  If res.Available Then
+    For Each res
+      rspatbill = modDatabase.$labConn.Edit("tblpatbilling", "fldid=&1", res["fldid"])
+      rspatbill["fldalert"] = True
+      rspatbill.Update
+    Next
+  Endif
+
+  restmp = modDatabase.$labConn.Edit("tbltempbilldetail", "fldbillno=&1", sInvNo)
+  restmp["fldhostmac"] = ""
+  restmp.Update
+
+End
+
+Private Function GetPatStatusCode(xState As String) As Integer
+
+  Dim xcode As Integer
+
+  Select xState
+    Case "Discharged", "LAMA", "Death", "Refer", "Absconder"
+      xcode = 3
+    Case "Admitted"
+      xcode = 2
+    Case Else
+      xcode = 1
+  End Select
+
+  Return xcode
+
+End
+
+Public Sub btnpayto_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable User"), modBasic.$PayUserList)
+  If xMedUser And If xMedUser.Count Then
+    btnpayto.Tag = xMedUser[0]
+    btnpayto.Text = xMedUser[1]
+  Else
+    btnpayto.Tag = ""
+    btnpayto.Text = ""
+  Endif
+
+End
+
+''------------------------------------------ patient profile -------------------------------------
+Public Sub btnshow_Click()
+
+  If Not txtencid.Text Then Return
+  If modBasic.$EncIdPrefix And If txtencid.Text = modBasic.$EncIdPrefix Then
+    txtencid.SetFocus
+    Return
+  Endif
+
+  If txtencid.Text Then
+    BasicInfoPatient()
+  Endif
+
+End
+
+Private Sub BasicInfoPatient()
+
+  Dim xstatus As String
+
+  $encid = Trim(txtencid.Text)
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientAgeString($encid, Now()) & "/" & modPatient.GetPatientSex($encid)
+  txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+
+  xstatus = modPatient.CurrentAdmissionStatus($encid)
+  lsticdisease.List = modPathoSub.GetProvisionalDiagnosisList(Trim(txtencid.Text))
+  modAppSupport.RecordPatientActivity("Patient Data", Me.Name, "EncounterID", $encid)
+
+  ShowSampled($encid)
+  btnupdate.Enabled = False
+  modImage.ShowPhotoSplash("Patient", modPatient.GetPatientNoByEnc($encid))
+  cmbsamtype.Text = ""
+  txtsamid.Text = ""
+
+End
+
+Public Sub btnwebcam_Click()
+
+  txtencid.Text = modDevice.ChooseBarCodeSource()
+  txtencid.SetFocus
+  txtencid.Pos = Len(txtencid.Text)
+
+End
+
+Public Sub btndemog_Click()
+
+  Dim hForm As FmPatdemograph
+
+  If txtencid.Text Then
+    hForm = New FmPatdemograph(Trim(txtencid.Text), "Clinical")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub cmbsamtype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbsamtype)
+  If modBasic.$LabLockSpecimen = "No" Then
+  Else
+    modFillContainer.RestrictComboToContent(cmbsamtype)
+  Endif
+
+End
+
+'''------------------------------------------ added tests -------------------------------------------
+Private Sub ShowSampled(encid As String)
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+  Dim Row As Integer
+
+  If txtinvoice.Text Then
+    If rbadv.Value = True Then
+      If chkall.Value = True Then
+        sql = "select fldid,fldchk,fldgroupid,fldtestid,fldsampletype,fldsampleid,fldtime_sample,fldtest_type,fldrefername,fldcomment,fldencounterval,fldtime_start from tblpatlabtest where (fldstatus=&1 or fldstatus=&2) and fldencounterval=&3 and fldcomp_sample=&4 and fldgroupid in(select fldid from tblpatbilling where fldextracol=&5)"
+        res = modDatabase.$myConn.Exec(sql, "Ordered", "Sampled", encid, modBasic.$compID, Trim(txtinvoice.Text))
+      Else
+        sql = "select fldid,fldchk,fldgroupid,fldtestid,fldsampletype,fldsampleid,fldtime_sample,fldtest_type,fldrefername,fldcomment,fldencounterval,fldtime_start from tblpatlabtest where fldstatus=&1 and fldencounterval=&2 and fldcomp_sample=&3 and fldgroupid in(select fldid from tblpatbilling where fldextracol=&4)"
+        res = modDatabase.$myConn.Exec(sql, "Ordered", encid, modBasic.$compID, Trim(txtinvoice.Text))
+      Endif
+    Else
+      If chkall.Value = True Then
+        sql = "select fldid,fldchk,fldgroupid,fldtestid,fldsampletype,fldsampleid,fldtime_sample,fldtest_type,fldrefername,fldcomment,fldencounterval,fldtime_start from tblpatlabtest where (fldstatus=&1 or fldstatus=&2) and fldencounterval=&3 and fldcomp_sample=&4 and fldgroupid in(select fldid from tblpatbilling where fldbillno=&5)"
+        res = modDatabase.$myConn.Exec(sql, "Ordered", "Sampled", encid, modBasic.$compID, Trim(txtinvoice.Text))
+      Else
+        sql = "select fldid,fldchk,fldgroupid,fldtestid,fldsampletype,fldsampleid,fldtime_sample,fldtest_type,fldrefername,fldcomment,fldencounterval,fldtime_start from tblpatlabtest where fldstatus=&1 and fldencounterval=&2 and fldcomp_sample=&3 and fldgroupid in(select fldid from tblpatbilling where fldbillno=&4)"
+        res = modDatabase.$myConn.Exec(sql, "Ordered", encid, modBasic.$compID, Trim(txtinvoice.Text))
+      Endif
+    Endif
+
+  Else
+    If chkall.Value = True Then
+      sql = "select fldid,fldchk,fldgroupid,fldtestid,fldsampletype,fldsampleid,fldtime_sample,fldtest_type,fldrefername,fldcomment,fldencounterval,fldtime_start from tblpatlabtest where (fldstatus=&1 or fldstatus=&2) and fldencounterval=&3 and fldcomp_sample=&4"
+      res = modDatabase.$myConn.Exec(sql, "Ordered", "Sampled", encid, modBasic.$compID)
+    Else
+      sql = "select fldid,fldchk,fldgroupid,fldtestid,fldsampletype,fldsampleid,fldtime_sample,fldtest_type,fldrefername,fldcomment,fldencounterval,fldtime_start from tblpatlabtest where fldstatus=&1 and fldencounterval=&2 and fldcomp_sample=&3"
+      res = modDatabase.$myConn.Exec(sql, "Ordered", encid, modBasic.$compID)
+    Endif
+  Endif
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 1
+    .Columns[8].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 1
+    .Columns[10].Width = 1
+    .Columns[11].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "Account"
+    .Columns[3].Text = "Test Name"
+    .Columns[4].Text = "Specimen"
+    .Columns[5].Text = "SampleID"
+    .Columns[6].Text = "SampleDate"
+    .Columns[8].Text = "Referral"
+    .Columns[11].Text = "LoadDate"
+  End With
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Picture = Picture["icons/unchecked.png"]
+        GridView1[res.Index, Column].Text = ""
+      Else If Column = 2 Then
+        GridView1[res.Index, Column].Text = modNonMedical.GetBillingItemFromID(res[fld.Name])
+      Else If Column = 6 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldtime_sample"], gb.GeneralDate)
+      Else If Column = 11 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldtime_start"], gb.GeneralDate)
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      GridView1.Rows[res.Index].Height = Max(GridView1.Rows[res.Index].Height, GridView1[res.Index, Column].Font.RichTextHeight(GridView1[res.Index, Column].Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+      GridView1[res.Index, Column].WordWrap = True
+
+      Column = Column + 1
+    Next
+  Next
+  For Row = 0 To GridView1.Rows.Count - 1
+    If GridView1[Row, 11].Text Then
+      GridView1[Row, 6].Picture = Picture["icons/coll4.png"]
+    Endif
+  Next
+  GridView1.Row = 0
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim xsample As String
+  Dim xx As String
+  Dim xRow As Integer
+
+  If GridView1.Column = 4 Then
+    If modBasic.$LabLockSpecimen = "No" Then
+      xx = GetTextArea(("Test Specimen"), GridView1[GridView1.Row, 4].Text)
+    Else
+      xx = InputCombo(("Test Specimen"), GridView1[GridView1.Row, 3].Text, modBasic.$LabSpecimenList, GridView1[GridView1.Row, 4].Text, True)
+    Endif
+    If Trim(xx) Then
+      xRow = GridView1.Row
+      modLabSub.UpdateSpecimenTest(GridView1[GridView1.Row, 0].Text, Trim(xx))
+      ShowSampled(Trim(txtencid.Text))
+      GridView1.Row = xRow
+    Endif
+
+  Else
+    xsample = GridView1[GridView1.Row, 4].Text
+    If Not xsample Then
+      xsample = modFixLab.GetTestSpecimen(GridView1[GridView1.Row, 3].Text)
+    Endif
+
+    If GridView1[GridView1.Row, 5].Text Then
+      txtsamid.Text = GridView1[GridView1.Row, 5].Text
+    Endif
+
+    cmbsamtype.Text = xsample
+    modGridView.CheckUncheckGridNoDB(GridView1, 1)
+    btnupdate.Enabled = True
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub btnsampid_Click()
+
+  If Not txtsamid.Text Then
+    If cmbsamtype.Text And If GridView1.Rows.Count > 0 Then
+      txtsamid.Text = modLabSub.GetAutoIncreasingNo()
+    Endif
+  Endif
+
+End
+
+Public Sub btnclrsamid_Click()
+
+  txtsamid.Text = ""
+
+End
+
+Public Sub btnaddspecimen_Click()
+
+  Dim hForm As FmAddVariableGrid
+
+  hForm = New FmAddVariableGrid("fldsampletype", "tblsampletype")
+  hForm.ShowModal
+  modBasic.LoadLabRadioList()
+  cmbsamtype.List = modBasic.$LabSpecimenList
+
+End
+
+Public Sub btnclrspec_Click()
+
+  cmbsamtype.Text = ""
+
+End
+
+Public Sub btnupdate_Click()
+
+  Dim Row As Integer
+  Dim res As Result
+  Dim xxx As String[]
+  Dim xallow As Boolean
+  Dim xRow As Integer
+  Dim xorder As Integer
+
+  If modBasic.$LabAutoSampleID = "Yes" Then
+    If GridView1.Rows.Count > 0 Then
+      If Not txtsamid.Text Then
+        txtsamid.Text = modLabSub.GetAutoIncreasingNo()
+      Endif
+    Endif
+  Endif
+
+  If txtsamid.Text Then
+    xallow = modLabTest.AllowSampleID($encid, Trim(txtsamid.Text))
+    If xallow = True Then
+      xRow = GridView1.Row
+
+      Inc Application.Busy
+      For Row = 0 To GridView1.Rows.Count - 1
+        If GridView1[Row, 1].Picture = Picture["icons/checked.png"] Then
+
+          xorder = modFixLab.GetLabTestOrder(GridView1[Row, 3].Text)
+          If modBasic.$LabAutoSpecimen = "Yes" Then
+            modLabSub.UpdateLabTestSample(GridView1[Row, 0].Text, Trim(txtsamid.Text), modFixLab.GetTestSpecimen(GridView1[Row, 3].Text), "", "", "", "", xorder)
+          Else
+            If cmbsamtype.Text Then
+              If dtcurr.Value Then
+                modLabSub.UpdateLabTestSample(GridView1[Row, 0].Text, Trim(txtsamid.Text), Trim(cmbsamtype.Text), "", "", "", "", xorder, dtcurr.Value)
+              Else
+                modLabSub.UpdateLabTestSample(GridView1[Row, 0].Text, Trim(txtsamid.Text), Trim(cmbsamtype.Text), "", "", "", "", xorder)
+              Endif
+            Endif
+          Endif
+
+          res = modDatabase.$myConn.Exec("select fldsubtest from tblpatlabsubtest where fldtestid=&1", GridView1[Row, 0].Text)
+          If res.Available = False Then
+            If modFixLab.GetLabTestOptionType(GridView1[Row, 3].Text) = "Fixed Components" Then
+              xxx = modFixLab.GetSubTestArray(GridView1[Row, 3].Text)     'modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldsubtest) as col from tbltestquali where fldtestid=&1", GridView1[Row, 3].Text))
+              If xxx.Count Then
+                modLabSub.InsertLabSubTest(GridView1[Row, 10].Text, GridView1[Row, 0].Text, GridView1[Row, 3].Text, xxx)
+              Endif
+            Endif
+          Endif
+
+        Endif
+      Next
+      Dec Application.Busy
+
+      If rbbar.Value = True Then
+        btnbarcode_Click()
+      Endif
+      If rbwork.Value = True Then
+        btnwork_Click()
+      Endif
+      ShowSampled(Trim(txtencid.Text))
+      If chkall.Value = True Then
+        GridView1.Row = xRow
+      Endif
+      Balloon.Info(("Information updated"), btnupdate)
+      Balloon.Delay = modBasic.$BalloonDelay
+
+    Else
+      Message.Warning(("Same Sample ID for different patients not possible"), ("OK"))
+    Endif
+  Endif
+
+End
+
+Public Sub mnuselall_Click()
+
+  Dim i As Integer
+  Dim xsample As String
+
+  If modBasic.$LabAutoSpecimen = "Yes" Then
+    For i = 0 To GridView1.Rows.Count - 1
+      If Not GridView1[i, 4].Text Then
+        If Not xsample Then
+          xsample = modFixLab.GetTestSpecimen(GridView1[i, 3].Text)
+          If xsample Then
+            GridView1[i, 1].Picture = Picture["icons/checked.png"]
+            cmbsamtype.Text = xsample
+          Endif
+        Endif
+        If xsample Then
+          If modFixLab.GetTestSpecimen(GridView1[i, 3].Text) = xsample Then
+            GridView1[i, 1].Picture = Picture["icons/checked.png"]
+          Endif
+        Endif
+      Endif
+    Next
+
+  Else
+    For i = 0 To GridView1.Rows.Count - 1
+      If Not GridView1[i, 5].Text Then
+        GridView1[i, 1].Picture = Picture["icons/checked.png"]
+      Endif
+    Next
+  Endif
+
+  btnupdate.Enabled = True
+  ' cmbsamtype.SetFocus
+
+End
+
+Public Sub mnudesel_Click()
+
+  Dim i As Integer
+
+  For i = 0 To GridView1.Rows.Count - 1
+    GridView1[i, 1].Picture = Picture["icons/unchecked.png"]
+  Next
+  btnupdate.Enabled = False
+
+End
+
+' Private Sub ClearSpecimenVal()
+'
+'   cmbsamtype.Text = ""
+'   txtsamid.Text = ""
+'
+' End
+
+Public Sub btnwork_Click()
+
+  Dim categ As String[]
+  Dim newCateg As String[]
+  Dim xx As String
+  Dim i As Integer
+  Dim xval As String
+
+  If GridView1.Rows.Count Then
+    If modBasic.$LabWorkSheet = "Categorical" Then
+
+      categ = New String[]
+      For i = 0 To GridView1.Rows.Count - 1
+        If GridView1[i, 1].Picture = Picture["icons/checked.png"] Then
+          xval = modFixLab.GetLabTestCategory(GridView1[i, 3].Text)
+
+          If categ.Count = 0 Then
+            categ.Add(xval)
+          Else
+            If categ.Exist(xval) = False Then
+              categ.Add(xval)
+            Endif
+          Endif
+
+        Endif
+      Next
+
+      newCateg = categ
+      For Each xx In newCateg
+        SampleWorkSheet(xx)
+      Next
+
+    Else
+      SampleWorkSheet("%")
+    Endif
+
+  Endif
+
+End
+
+Private Sub SampleWorkSheet(sCateg As String)
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim rs As Result
+  Dim res As Result
+  Dim xval As String
+
+  Dim $referName As String[]
+  Dim $condiName As String[]
+  Dim $sampleID As String[]
+  Dim $sampleType As String[]
+  Dim $sampleDate As String[]
+  Dim $invoiceNo As String[]
+
+  $BillingReport = New CReportHTML([("Test Name"), ("Observations")], "LaboratoryReport", Trim(txtencid.Text))
+  $BillingReport.UserData.Add("Department: ", "Report")
+  $BillingReport.UserData.Add(sCateg, "PARAM1")
+  $BillingReport.UserData.Add(txtencid.Text, "SearchVariable")
+  $BillingReport.UserData.Add(txtsamid.Text, "SampleID")
+  $BillingReport.UserData.Add(cmbsamtype.Text, "Specimen")
+
+  $referName = New String[]
+  $condiName = New String[]
+  $sampleID = New String[]
+  $sampleType = New String[]
+  $sampleDate = New String[]
+  $invoiceNo = New String[]
+
+  For i = 0 To GridView1.Rows.Count - 1
+    If modBasic.$LabWorkSheet = "Categorical" Then
+      If GridView1[i, 1].Picture = Picture["icons/checked.png"] And If modFixLab.GetLabTestCategory(GridView1[i, 3].Text) = sCateg Then
+        res = modDatabase.$myConn.Exec("select fldtestid,fldmethod,fldsampleid,fldsampletype,fldtest_type,fldrefername,fldcondition,fldtime_sample,fldbillno from tblpatlabtest where fldid=&1", GridView1[i, 0].Text)
+
+        $referName.Add(res["fldrefername"])
+        $condiName.Add(res["fldcondition"])
+        $sampleID.Add(res["fldsampleid"])
+        $sampleType.Add(res["fldsampletype"])
+        $sampleDate.Add(modReportVar.GetDateTimeReport(res["fldtime_sample"], gb.MediumDate))
+        $invoiceNo.Add(res["fldbillno"])
+
+        xval = "<b>" & res!fldtestid & "</b>" & "<br>" & "[" & res!fldmethod & "]"
+        If GridView1[i, 7].Text = "Qualitative" Then
+          rs = modDatabase.$myConn.Exec("select fldsubtest,fldreport,fldid from tblpatlabsubtest where fldtestid=&1", GridView1[i, 0].Text)
+          For Each rs
+            xval = xval & "<br>" & modString.HTMLBlankSpace(4) & rs!fldsubtest
+          Next
+        Endif
+
+        With asx
+          .Add(xval)
+          .Add("")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+
+      Endif
+
+    Else
+      If GridView1[i, 1].Picture = Picture["icons/checked.png"] Then
+        res = modDatabase.$myConn.Exec("select fldtestid,fldmethod,fldsampleid,fldsampletype,fldtest_type,fldrefername,fldcondition,fldtime_sample,fldbillno from tblpatlabtest where fldid=&1", GridView1[i, 0].Text)
+
+        $referName.Add(res["fldrefername"])
+        $condiName.Add(res["fldcondition"])
+        $sampleID.Add(res["fldsampleid"])
+        $sampleType.Add(res["fldsampletype"])
+        $sampleDate.Add(modReportVar.GetDateTimeReport(res["fldtime_sample"], gb.MediumDate))
+        $invoiceNo.Add(res["fldbillno"])
+
+        xval = "<b>" & res!fldtestid & "</b>" & "<br>" & "[" & res!fldmethod & "]"
+        If GridView1[i, 7].Text = "Qualitative" Then
+          rs = modDatabase.$myConn.Exec("select fldsubtest,fldreport,fldid from tblpatlabsubtest where fldtestid=&1", GridView1[i, 0].Text)
+          For Each rs
+            xval = xval & "<br>" & modString.HTMLBlankSpace(4) & rs!fldsubtest
+          Next
+        Endif
+
+        With asx
+          .Add(xval)
+          .Add("")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+
+      Endif
+
+    Endif ''categorical or continuous
+  Next
+
+  ''header
+  $BillingReport.UserData.Add("", "EXTRA1")
+  $BillingReport.UserData.Add("", "EXTRA2")
+  $BillingReport.UserData.Add("", "EXTRA3")
+  $BillingReport.UserData.Add("", "EXTRA4")
+  $BillingReport.UserData.Add("", "EXTRA5")
+  $BillingReport.UserData.Add("", "EXTRA6")
+  $BillingReport.UserData.Add("", "EXTRA7")
+  $BillingReport.UserData.Add("", "EXTRA8")
+
+  If modSettings.ShowSettingFromFIle("Laboratory/Show_ExtraLabel") And If modSettings.ShowSettingFromFIle("Laboratory/Show_ExtraLabel") = "Yes" Then
+    If modLabSub.GetLabExtraColumnName("SampleDate") Then
+      $BillingReport.UserData.Add("Sampling Date: " & modString.BinaryDistinctStringArray($sampleDate).Join(","), modLabSub.GetLabExtraColumnName("SampleDate"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("SampleID") Then
+      $BillingReport.UserData.Add("Sample No: " & modString.BinaryDistinctStringArray($sampleID).Join(","), modLabSub.GetLabExtraColumnName("SampleID"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("Specimen") Then
+      $BillingReport.UserData.Add("Specimen: " & modString.BinaryDistinctStringArray($sampleType).Join(","), modLabSub.GetLabExtraColumnName("Specimen"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("ReferBy") Then
+      $BillingReport.UserData.Add("Reffered By: " & modString.BinaryDistinctStringArray($referName).Join(","), modLabSub.GetLabExtraColumnName("ReferBy"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("Condition") Then
+      $BillingReport.UserData.Add("Clinical Note: " & modString.BinaryDistinctStringArray($condiName).Join(","), modLabSub.GetLabExtraColumnName("Condition"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("InvoiceNo") Then
+      $BillingReport.UserData.Add("Invoice No: " & modString.BinaryDistinctStringArray($invoiceNo).Join(","), modLabSub.GetLabExtraColumnName("InvoiceNo"))
+    Endif
+
+  Else
+    If modLabSub.GetLabExtraColumnName("SampleDate") Then
+      $BillingReport.UserData.Add(modString.BinaryDistinctStringArray($sampleDate).Join(","), modLabSub.GetLabExtraColumnName("SampleDate"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("Specimen") Then
+      $BillingReport.UserData.Add(modString.BinaryDistinctStringArray($sampleType).Join(","), modLabSub.GetLabExtraColumnName("Specimen"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("SampleID") Then
+      $BillingReport.UserData.Add(modString.BinaryDistinctStringArray($sampleID).Join(","), modLabSub.GetLabExtraColumnName("SampleID"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("ReferBy") Then
+      $BillingReport.UserData.Add(modString.BinaryDistinctStringArray($referName).Join(","), modLabSub.GetLabExtraColumnName("ReferBy"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("Condition") Then
+      $BillingReport.UserData.Add(modString.BinaryDistinctStringArray($condiName).Join(","), modLabSub.GetLabExtraColumnName("Condition"))
+    Endif
+    If modLabSub.GetLabExtraColumnName("InvoiceNo") Then
+      $BillingReport.UserData.Add(modString.BinaryDistinctStringArray($invoiceNo).Join(","), modLabSub.GetLabExtraColumnName("InvoiceNo"))
+    Endif
+
+  Endif
+  If modLabSub.GetLabExtraColumnName("SampleIDBarCode") Then
+    $BillingReport.UserData.Add(modDevAll.GetBarCodeWithOptions(modString.BinaryDistinctStringArray($sampleID)[0]), modLabSub.GetLabExtraColumnName("SampleIDBarCode"))
+  Endif
+  If modLabSub.GetLabExtraColumnName("SampleIDQRCode") Then
+    $BillingReport.UserData.Add(modDevAll.MakeQRCode(modString.BinaryDistinctStringArray($sampleID)[0]), modLabSub.GetLabExtraColumnName("SampleIDQRCode"))
+  Endif
+  If modLabSub.GetLabExtraColumnName("InvoiceBarCode") Then
+    $BillingReport.UserData.Add(modDevAll.GetBarCodeWithOptions(modString.BinaryDistinctStringArray($invoiceNo)[0]), modLabSub.GetLabExtraColumnName("InvoiceBarCode"))
+  Endif
+  If modLabSub.GetLabExtraColumnName("InvoiceQRCode") Then
+    $BillingReport.UserData.Add(modDevAll.MakeQRCode(modString.BinaryDistinctStringArray($invoiceNo)[0]), modLabSub.GetLabExtraColumnName("InvoiceQRCode"))
+  Endif
+
+  modControlSub.OpenHTMLPreview(Trim(txtencid.Text), $BillingReport.NewHTMLPath(), "ReportSize")
+
+End
+
+Public Sub rbwork_Click()
+
+  modSettings.EnterCheckSetting(rbwork, "TestSampling/WorkSheet")
+
+End
+
+Public Sub rbbar_Click()
+
+  modSettings.EnterCheckSetting(rbbar, "TestSampling/BarCode")
+
+End
+
+Public Sub btnbarcode_Click()
+
+  Dim i As Integer
+  Dim xval As String[]
+  Dim xsect As String
+
+  Dim xx As String
+
+  If txtsamid.Text And If txtencid.Text Then
+    If GridView1.Rows.Count Then
+
+      xval = New String[]
+      For i = 0 To GridView1.Rows.Count - 1
+        If GridView1[i, 1].Picture = Picture["icons/checked.png"] Then
+
+          If modBasic.$LabBarPrint = "Section" Then
+            xsect = modFixLab.GetLabTestCategory(GridView1[i, 3].Text)
+          Else If modBasic.$LabBarPrint = "TestName" Then
+            xsect = GridView1[i, 3].Text
+          Else If modBasic.$LabBarPrint = "BillItem" Or If modBasic.$LabBarPrint = "Section/BillItem" Then
+            xsect = GridView1[i, 2].Text
+          Else
+            xsect = ""
+          Endif
+
+          If xsect Then
+            If xval.Count = 0 Then
+              xval.Add(xsect)
+            Else
+              If xval.Exist(xsect) = False Then
+                xval.Add(xsect)
+              Endif
+            Endif
+          Endif
+
+        Endif
+      Next
+
+      If xval.Count Then
+        If modBasic.$LabBarPrint = "Section/BillItem" Then
+          modLabSub.PrintBarLabDeptSampling(Trim(txtencid.Text), Trim(txtsamid.Text), xval, txtinvoice.Text)
+        Else
+          For Each xx In xval
+            modLabSub.PrintBarCodeSampling(Trim(txtencid.Text), Trim(txtsamid.Text), cmbsamtype.Text, xx, txtinvoice.Text)
+          Next
+        Endif
+      Else
+        modLabSub.PrintBarCodeSampling(Trim(txtencid.Text), Trim(txtsamid.Text), cmbsamtype.Text, "", txtinvoice.Text)
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnpayto_Change()
+
+  If btnpayto.Text = "" Then
+    btnpayto.Tag = ""
+  Endif
+
+End
+
+Public Sub MessageView1_Open()
+
+  If modBasic.$InfoMusic Then
+    Music.Load(modBasic.$InfoMusic)
+    If modBasic.$InfoMusicVol Then
+      Music.Volume = modBasic.$InfoMusicVol
+    Endif
+    Music.Play()
+  Endif
+
+End
+
+Public Sub MessageView1_Close()
+
+  If modBasic.$InfoMusic Then
+    Music.Stop()
+  Endif
+
+End
+
+Public Sub chkall_Click()
+
+  modSettings.EnterCheckSetting(chkall, "TestSampling/ShowAll")
+
+End
+
+Public Sub txtsamid_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+Public Sub txtnewbill_Click()
+
+  txtnewbill.Text = ""
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If Not txtencid.Text Then
+      txtencid.Text = PatSearch("Encounter")
+      txtencid.SetFocus
+    Else
+      If modBasic.$AutoEncSuffix = "Yes" Then
+        txtencid.Text = txtencid.Text & modBasic.$HospCode
+      Endif
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub btncomment_Click()
+
+  Dim xx As String
+  Dim res As Result
+  Dim xRow As Integer
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xx = GetTextArea(GridView1[GridView1.Row, 3].Text, GridView1[GridView1.Row, 9].Text)
+    If xx Then
+      xRow = GridView1.Row
+      res = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldcomment"] = xx
+      res["xyz"] = False
+      res.Update
+      ShowSampled(Trim(txtencid.Text))
+      GridView1.Row = xRow
+    Endif
+  Endif
+
+End
+
+Public Sub btnrefer_Click()
+
+  Dim res As Result
+  Dim xx As String
+  Dim xRow As Integer
+  Dim reflist As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    reflist = modSettings.ShowSettingFromFIle("Laboratory/ReferralList")
+    If reflist Then
+      If Exist(reflist) Then
+        xx = InputCombo(("Enter Referral Name"), ("Referral"), modString.GetStringArrayFromFile(reflist), GridView1[GridView1.Row, 8].Text, False)
+      Endif
+    Else
+      xx = InputBox(("Enter Referral Name"), ("Referral"), GridView1[GridView1.Row, 8].Text)
+    Endif
+
+    If xx Then
+      xRow = GridView1.Row
+      res = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldrefername"] = xx
+      res["xyz"] = False
+      res.Update
+      ShowSampled(Trim(txtencid.Text))
+      GridView1.Row = xRow
+    Endif
+  Endif
+
+End
+
+Public Sub btnprocedure_Click()
+
+  Dim res As Result
+  Dim Row As Integer
+  Dim xRow As Integer
+
+  xRow = GridView1.Row
+  For Row = 0 To GridView1.Rows.Count - 1
+    If GridView1[Row, 1].Picture = Picture["icons/checked.png"] Then
+      res = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1 and fldstatus=&2 and fldsampleid like &3", GridView1[Row, 0].Text, "Sampled", "%")
+      If res.Available Then
+        If res["flduserid_start"] Then
+        Else
+          modInterface.InsertSampleForInterface(res["fldencounterval"], res["fldtestid"], res["fldsampleid"], res["fldsampletype"])
+        Endif
+        res["flduserid_start"] = modBasic.$lbluser
+        If res["fldtime_start"] Then
+          res["flduptime_start"] = Now()
+        Else
+          res["fldtime_start"] = Now()
+        Endif
+        res["fldcomp_start"] = modBasic.$compID
+        res["fldsave_start"] = True
+        res["xyz"] = True
+        res.Update
+      Endif
+    Endif
+  Next
+  ShowSampled(Trim(txtencid.Text))
+  GridView1.Row = xRow
+
+End
+
+''------------------------ BILLING ---------------------------
+Private Function SaveBillingENtry(encid As String, cmod As String, scheq As String, sbank As String, sOldBill As String, xState As Integer) As Boolean
+
+  Dim billed As Boolean
+
+  Dim txttitle As String
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+  Dim res As Result
+
+  Dim due As Float
+  Dim disc As Float
+  Dim tax As Float
+  Dim xdue As Float
+  Dim xdisc As Float
+  Dim xtax As Float
+
+  Dim txtamtdue As Float
+  Dim txtdiscamt As Float
+  Dim txttaxamt As Float
+  Dim txtdiscper As Float
+  Dim txttaxper As Float
+  Dim txttotalamt As Float
+  Dim txtrecvamt As Float
+
+  Dim $billtype As String
+
+  billed = False
+  $encounter = encid
+  $billtype = "CashBilling"
+  ''only not matching with DisabledCategory
+  If $billtype = "CashBilling" Then
+    res = modDatabase.$myConn.Exec("select fldid,flditemrate,flditemqty,flddiscper,fldtaxper from tblpatbilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldbilltype=&4 and fldbillno=&5", encid, False, True, cmod, sOldBill)
+  Endif
+
+  due = 0
+  disc = 0
+  tax = 0
+  If res.Available Then
+    For Each res
+      xdue = 0
+      xdisc = 0
+      xtax = 0
+
+      xdue = res!flditemrate * res!flditemqty
+      xdisc = xdue * res!flddiscper / 100
+      xtax = (xdue - xdisc) * res!fldtaxper / 100
+
+      due = due + xdue
+      disc = disc + xdisc
+      tax = tax + xtax
+    Next
+    txtamtdue = Round(due, -2)
+    txtdiscamt = Round(disc, -2)
+    txttaxamt = Round(tax, -2)
+    If txtamtdue Then
+      txtdiscper = Round(txtdiscamt * 100 / txtamtdue, -2)
+      If txtamtdue = txtdiscamt Then
+        txttaxper = 0
+      Else
+        txttaxper = Round(txttaxamt * 100 / (txtamtdue - txtdiscamt), -2)
+      Endif
+    Endif
+
+    'net total
+    txttotalamt = Round(txtamtdue + txttaxamt - txtdiscamt, -2)
+
+    'current deposit
+    If cmod = "Credit" Then
+      txtrecvamt = 0
+    Else
+      txtrecvamt = txttotalamt
+    Endif
+
+    If txttaxamt Then
+      ShowTax = True
+    Else
+      ShowTax = False
+    Endif
+    If txtdiscamt Then
+      ShowDisc = True
+    Else
+      ShowDisc = False
+    Endif
+    txtrecvamt = modNonMedical.GetRoundupAccToSetting(txtrecvamt)
+
+    ''main billing module
+    If modHelpVariable.$VATBill = "Yes" Then
+      txttitle = "TAX INVOICE"
+    Else
+      txttitle = "INVOICE"
+    Endif
+    $xTitle = txttitle
+    If $billtype = "CashBilling" Then
+      $billno = modBillLock.InvoiceSaleString("Counter Sales")
+    Endif
+
+    If $billno Then
+      If $billtype = "InvoiceClearance" Then
+        modBillings.InsertBillingDetail(modDatabase.$myConn, encid, $billno, cmod, 0, 0, 0, 0, txtrecvamt, scheq, sbank, sOldBill, "", xState)
+      Else
+        modBillings.InsertBillingDetail(modDatabase.$myConn, encid, $billno, cmod, txtamtdue, txttaxamt, txtdiscamt, txttotalamt, txtrecvamt, scheq, sbank, sOldBill, "", xState)
+      Endif
+      If modHelpVariable.$IRDLevel = "Yes" Then
+        modBillings.InsertBillLog(modDatabase.$myConn, encid, $billno, txtamtdue, txttaxamt, txtdiscamt)
+        modHelpVariable.RecordIRDActivity(modDatabase.$myConn, txttitle, Me.Name, "INSERT", $billno)
+        If modSettings.ShowSettingFromFIle("CBMSAPI/UserName") Then
+          Exec ["healthybit", "--upload-invoice", $billno]
+        Endif
+      Endif
+      For Each res
+        If $billtype = "InvoiceClearance" Then
+          modBillings.UpdatewithDueNo(res!fldid, $billno, "Cleared")
+        Else
+          modBillings.UpdatewithBillNo(encid, res!fldid, $billno, "Cleared")
+        Endif
+      Next
+    Endif
+
+  Endif
+  billed = True
+
+  Return billed
+
+End
+
+Private Sub GetInvoicePrint()
+
+  Dim xcopystr As String
+
+  If $billno Then
+    modBILLFormat.BillingInvoice($encounter, $billno, $xTitle, False, False)
+    xcopystr = modBasic.$BillInvoiceCopy
+    If Not xcopystr Then
+      xcopystr = modSettings.ShowSettingFromFIle("Invoice/ExtraCopy")
+    Endif
+    If xcopystr = "Print" Then
+      modBILLFormat.BillingInvoice($encounter, $billno, modBillLock.GetCopyBillTypeFromBillNo($billno), False, False)
+    Else If xcopystr = "Print+Print" Then
+      modBILLFormat.BillingInvoice($encounter, $billno, modBillLock.GetCopyBillTypeFromBillNo($billno), False, False)
+      modBILLFormat.BillingInvoice($encounter, $billno, modBillLock.GetCopyBillTypeFromBillNo($billno), False, False)
+    Else If xcopystr = "Save" Then
+      modImage.SaveReportLog("Invoice", modBILLFormat.GetInvoiceCopyPDFPath($billno, False, False), $encounter)
+    Else If xcopystr = "Print+Save" Then
+      modBILLFormat.BillingInvoice($encounter, $billno, modBillLock.GetCopyBillTypeFromBillNo($billno), False, False)
+      modImage.SaveReportLog("Invoice", modBILLFormat.GetInvoiceCopyPDFPath($billno, False, False), $encounter)
+    Endif
+  Endif
+
+End

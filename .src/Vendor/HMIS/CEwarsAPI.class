@@ -1,0 +1,452 @@
+' Gambas class file
+
+Private $EventDate As String
+Private $RegistNumber As String
+Private $RegistType As String
+Private $PatName As String
+Private $PatAge As Integer
+Private $PatSex As String
+' Private $PatEthnic As String
+Private $PatContact As String
+Private $PatDistrict As String
+Private $PatMunicipal As String
+Private $PatWardNum As Integer
+' Private $PatCovidSusp As Boolean
+' Private $PatCovidResult As String
+Private $PatDiagnoText As String
+Private $PatDiagnoState As String
+Private $PatDiagnoOther As String
+Private $LabMethod As String
+Private $LabResult As String
+Private $DiagnoPlace As String
+Private $LabPlace As String
+Private $PatOutcome As String
+Private $PatReferLocat As String
+
+Private $DHUser As String
+Private $DHPass As String
+Private $DHURL As String
+Private $DHLocation As String
+Private $DHQuote As String
+Private $DHAgent As String
+Private $DHCaCert As String
+Private $DHOutput As String
+
+Private $sSerial As Long
+Private $sTest As String
+Private $sYear As String
+
+Private $tblpatbilling As String
+Private $tblpatlabtest As String
+Private $tblpatlabsubtest As String
+
+Public Sub _new(sSerial As Long, sTest As String, sYear As String)
+
+  $sSerial = sSerial
+  $sTest = sTest
+  $sYear = sYear
+
+  $DHUser = Trim(UnBase64(modSettings.ShowSettingFromFIle("EWARS/UserName")))
+  $DHPass = Trim(UnBase64(modSettings.ShowSettingFromFIle("EWARS/Password")))
+  $DHURL = Trim(modSettings.ShowSettingFromFIle("EWARS/URL"))
+  $DHLocation = Trim(modSettings.ShowSettingFromFIle("EWARS/Location"))
+  $DHAgent = Trim(modSettings.ShowSettingFromFIle("EWARS/UserAgent"))
+  $DHQuote = Trim(modSettings.ShowSettingFromFIle("EWARS/QuotePass"))
+  $DHCaCert = Trim(modSettings.ShowSettingFromFIle("EWARS/CACertificate"))
+  $DHOutput = ""
+  LoadTableNames()
+  ExecuteAPI()
+
+  ' $DHUser = "sankhuwasabha.hosp"
+  ' $DHPass = "Ewars@2019"
+  ' $DHURL = "http://ewars.edcd.gov.np/ewarsdemo/api/events"
+  ' $DHLocation = "WLBxL2ClHIC"
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If $sYear = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatlabtest = "tblpatlabtest"
+    $tblpatlabsubtest = "tblpatlabsubtest"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatlabtest,fldpatlabsubtest from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", $sYear, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatlabtest"] Then
+        $tblpatlabtest = res["fldpatlabtest"]
+      Else
+        $tblpatlabtest = "tblpatlabtest"
+      Endif
+      If res["fldpatlabsubtest"] Then
+        $tblpatlabsubtest = res["fldpatlabsubtest"]
+      Else
+        $tblpatlabsubtest = "tblpatlabsubtest"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatlabtest = "tblpatlabtest"
+      $tblpatlabsubtest = "tblpatlabsubtest"
+    Endif
+  Endif
+
+End
+
+Private Sub ExecuteAPI()
+
+  Dim xcmd As String
+  Dim xauth As String
+  Dim xcontent As String
+  Dim xurl As String
+  Dim xcoll As Collection
+  Dim xhead As String
+
+  xurl = Trim($DHURL)
+  If $DHQuote = "Yes" Then
+    xauth = "'" & $DHUser & ":" & $DHPass & "'"
+  Else
+    xauth = $DHUser & ":" & $DHPass
+  Endif
+  xcontent = "Content-Type: application/json"
+  xcoll = GetEWARSJson()
+
+  xhead = Space(1)
+  If $DHCaCert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If $DHAgent Then
+    xhead = xhead & "-A " & $DHAgent & Space(1)
+  Endif
+  xcmd = "curl" & xhead & "-u " & xauth & " -H " & Quote(xcontent) & " -d '" & JSON.Encode(xcoll) & "' -X POST " & xurl
+  modBasic.DebugAPIString("Execute " & Replace(xcmd, xauth, "***"))
+  Shell xcmd To $DHOutput
+  modBasic.DebugAPIString("Response: " & $DHOutput)
+
+End
+
+Public Function EWARSOutput() As String
+
+  Return $DHOutput
+
+End
+
+Private Function GetEWARSJson() As Collection
+
+  Dim xFixColl As Collection
+  Dim xColl As Collection
+  Dim res As Result
+  Dim xbirdt As Date
+  Dim xstate As String
+  Dim xlocat As String
+  Dim xdisc As String
+  Dim xward As String
+
+  Dim aColl As Collection
+  Dim aVar As Variant[]
+
+  xColl = New Collection
+  res = modDatabase.$myConn.Exec("select fldencounterval,fldtype,fldcode,fldcodenew,flduserid,fldtime from tblpatfindings where fldid=&1", $sSerial)                     ''
+  If res.Available Then
+    $EventDate = Format(res["fldtime"], "yyyy-mm-dd")
+    $RegistNumber = res["fldencounterval"]
+    $PatName = modPatient.GetPatientNameByEnc(res["fldencounterval"])
+
+    xstate = modPatient.CurrentAdmissionStatus(res["fldencounterval"])
+    If xstate Then
+      Select xstate
+        Case "Admitted", "Discharged", "LAMA", "Death", "Refer", "Absconder"
+          $RegistType = "IPD"
+        Case Else
+          xlocat = modPatient.GetAdmitLocation(res["fldencounterval"])
+          If modPatient.GetPatientWardCaption(xlocat) = "Emergency" Then
+            $RegistType = "Emergency"
+          Else
+            $RegistType = "OPD"
+          Endif
+      End Select
+    Endif
+
+    xbirdt = modPatient.GetPatientBirthDay(res["fldencounterval"])
+    If xbirdt Then
+      $PatAge = DateDiff(xbirdt, res["fldtime"], gb.Year)
+    Else
+      $PatAge = 0
+    Endif
+    $PatSex = modPatient.GetPatientSex(res["fldencounterval"])
+    ' $PatEthnic = modPatient.GetPatientEthnicity(res["fldencounterval"])
+    $PatContact = modPatient.GetPatientContactByEnc(res["fldencounterval"])
+
+    $PatDistrict = modPatient.GetPatDistrictByEnc(res["fldencounterval"])
+    If $PatDistrict Then
+      $PatDistrict = modHMISRep.$EWARSDistrictColl[$PatDistrict]
+    Endif
+    $PatMunicipal = modPatient.GetPatFirAddressByEnc(res["fldencounterval"])
+    If $PatMunicipal Then
+      $PatMunicipal = modString.GetFullStringExistFromFile(modHMISRep.$EWARSMunicipalColl, $PatMunicipal)
+    Endif
+    xward = modPatient.GetPatWardAddressByEnc(res["fldencounterval"])
+    If xward Then
+      $PatWardNum = CInt(xward)
+    Else
+      $PatWardNum = 0
+    Endif
+    ' $PatCovidSusp = False
+    ' $PatCovidResult = ""
+    $PatDiagnoText = modPathoSub.GetEwarsGroup(res["fldcodenew"])
+    If res["fldtype"] = "Provisional Diagnosis" Then
+      $PatDiagnoState = "Probable"
+    Else If res["fldtype"] = "Final Diagnosis" Then
+      $PatDiagnoState = "Confirm"
+    Endif
+    $PatDiagnoOther = ""
+    $DiagnoPlace = modHelpVariable.$HospitalName
+    $LabMethod = $sTest
+    $LabResult = ""
+    If $sTest Then
+      $LabPlace = modHelpVariable.$HospitalName
+    Else
+      $LabPlace = ""
+    Endif
+
+    If xstate = "Discharged" Then
+      xdisc = modPatient.GetPatExitComment(res["fldencounterval"], "Discharged")
+      Select xdisc
+        Case "Recovered"
+          $PatOutcome = "Recovered"
+        Case "Improved"
+          $PatOutcome = "Improved"
+        Case "Cured"
+          $PatOutcome = "Cured"
+        Case Else
+          $PatOutcome = ""
+      End Select
+    Else If xstate = "Refer" Then
+      $PatOutcome = "Referred"
+    Else If xstate = "LAMA" Then
+      $PatOutcome = "LAMA"
+    Else If xstate = "Absconder" Then
+      $PatOutcome = "Other"
+    Else If xstate = "Death" Then
+      $PatOutcome = "Death"
+    Else
+      $PatOutcome = "Under Treatment"
+    Endif
+    $PatReferLocat = modPatient.GetReferLocation(res["fldencounterval"])
+
+    ''-------------- Get data element --------------------------------------
+    xFixColl = GetVariablesColl()
+    aVar = New Variant[]
+    'Registration Number,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["registration-number"], "dataElement")
+    aColl.Add($RegistNumber, "value")
+    aVar.Add(aColl)
+
+    'Registration Type,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["registration-type"], "dataElement")
+    aColl.Add($RegistType, "value")
+    aVar.Add(aColl)
+
+    ''Patient Name
+    aColl = New Collection
+    aColl.Add(xFixColl["patient-name"], "dataElement")
+    aColl.Add($PatName, "value")
+    aVar.Add(aColl)
+
+    'Age,NUMBER
+    aColl = New Collection
+    aColl.Add(xFixColl["patient-age"], "dataElement")
+    aColl.Add($PatAge, "value")
+    aVar.Add(aColl)
+
+    'Sex,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["patient-sex"], "dataElement")
+    aColl.Add($PatSex, "value")
+    aVar.Add(aColl)
+
+    ' 'Caste Code,TEXT
+    ' aColl = New Collection
+    ' aColl.Add("oMf31WTKH9w", "dataElement")
+    ' aColl.Add($PatEthnic, "value")
+    ' aVar.Add(aColl)
+
+    'District,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["district"], "dataElement")
+    aColl.Add($PatDistrict, "value")
+    aVar.Add(aColl)
+
+    'Municipality,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["municipality"], "dataElement")
+    aColl.Add($PatMunicipal, "value")
+    aVar.Add(aColl)
+
+    'Ward Number,INTEGER
+    aColl = New Collection
+    aColl.Add(xFixColl["ward-number"], "dataElement")
+    aColl.Add($PatWardNum, "value")
+    aVar.Add(aColl)
+
+    'Village/Tole,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["village"], "dataElement")
+    aColl.Add("", "value")
+    aVar.Add(aColl)
+
+    'Contact Number,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["contact"], "dataElement")
+    aColl.Add($PatContact, "value")
+    aVar.Add(aColl)
+
+    ' 'COVID-19 suspect,BOOLEAN
+    ' aColl = New Collection
+    ' aColl.Add("VRMh6RVssBP", "dataElement")
+    ' aColl.Add($PatCovidSusp, "value")
+    ' aVar.Add(aColl)
+    '
+    ' 'COVID-19 test result,TEXT
+    ' aColl = New Collection
+    ' aColl.Add("hRbp4fUSf9G", "dataElement")
+    ' aColl.Add($PatCovidResult, "value")
+    ' aVar.Add(aColl)
+
+    'Disease,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["disease-name"], "dataElement")
+    aColl.Add($PatDiagnoText, "value")
+    aVar.Add(aColl)
+
+    'Disease/Other,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["disease-other"], "dataElement")
+    aColl.Add($PatDiagnoOther, "value")
+    aVar.Add(aColl)
+
+    'Disease/Detail,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["disease-details"], "dataElement")
+    aColl.Add("", "value")
+    aVar.Add(aColl)
+
+    'Diagnosis,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["diagnosis"], "dataElement")
+    aColl.Add($PatDiagnoState, "value")
+    aVar.Add(aColl)
+
+    'Lab Method,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["lab-method"], "dataElement")
+    aColl.Add($LabMethod, "value")
+    aVar.Add(aColl)
+
+    'Lab Result,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["lab-result"], "dataElement")
+    aColl.Add($LabResult, "value")
+    aVar.Add(aColl)
+
+    'Place of Diagnosis,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["place-of-diagnosis"], "dataElement")
+    aColl.Add($DiagnoPlace, "value")
+    aVar.Add(aColl)
+
+    'Place of Lab Test,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["lab-location"], "dataElement")
+    aColl.Add($LabPlace, "value")
+    aVar.Add(aColl)
+
+    'Outcome,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["outcome"], "dataElement")
+    aColl.Add($PatOutcome, "value")
+    aVar.Add(aColl)
+
+    'Referred Location,TEXT
+    aColl = New Collection
+    aColl.Add(xFixColl["referred-location"], "dataElement")
+    aColl.Add($PatReferLocat, "value")
+    aVar.Add(aColl)
+
+    ''GET JSON  ''----------------------------------------------------------------------
+    xColl.Add("uoCswKjfyiM", "program")   ''EWARS
+    xColl.Add($DHLocation, "orgUnit")
+    xColl.Add($EventDate, "eventDate")
+    xColl.Add("COMPLETED", "status")
+    xColl.Add(aVar, "dataValues")
+  Endif
+
+  Return xColl
+
+End
+
+Private Function GetVariablesColl() As Collection
+
+  Dim aColl As Collection
+
+  aColl = New Collection
+  aColl.Add("Fr9RMxvJWXo", "registration-number")
+  aColl.Add("oG6N35q0I3D", "registration-type")
+  aColl.Add("NXZc9ayW8go", "patient-name")
+  aColl.Add("caMyqMax9y7", "patient-age")
+  aColl.Add("wwT2BLUXNS3", "patient-sex")
+  aColl.Add("pC8BBR3B0XX", "district")
+  aColl.Add("hLXJqD7b9im", "municipality")
+  aColl.Add("K8S7Sn6lhnK", "ward-number")
+  aColl.Add("K2EIc6MVD7Q", "village")
+  aColl.Add("SyoTZ3mPk8N", "contact")
+  aColl.Add("eHZ62Y25h0e", "disease-name")
+  aColl.Add("xEkKaX297dZ", "disease-other")
+  aColl.Add("HX0kizZjSHs", "disease-details")
+  aColl.Add("FELaEBjk7li", "diagnosis")
+  aColl.Add("xttSnMCiDOW", "lab-method")
+  aColl.Add("zEjoTm4alh6", "lab-result")
+  aColl.Add("nes3jQmRHJk", "place-of-diagnosis")
+  aColl.Add("nes3jQmRHJk", "lab-location")
+  aColl.Add("cKzz4abGMmu", "outcome")
+  aColl.Add("dFekiWeG9NY", "referred-location")
+
+  Return aColl
+
+End
+
+Private Function GetDiseaseColl(sDisease As String) As Collection
+
+  Dim aColl As Collection
+
+  aColl = New Collection
+  If sDisease = "Cholera" Then
+    aColl.Add("tMoYeI9HTz0", "cholera-rdt-result")   ''RDT result
+    aColl.Add("yKF7td65OqP", "rdts-used")  ''Number of RDTs used
+    aColl.Add("reUZcH6W2dm", "date-sample-sent")  ''Date of sample sent for culture
+    aColl.Add("QIC6zsjflQB", "date-result-received")  ''Date of culture result received
+
+  Else If sDisease = "Dengue" Then  ''If lab method of Dengue is RDT
+    aColl.Add("JTeVOHBQeXp", "dengue-ns1ag-result")  ''NS1 Ag result
+    aColl.Add("cidJKNORR0k", "dengue-igm-result")  ''IgM Result (not required for other methods)
+
+  Else If sDisease = "Kala Azar" Then
+    aColl.Add("FJVk5glkuDK", "hiv-status")  ''HIV status
+    aColl.Add("Qp1xDVKO9XY", "kalaazar-classification")  ''Kala Azar classification
+    aColl.Add("DTi1pBR7mTZ", "other-lab-method")  ''other lab method if used
+
+  Else If sDisease = "Malaria" Then
+    aColl.Add("uTnCt8dzhfc", "malaria-classification")  ''Malaria classification
+  Endif
+
+  Return aColl
+
+End

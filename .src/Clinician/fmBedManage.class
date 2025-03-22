@@ -1,0 +1,414 @@
+' Gambas class file
+
+Private $encid As String
+Private $txtbed As TextBox
+Private $DiscType As String
+
+Private $bedNo As String
+Private $depart As String
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub _new(encid As String, txtbed As TextBox)
+
+  $encid = encid
+  $txtbed = txtbed
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  If modBasic.$ClinDepartFormat = "Service" Then
+    lstdepartment.List = modBasic.$IPDServDepartments
+  Else
+    lstdepartment.List = modBasic.$IPDDepartmentsAll
+  Endif
+  GetCurrentBedData()
+  dtnow.Value = Now()
+  If modHelpVariable.$LogInCategory = "Cashier" Then
+    dtnow.Enabled = True
+  Endif
+  $DiscType = modNonMedical.GetAutoIPBillingPack("Service", $encid)
+
+End
+
+Private Sub GetCurrentBedData()
+
+  Dim i As Integer
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select flddept,fldbed from tbldepartmentbed where fldbed in(select fldcurrlocat from tblencounter where fldencounterval=&1)", $encid)
+  If res.Available Then
+    res.MoveLast
+    $bedNo = res["fldbed"]
+    $depart = res["flddept"]
+  Endif
+
+  If modBasic.$FixedDepartment Then
+    For i = 0 To lstdepartment.Count - 1
+      If lstdepartment[i].Text = modBasic.$FixedDepartment Then
+        lstdepartment.Index = i
+      Endif
+    Next
+  Else
+    For i = 0 To lstdepartment.Count - 1
+      If lstdepartment[i].Text = $depart Then
+        lstdepartment.Index = i
+      Endif
+    Next
+  Endif
+
+End
+
+Public Sub dtnow_Click()
+
+  Dim xdoa As Date
+
+  xdoa = modPatient.GetAdmissionDate($encid)
+  If dtnow.Value < xdoa Then
+    Message.Warning("Date Past Admission Date", ("OK"))
+    dtnow.Value = Now()
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub FillBedGrid()
+
+  Dim sql As String
+
+  If modBasic.$ClinDepartFormat = "Service" Then
+    sql = "select fldencounterval,fldoxyport,fldventilator,fldbed,fldencounterval,fldencounterval,fldencounterval,fldbed,fldbed from tbldepartmentbed where (fldservice=&1 or fldaddservice=&1) and (fldstatus IS NULL or fldstatus=&2)"
+  Else
+    sql = "select fldencounterval,fldoxyport,fldventilator,fldbed,fldencounterval,fldencounterval,fldencounterval,fldbed,fldbed from tbldepartmentbed where flddept=&1 and (fldstatus IS NULL or fldstatus=&2)"
+  Endif
+  $rData = modDatabase.$myConn.Exec(sql, lstdepartment.Text, "Active")
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Rows.Height = 1.25 * modBasic.$AppGridRowHeight
+    .Columns[0].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 35 * modBasic.$AppWidthRatio
+    If modBasic.$ClinMidBedRelease = "Enable" Then
+      .Columns[8].Width = 35 * modBasic.$AppWidthRatio
+    Else
+      .Columns[8].Width = 1
+    Endif
+
+    .Columns[3].Text = "Bed"
+    .Columns[4].Text = "EncID"
+    .Columns[5].Text = "Name"
+    .Columns[6].Text = "Package"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 0 Then
+    GridView1.Data.Picture = Picture[ShowBedColor($rData[$aMyFields[Column]])]
+    GridView1.Data.Text = ""
+  Else If Column = 1 Then
+    GridView1.Data.Text = GetOxygenText($rData[$aMyFields[Column]])
+  Else If Column = 2 Then
+    GridView1.Data.Text = GetVentilatorText($rData[$aMyFields[Column]])
+  Else If Column = 5 Then
+    If $rData[$aMyFields[Column]] Then
+      GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]])
+    Else
+      GridView1.Data.Text = ""
+    Endif
+  Else If Column = 6 Then
+    If $rData[$aMyFields[Column]] Then
+      GridView1.Data.Text = modPatient.ShowDiscountCategEnc($rData[$aMyFields[Column]])
+    Else
+      GridView1.Data.Text = ""
+    Endif
+  Else If Column = 7 Then
+    GridView1.Data.Picture = Picture["icon:/small/apply"]
+    GridView1.Data.Text = ""
+  Else If Column = 8 Then
+    If modBasic.$ClinMidBedRelease = "Enable" Then
+      GridView1.Data.Picture = Picture["icon:/small/clear"]
+    Endif
+    GridView1.Data.Text = ""
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub lstdepartment_Click()
+
+  Inc Application.Busy
+  FillBedGrid()
+  Dec Application.Busy
+
+End
+
+Private Function ShowBedColor(encid As String) As String
+
+  Dim xx As String
+
+  If encid Then
+    xx = "icons/false.svg"
+  Else
+    xx = "icons/null.svg"
+  Endif
+  Return xx
+
+End
+
+Private Function GetOxygenText(sBedVal As String) As String
+
+  Dim sPath As String
+
+  If sBedVal = "Present" Then
+    sPath = "O"
+  Else
+    sPath = ""
+  Endif
+  Return sPath
+
+End
+
+Private Function GetVentilatorText(sBedVal As String) As String
+
+  Dim sPath As String
+
+  If sBedVal = "Present" Then
+    sPath = "V"
+  Else
+    sPath = ""
+  Endif
+  Return sPath
+
+End
+
+Public Sub lstdepartment_KeyRelease()
+
+  If Key.Code = Key.Right Then
+    GridView1.SetFocus
+  Else If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    lstdepartment_Click()
+  Endif
+
+End
+
+Public Sub GridView1_KeyRelease()
+
+  Dim hForm As FmPatientMain
+
+  If Key.Code = Key.Left Then
+    lstdepartment.SetFocus
+  Else If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    hForm = New FmPatientMain(GridView1[GridView1.Row, 4].Text, True)
+    modWorkSpace.Add(hForm)
+    Me.Close()
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnusel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If modBasic.$LockToOwnDepart = "Yes" And If modBasic.$FixedDepartment Then
+      If lstdepartment.Text = modBasic.$FixedDepartment Then
+        SelectBed(GridView1[GridView1.Row, 3].Text)
+      Endif
+    Else
+      SelectBed(GridView1[GridView1.Row, 3].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+
+      If GridView1.Column = 7 Then
+        If modBasic.$LockToOwnDepart = "Yes" And If modBasic.$FixedDepartment Then
+          If lstdepartment.Text = modBasic.$FixedDepartment Then
+            SelectBed(GridView1[GridView1.Row, 3].Text)
+          Endif
+        Else
+          SelectBed(GridView1[GridView1.Row, 3].Text)
+        Endif
+
+      Else If GridView1.Column = 8 Then
+        If modBasic.$LockToOwnDepart = "Yes" And If modBasic.$FixedDepartment Then
+          If lstdepartment.Text = modBasic.$FixedDepartment Then
+            ReleaseBed(GridView1[GridView1.Row, 3].Text)
+          Endif
+        Else
+          ReleaseBed(GridView1[GridView1.Row, 3].Text)
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Private Sub SelectBed(newbed As String)
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim hr As Float
+  Dim xitem As String
+  Dim autobil As String
+  Dim unitrate As String
+
+  Dim xrefer As String
+  Dim xpayble As String
+  Dim xmsg As String
+  Dim xidno As Long
+  Dim xcomm As String
+
+  If $encid Then
+    xrefer = modBillings.GetReferralUserSetting("Service", $encid)
+    xpayble = modBillings.GetPayableUserSetting("Service", $encid)
+    If $depart = lstdepartment.Text Then
+      xcomm = "Intra Transfer"
+    Else
+      xcomm = newbed
+    Endif
+
+    res1 = modDatabase.$myConn.Exec("select fldencounterval from tbldepartmentbed where flddept=&1 and fldbed=&2", lstdepartment.Text, newbed)
+    If res1.Available And If res1["fldencounterval"] Then
+      Message.Warning(("Bed not free"), ("OK"))
+    Else
+
+      Inc Application.Busy
+      res = modDatabase.$myConn.Exec("select fldid,flditem,flddisctype,fldfirsttime,fldfirstreport from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4 and fldfirstreport=&5", $encid, "General Services", True, False, "Bed")                                                                   ''
+      If res.Available = False Then
+        modPatientSub.UpdateAdmissionWard($encid, lstdepartment.Text)
+        xidno = modPatientGeneral.AddPatientTableFirstTime($encid, "General Services", $DiscType, lstdepartment.Text, "Bed", dtnow.Value, xcomm)
+      Else
+        res.MoveFirst
+        modDatabase.$myConn.Begin
+        autobil = modBasic.$AutoBillBed
+        xitem = modNonMedical.GetIPDepartChargeRate(res["flditem"], res["flddisctype"], $bedNo)
+        modPatientGeneral.UpdatePatientTableSecondTime(res["fldid"], $bedNo, xitem, dtnow.Value)
+
+        unitrate = modNonMedical.GetBillingTargeDept(xitem, "General Services")
+        hr = modPatPatho.GetServiceUseDuration($encid, "General Services", res["flditem"], unitrate, res["fldfirsttime"], dtnow.Value)
+
+        If autobil = "Yes" Or If autobil = "Full" Or If autobil = "Partial" Then
+          If xitem Then
+            modBillings.EnterBillingForInterval(autobil, "Service", $encid, res["flddisctype"], xitem, hr, 0, xpayble, xrefer)
+          Else
+            xmsg = "Bed Charge not specified."
+          Endif
+        Endif
+        xidno = modPatientGeneral.AddPatientTableFirstTime($encid, "General Services", $DiscType, lstdepartment.Text, "Bed", dtnow.Value, xcomm)
+        modDatabase.$myConn.Commit
+      Endif
+
+      modPatientSub.UpdatePatLocation($encid, newbed, dtnow.Value)
+      $bedNo = newbed
+      $depart = lstdepartment.Text
+      $txtbed.Text = newbed
+      Dec Application.Busy
+      FillBedGrid()
+      If xmsg Then
+        Message.Warning(xmsg, "OK")
+      Endif
+
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub ReleaseBed(curBed As String)
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim hr As Float
+
+  Dim xitem As String
+  Dim autobil As String
+  Dim unitrate As String
+
+  Dim xrefer As String
+  Dim xpayble As String
+  Dim xmsg As String
+
+  If $encid Then
+    xrefer = modBillings.GetReferralUserSetting("Service", $encid)
+    xpayble = modBillings.GetPayableUserSetting("Service", $encid)
+
+    res1 = modDatabase.$myConn.Exec("select fldencounterval from tbldepartmentbed where flddept=&1 and fldbed=&2", lstdepartment.Text, curBed)
+    If res1.Available And If res1["fldencounterval"] Then
+
+      Inc Application.Busy
+      res = modDatabase.$myConn.Exec("select fldid,flditem,flddisctype,fldfirsttime,fldfirstreport from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4 and fldfirstreport=&5", $encid, "General Services", True, False, "Bed")                                                                   ''
+      If res.Available Then
+        res.MoveFirst
+        modDatabase.$myConn.Begin
+        autobil = modBasic.$AutoBillBed
+        xitem = modNonMedical.GetIPDepartChargeRate(res["flditem"], res["flddisctype"], $bedNo)
+        modPatientGeneral.UpdatePatientTableSecondTime(res["fldid"], $bedNo, xitem, dtnow.Value)
+
+        unitrate = modNonMedical.GetBillingTargeDept(xitem, "General Services")
+        hr = modPatPatho.GetServiceUseDuration($encid, "General Services", res["flditem"], unitrate, res["fldfirsttime"], dtnow.Value)
+
+        If autobil = "Yes" Or If autobil = "Full" Or If autobil = "Partial" Then
+          If xitem Then
+            modBillings.EnterBillingForInterval(autobil, "Service", $encid, res["flddisctype"], xitem, hr, 0, xpayble, xrefer)
+          Else
+            xmsg = "Bed Charge not specified."
+          Endif
+        Endif
+        modDatabase.$myConn.Commit
+      Endif
+
+      modPatientSub.UpdatePatLocationRelease($encid, dtnow.Value)
+      $bedNo = ""
+      $depart = ""
+      $txtbed.Text = ""
+      Dec Application.Busy
+      FillBedGrid()
+      If xmsg Then
+        Message.Warning(xmsg, "OK")
+      Endif
+
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End

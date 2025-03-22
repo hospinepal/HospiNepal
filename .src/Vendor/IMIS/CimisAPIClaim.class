@@ -1,0 +1,452 @@
+' Gambas class file
+
+Private $xAuthString As String
+Private $HeadString As String
+
+Private $PatCode As String
+Private $EncID As String
+Private $ClaimCode As String
+Private $NoDiagno As Boolean
+Private $sComment As String
+Private $xnmcNo As String[]
+
+Private $PatUUID As String
+Private $DiagnoVar As Variant[]
+Private $ItemVar As Variant[]
+Private $ItemTot As Float
+
+Private Sub SetAuthentication()
+
+  If modBasic.$IMISQuote = "Yes" Then
+    $xAuthString = "'" & modBasic.$IMISUser & ":" & modBasic.$IMISPass & "'"
+  Else
+    $xAuthString = modBasic.$IMISUser & ":" & modBasic.$IMISPass
+  Endif
+  $HeadString = "remote-user:" & modBasic.$IMISRemoUser
+
+End
+
+Public Sub _new(sPatcode As String, sEncID As String, sClaimCode As String, NoDiagno As Boolean, Optional sComment As String)
+
+  $PatCode = sPatcode
+  $EncID = sEncID
+  $ClaimCode = sClaimCode
+  $NoDiagno = NoDiagno
+  If sComment Then
+    $sComment = sComment
+  Endif
+
+  $DiagnoVar = New Variant[]
+  $ItemVar = New Variant[]
+  $xnmcNo = New String[]
+  GetPatientDetailIMIS($PatCode)
+  GetICDNamesIMIS($EncID)
+
+End
+
+Private Sub GetPatientDetailIMIS(sPatCode As String)
+
+  Dim acmd As String
+  Dim xurl As String
+  Dim xpatout As String
+  Dim xResColl As Collection
+  Dim xVarPat As Variant[]
+  Dim xhead As String
+
+  SetAuthentication()
+  xurl = modBasic.$IMISPatientURL &/ "?identifier=" & sPatCode
+
+  xhead = Space(1)
+  If modBasic.$IMISCACert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If modBasic.$IMISAgent Then
+    xhead = xhead & "-A " & modBasic.$IMISAgent & Space(1)
+  Endif
+
+  acmd = "curl" & xhead & "-u " & $xAuthString & " -H " & Quote($HeadString) & " -X GET " & xurl
+  modBasic.DebugAPIString(Replace("Execute " & acmd, $xAuthString, "****"))
+  Shell acmd To xpatout
+  modBasic.DebugAPIString("Response: " & xpatout)
+
+  If xpatout Then
+    Try xResColl = JSON.Decode(xpatout)
+    If xResColl Then
+      xVarPat = xResColl["entry"]
+      If xVarPat Then
+        $PatUUID = xVarPat[0]["resource"]["id"]
+      Else
+        Message.Warning("Error in Decoding patient", "OK")
+      Endif
+    Else
+      Message.Warning("Error in getting data", "OK")
+    Endif
+  Else
+    Message.Warning("No Response from server", "OK")
+  Endif
+
+End
+
+Private Sub GetICDNamesIMIS(sEncid As String)
+
+  Dim res As Result
+  Dim i As Integer
+
+  Dim bColl As Collection
+  Dim cColl As Collection
+  Dim cVar As Variant[]
+  Dim dColl As Collection
+
+  Dim bSVar As Variant[]
+  Dim bScoll As Collection
+
+  If $NoDiagno = True Then
+    bColl = New Collection
+    cColl = New Collection
+    cVar = New Variant[]
+
+    dColl = New Collection
+    If modBasic.$RegistNewClaimEnc = "Disable" Then
+      If modBasic.$IMISICDForm = "ICD10" Then
+        dColl.Add("R69", "code")
+      Else
+        dColl.Add("MG48", "code")
+      Endif
+    Else
+      If modBasic.$IMISICDForm = "ICD10" Then
+        dColl.Add("", "code")
+      Else
+        dColl.Add("", "code")
+      Endif
+    Endif
+    cVar.Add(dColl)
+    cColl.Add(cVar, "coding")
+    bColl.Add(cColl, "diagnosisCodeableConcept")
+
+    bColl.Add(1, "sequence")
+
+    bSVar = New Variant[]
+    bScoll = New Collection
+    bScoll.Add("icd_0", "text")
+    bSVar.Add(bScoll)
+    bColl.Add(bSVar, "type")
+
+    $DiagnoVar.Add(bColl)
+
+  Else
+    If modBasic.$IMISICDForm = "ICD10" Then
+      res = modDatabase.$myConn.Limit(2).Exec("select fldcodeid,fldcodenew,flduserid from tblpatfindings where fldencounterval=&1 and (fldtype=&2 or fldtype=&3) and fldsave=&4 and fldcodeid<>&5 and fldcodeid<>&6 and flduserid in(select flduserid from tbluser where fldusercode like &7) ORDER BY fldtime DESC", sEncid, "Provisional Diagnosis", "Final Diagnosis", True, "Obstetrics", "Other", "%")
+    Else
+      res = modDatabase.$myConn.Limit(2).Exec("select fldcodeid,fldcodenew,flduserid from tblpatfindings where fldencounterval=&1 and (fldtype=&2 or fldtype=&3) and fldsave=&4 and fldcodenew<>&5 and fldcodenew<>&6 and flduserid in(select flduserid from tbluser where fldusercode like &7) ORDER BY fldtime DESC", sEncid, "Provisional Diagnosis", "Final Diagnosis", True, "Obstetrics", "Other", "%")
+    Endif
+    If res.Available Then
+      i = 0
+      For Each res
+        bColl = New Collection
+        cColl = New Collection
+        cVar = New Variant[]
+
+        $xnmcNo.Add(res["flduserid"])
+        dColl = New Collection
+        If modBasic.$IMISICDForm = "ICD10" Then
+          If res["fldcodeid"] = "Obstetrics" Then
+            dColl.Add("Z32", "code")
+          Else If res["fldcodeid"] = "Other" Then
+            dColl.Add("R69", "code")
+          Else
+            dColl.Add(Left(Trim(res["fldcodeid"]), 3), "code")
+          Endif
+        Else
+          If res["fldcodenew"] = "Obstetrics" Then
+            dColl.Add("QA40", "code")
+          Else If res["fldcodenew"] = "Other" Then
+            dColl.Add("MG48", "code")
+          Else
+            dColl.Add(res["fldcodenew"], "code")
+          Endif
+        Endif
+        cVar.Add(dColl)
+        cColl.Add(cVar, "coding")
+        bColl.Add(cColl, "diagnosisCodeableConcept")
+
+        bColl.Add(1, "sequence")
+
+        bSVar = New Variant[]
+        bScoll = New Collection
+        bScoll.Add("icd_" & CStr(i), "text")
+        bSVar.Add(bScoll)
+        bColl.Add(bSVar, "type")
+
+        $DiagnoVar.Add(bColl)
+
+        i = i + 1
+      Next
+    Endif
+  Endif
+
+End
+
+Public Sub AddBilling(sList As Variant[])
+
+  Dim sNo As Variant
+  Dim sColl As Collection
+  Dim i As Integer
+  Dim xcode As String
+
+  Dim gColl As Collection
+  Dim hColl As Collection
+
+  Dim xcateg As String
+  Dim xtot As Float
+
+  Dim xrate As Float
+  Dim xqty As Float
+  Dim resn As Result
+
+  i = 1
+  xtot = 0
+  For Each sNo In sList
+    sColl = sNo
+    xcode = sColl["code"]
+    If xcode Then
+      gColl = New Collection
+
+      xrate = 0
+      xqty = 0
+      hColl = New Collection
+      Select sColl["type"]
+        Case "Diagnostic Tests", "Radio Diagnostics", "General Services", "Procedures", "Equipment"
+          xcateg = "service"
+          xrate = sColl["rate"]
+          xqty = sColl["qty"]
+        Case "Other Items"
+          xcateg = "item"
+          xrate = sColl["rate"]
+          xqty = sColl["qty"]
+        Case Else
+          resn = modDatabase.$myConn.Exec("select fldclaimtype,fldpackvol from tblstockrate where flditemname=&1 and flddrugcode IS NOT NULL", sColl["item"])
+          If resn.Available = False Then
+            resn = modDatabase.$myConn.Exec("select fldclaimtype,fldpackvol from tblstockrate where fldstockid=&1 and flddrugcode IS NOT NULL", sColl["item"])
+          Endif
+          If resn.Available Then
+            resn.MoveFirst
+            If resn["fldclaimtype"] Then
+              If resn["fldclaimtype"] = "Service" Then
+                xcateg = "service"
+              Else
+                xcateg = "item"
+              Endif
+            Else
+              xcateg = "item"
+            Endif
+            If resn["fldpackvol"] Then
+              If resn["fldpackvol"] > 1 Then
+                xrate = Round(sColl["rate"] * resn["fldpackvol"], -2)
+                xqty = Ceil(sColl["qty"] / resn["fldpackvol"])
+              Else
+                xrate = sColl["rate"]
+                xqty = sColl["qty"]
+              Endif
+            Else
+              xrate = sColl["rate"]
+              xqty = sColl["qty"]
+            Endif
+          Endif
+      End Select
+      If xrate * xqty Then
+        xtot = xtot + (xrate * xqty)
+      Endif
+
+      hColl.Add(xcateg, "text")
+      gColl.Add(hColl, "category")
+
+      hColl = New Collection
+      hColl.Add(xqty, "value")
+      gColl.Add(hColl, "quantity")
+
+      gColl.Add(i, "sequence")
+
+      hColl = New Collection
+      hColl.Add(xcode, "text")
+      gColl.Add(hColl, "service")
+
+      hColl = New Collection
+      hColl.Add(xrate, "value")
+      gColl.Add(hColl, "unitPrice")
+
+      $ItemVar.Add(gColl)
+
+      i = i + 1
+    Endif
+  Next
+  $ItemTot = xtot
+
+End
+
+Public Function UploadClaim() As String
+
+  Dim res As Result
+  Dim xstartdate As Date
+  Dim xenddate As Date
+  Dim xcreatdate As Date
+  Dim xvisit As String
+
+  Dim acmd As String
+  Dim xurl As String
+  Dim xcont As String
+
+  Dim xVar As Collection
+  Dim xpatout As String
+
+  Dim aColl As Collection
+  Dim eColl As Collection
+  Dim fColl As Collection
+  Dim iColl As Collection
+  Dim jColl As Collection
+  Dim kColl As Collection
+
+  Dim lVar As Variant[]
+  Dim lColl As Collection
+  Dim oColl As Collection
+
+  Dim mVar As Variant[]
+  Dim mColl As Collection
+  Dim xcare As String
+  Dim docLst As String[]
+  Dim xdoc As String
+  Dim nmcLst As String[]
+  Dim xnmc As String
+
+  Dim sComVar As Variant[]
+  Dim sComColl As Collection
+  Dim iComColl As Collection
+
+  res = modDatabase.$myConn.Exec("select fldstatus,fldtime from tblclaimcode where fldclaimid=&1", $ClaimCode)
+  If res.Available Then
+    Select res["fldstatus"]
+      Case "Consultation"
+        xstartdate = modDate.StartSqlDate(res["fldtime"])
+        xenddate = modDate.EndSqlDate(res["fldtime"])
+        xcreatdate = Now()
+        ' xvisit = "Other:O"
+        xvisit = "O"
+        xcare = "O"
+      Case "Emergency"
+        xstartdate = modDate.StartSqlDate(res["fldtime"])
+        ' xenddate = modDate.EndSqlDate(DateAdd(xstartdate, gb.Day, 2))
+        xenddate = Now()
+        xcreatdate = Now()
+        ' xvisit = "Emergency"
+        xvisit = "E"
+        xcare = "I"
+      Case Else
+        xstartdate = modDate.StartSqlDate(modPatient.GetAdmissionDate($EncID))
+        xenddate = modDate.EndSqlDate(modPatient.GetDischargeDate($EncID))
+        xcreatdate = Now()
+        ' xvisit = "Other:I"
+        xvisit = "O"
+        xcare = "I"
+    End Select
+  Endif
+
+  xVar = New Collection
+  SetAuthentication()
+  xurl = modBasic.$IMISClaimURL
+  xcont = "Content-Type: application/json"
+
+  xVar.Add("Claim", "resourceType")
+
+  aColl = New Collection
+  aColl.Add(Format(xenddate, "yyyy-mm-dd"), "end")
+  aColl.Add(Format(xstartdate, "yyyy-mm-dd"), "start")
+  xVar.Add(aColl, "billablePeriod")
+
+  xVar.Add(Format(xcreatdate, "yyyy-mm-dd"), "created")
+
+  xVar.Add($DiagnoVar, "diagnosis")
+
+  eColl = New Collection
+  eColl.Add("Practitioner/" & modBasic.$IMISAdminUUID, "reference")
+  xVar.Add(eColl, "enterer")
+
+  fColl = New Collection
+  fColl.Add("Location/" & modBasic.$IMISHospUUID, "reference")
+  xVar.Add(fColl, "facility")
+
+  lVar = New Variant[]
+  lColl = New Collection
+  oColl = New Collection
+
+  mVar = New Variant[]
+  mColl = New Collection
+  mColl.Add("MR", "code")
+  mColl.Add("https://hl7.org/fhir/valueset-identifier-type.html", "system")
+  mVar.Add(mColl)
+  oColl.Add(mVar, "coding")
+
+  lColl.Add(oColl, "type")
+  lColl.Add("usual", "use")
+  lColl.Add($ClaimCode, "value")
+
+  lVar.Add(lColl)
+
+  xVar.Add(lVar, "identifier")
+
+  xVar.Add($ItemVar, "item")
+
+  iColl = New Collection
+  iColl.Add($ItemTot, "value")
+  xVar.Add(iColl, "total")
+
+  jColl = New Collection
+  jColl.Add("Patient/" & $PatUUID, "reference")
+  xVar.Add(jColl, "patient")
+
+  kColl = New Collection
+  kColl.Add(xvisit, "text")
+  xVar.Add(kColl, "type")
+
+  If $sComment Then
+    sComVar = New Variant[]
+    sComColl = New Collection
+    iComColl = New Collection
+    iComColl.Add("explanation", "text")
+    sComColl.Add(iComColl, "category")
+    sComColl.Add(2, "sequence")
+    sComColl.Add($sComment, "valueString")
+    sComVar.Add(sComColl)
+
+    xVar.Add(sComVar, "information")
+  Endif
+
+  If modBasic.$RegistNewClaimEnc = "Disable" Then
+  Else
+    If $xnmcNo.Count Then
+      docLst = modString.GetDistinctStringArray($xnmcNo)
+      nmcLst = New String[]
+      For Each xdoc In docLst
+        xnmc = modGeneral.GetPrescriberCodeFromName(xdoc)
+        If xnmc Then
+          nmcLst.Add(xnmc)
+        Endif
+      Next
+      xVar.Add(nmcLst.Join(","), "nmc")
+    Else
+      xVar.Add("", "nmc")
+    Endif
+
+    xVar.Add(xcare, "careType")
+  Endif
+
+  If modBasic.$IMISCACert = "Disable" Then
+    acmd = "curl -k -u " & $xAuthString & " -H " & Quote(xcont) & " -H " & Quote($HeadString) & " -d '" & JSON.Encode(xVar) & "' -X POST " & xurl
+  Else
+    acmd = "curl -u " & $xAuthString & " -H " & Quote(xcont) & " -H " & Quote($HeadString) & " -d '" & JSON.Encode(xVar) & "' -X POST " & xurl
+  Endif
+  modBasic.DebugAPIString(Replace("Execute " & acmd, $xAuthString, "****"))
+  Shell acmd To xpatout
+  modBasic.DebugAPIString("Response: " & xpatout)
+
+  Return xpatout
+
+End

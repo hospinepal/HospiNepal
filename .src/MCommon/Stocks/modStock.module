@@ -1,0 +1,1738 @@
+' Gambas module file
+
+Public $ItemStorageCodeData As Collection
+Public $ItemStockNameData As Collection
+Public $ItemStockBatchData As Collection
+Public $ItemStockExpData As Collection
+
+Public $SurgiNameFromStock As Collection
+Public $ExtraNameFromStock As Collection
+
+'NOTE:------------------------ RESULT For DATA Fill ---------------------------
+'USE FOR LOADIMG Medicine/Surgical LIST (purchase/Dispensing) ''use at ComboBox1_KeyRelease() For purchase Of all active items / updating outorder / e - prescription
+Public Function ItemListForPurchaseResult(txtroute As String, BrandOrGeneric As String, Optional extraDepartment As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+  Dim sConn As Connection
+
+  sConn = modDatabase.$medConn
+  Select txtroute
+
+    Case "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblmedbrand.fldbrandid as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbldrug.flddrug from tbldrug where tbldrug.fldroute=&3) ORDER BY tblmedbrand.fldbrandid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbldrug.flddrug from tbldrug where tbldrug.fldroute=&3) ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = sConn.Exec(sql, "Active", -1, txtroute)
+
+    Case "IVpush", "CIV", "IIV", "SC", "IM", "IT", "IDer", "ICar", "ISyn"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblmedbrand.fldbrandid as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&3) ORDER BY tblmedbrand.fldbrandid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&3) ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = sConn.Exec(sql, "Active", 1, txtroute)
+
+    Case "suture", "msurg", "ortho"
+      sql = "select tblsurgbrand.fldbrandid as col from tblsurgbrand where tblsurgbrand.fldactive=&1 and tblsurgbrand.fldmaxqty<>&2 and tblsurgbrand.fldsurgid in(select tblsurgicals.fldsurgid from tblsurgicals where tblsurgicals.fldsurgcateg=&3) ORDER BY tblsurgbrand.fldbrandid ASC"
+      res = sConn.Exec(sql, "Active", -1, txtroute)
+
+    Case "extra"
+      If extraDepartment Then
+        sql = "select tblextrabrand.fldbrandid as col from tblextrabrand where tblextrabrand.fldactive=&1 and tblextrabrand.fldmaxqty<>&2 and tblextrabrand.flddepart=&3 ORDER BY tblextrabrand.fldbrandid ASC"
+        res = sConn.Exec(sql, "Active", -1, extraDepartment)
+      Else
+        sql = "select tblextrabrand.fldbrandid as col from tblextrabrand where tblextrabrand.fldactive=&1 and tblextrabrand.fldmaxqty<>&2 ORDER BY tblextrabrand.fldbrandid ASC"
+        res = sConn.Exec(sql, "Active", -1)
+      Endif
+
+  End Select
+
+  Return res
+
+End
+
+Public Function ItemListForPurchaseBillMode(txtroute As String, BrandOrGeneric As String, sBillMode As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+  Dim sConn As Connection
+  Dim xstr As String
+  Dim xbillmode As String
+
+  sConn = modDatabase.$medConn
+  If sBillMode Then
+    If modBasic.$BillPharmFixedModes.Exist(sBillMode) = True Then
+      If txtroute = "suture" Or If txtroute = "msurg" Or If txtroute = "ortho" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblsurgbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &4)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblsurgbrand.fldsurgid in (select flddrug from tblstockrate where fldbillingmode like &4)"
+        Else
+          xstr = ""
+        Endif
+
+      Else If txtroute = "extra" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblextrabrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &3)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblextrabrand.fldextraid in (select flddrug from tblstockrate where fldbillingmode like &3)"
+        Else
+          xstr = ""
+        Endif
+
+      Else
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblmedbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &4)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblmedbrand.flddrug in (select flddrug from tblstockrate where fldbillingmode like &4)"
+        Else
+          xstr = ""
+        Endif
+      Endif
+      xbillmode = sBillMode
+    Else
+      xstr = ""
+      xbillmode = ""
+    Endif
+  Else
+    xstr = ""
+    xbillmode = ""
+  Endif
+
+  Select txtroute
+    Case "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblmedbrand.fldbrandid as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbldrug.flddrug from tbldrug where tbldrug.fldroute=&3)" & xstr & " ORDER BY tblmedbrand.fldbrandid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbldrug.flddrug from tbldrug where tbldrug.fldroute=&3)" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = sConn.Exec(sql, "Active", -1, txtroute, xbillmode)
+
+    Case "IVpush", "CIV", "IIV", "SC", "IM", "IT", "IDer", "ICar", "ISyn"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblmedbrand.fldbrandid as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&3)" & xstr & " ORDER BY tblmedbrand.fldbrandid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col from tblmedbrand where tblmedbrand.fldactive=&1 and tblmedbrand.fldmaxqty<>&2 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&3)" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = sConn.Exec(sql, "Active", 1, txtroute, xbillmode)
+
+    Case "suture", "msurg", "ortho"
+      sql = "select tblsurgbrand.fldbrandid as col from tblsurgbrand where tblsurgbrand.fldactive=&1 and tblsurgbrand.fldmaxqty<>&2 and tblsurgbrand.fldsurgid in(select tblsurgicals.fldsurgid from tblsurgicals where tblsurgicals.fldsurgcateg=&3)" & xstr & " ORDER BY tblsurgbrand.fldbrandid ASC"
+      res = sConn.Exec(sql, "Active", -1, txtroute, xbillmode)
+
+    Case "extra"
+      sql = "select tblextrabrand.fldbrandid as col from tblextrabrand where tblextrabrand.fldactive=&1 and tblextrabrand.fldmaxqty<>&2" & xstr & " ORDER BY tblextrabrand.fldbrandid ASC"
+      res = sConn.Exec(sql, "Active", -1, xbillmode)
+
+  End Select
+
+  Return res
+
+End
+
+''purchase acc to Pur order
+Public Function ItemListForPurchaseOrder(txtroute As String, txtsupplier As String, txtreference As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+  Dim sConn As Connection
+
+  sConn = modDatabase.$myConn
+  Select txtroute
+
+    Case "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"
+      sql = "select distinct(fldstockid) as col from tblpurorder where fldreference=&1 and fldsuppname=&2 and fldsave=&3 and fldstockid in(select fldbrandid from tblmedbrand where fldactive=&4 and fldmaxqty<>&5 and flddrug in(select flddrug from tbldrug where fldroute=&6)) ORDER BY fldstockid ASC"
+      res = sConn.Exec(sql, txtreference, txtsupplier, True, "Active", -1, txtroute)
+
+    Case "suture", "msurg", "ortho"
+      sql = "select distinct(fldstockid) as col from tblpurorder where fldreference=&1 and fldsuppname=&2 and fldsave=&3 and fldstockid in(select fldbrandid from tblsurgbrand where fldactive=&4 and fldmaxqty<>&5 and fldsurgid in(select fldsurgid from tblsurgicals where fldsurgcateg=&6)) ORDER BY fldstockid ASC"
+      res = sConn.Exec(sql, txtreference, txtsupplier, True, "Active", -1, txtroute)
+
+    Case "extra"
+      sql = "select distinct(fldstockid) as col from tblpurorder where fldreference=&1 and fldsuppname=&2 and fldsave=&3 and fldstockid in(select fldbrandid from tblextrabrand where fldactive=&4 and fldmaxqty<>&5) ORDER BY fldstockid ASC"
+      res = sConn.Exec(sql, txtreference, txtsupplier, True, "Active", -1)
+
+  End Select
+
+  Return res
+
+End
+
+''for dispensing stock present at comp with active (disp) status=1
+Public Function FillMedicinesDispensingComboResult(txtroute As String, BrandOrGeneric As String, Optional sComp As String, Optional sBillMode As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+  Dim xcomp As String
+  Dim xstr As String
+  Dim xbillmode As String
+
+  If sComp Then
+    xcomp = sComp
+  Else
+    xcomp = modBasic.$compID
+  Endif
+
+  If sBillMode Then
+    If modBasic.$BillPharmFixedModes.Exist(sBillMode) = True Then
+      If txtroute = "suture" Or If txtroute = "msurg" Or If txtroute = "ortho" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblsurgbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &6)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblsurgbrand.fldsurgid in (select flddrug from tblstockrate where fldbillingmode like &6)"
+        Else
+          xstr = ""
+        Endif
+
+      Else If txtroute = "extra" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblextrabrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &5)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblextrabrand.fldextraid in (select flddrug from tblstockrate where fldbillingmode like &5)"
+        Else
+          xstr = ""
+        Endif
+
+      Else
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblmedbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &6)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblmedbrand.flddrug in (select flddrug from tblstockrate where fldbillingmode like &6)"
+        Else
+          xstr = ""
+        Endif
+      Endif
+      xbillmode = sBillMode
+    Else
+      xstr = ""
+      xbillmode = ""
+    Endif
+  Else
+    xstr = ""
+    xbillmode = ""
+  Endif
+
+  Select txtroute
+
+    Case "All"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from tblentry where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4" & xstr & ") ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 1, xcomp, 0, "Active", "", xbillmode)
+
+    Case "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from tblentry where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4 and tblmedbrand.flddrug in(select tbldrug.flddrug From tbldrug where tbldrug.fldroute=&5)" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbldrug on tblmedbrand.flddrug=tbldrug.flddrug where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblmedbrand.fldactive=&4 and tbldrug.fldroute=&5" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 1, xcomp, 0, "Active", txtroute, xbillmode)
+
+    Case "IVpush", "CIV", "IIV", "SC", "IM", "IT", "IDer", "ICar", "ISyn"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from tblentry where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&5)" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbllabel on tblmedbrand.flddrug=tbllabel.flddrug where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblmedbrand.fldactive=&4 and tbllabel.fldsubroute=&5" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 1, xcomp, 0, "Active", txtroute, xbillmode)
+
+    Case "suture", "msurg", "ortho"
+      sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from tblentry where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(Select tblsurgbrand.fldbrandid From tblsurgbrand where tblsurgbrand.fldactive=&4 and tblsurgbrand.fldsurgid in(select tblsurgicals.fldsurgid from tblsurgicals where tblsurgicals.fldsurgcateg=&5)" & xstr & ") ORDER BY tblentry.fldstockid ASC"                         '''
+      res = modDatabase.$myConn.Exec(sql, 1, xcomp, 0, "Active", txtroute, xbillmode)
+
+    Case "extra"
+      sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid from tblentry where tblentry.fldstatus=&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(Select tblextrabrand.fldbrandid From tblextrabrand where tblextrabrand.fldactive=&4" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      res = modDatabase.$myConn.Exec(sql, 1, xcomp, 0, "Active", xbillmode)
+
+  End Select
+
+  Return res
+
+End
+
+Public Function FillMedicinesDispensingArrayList(txtroute As String, BrandOrGeneric As String, Optional sComp As String, Optional sBillMode As String) As String[]
+
+  Dim res As Result
+  Dim xcomp As String
+  Dim xList As String[]
+  Dim dtdiff As Integer
+  Dim xcolor As String
+  Dim xexpiry As String
+  Dim xrate As Float
+  Dim xqty As Float
+  Dim xbrand As String
+
+  If sComp Then
+    xcomp = sComp
+  Else
+    xcomp = modBasic.$compID
+  Endif
+
+  xList = New String[]
+  If sBillMode Then
+    res = modStock.FillMedicinesDispensingComboResult(txtroute, BrandOrGeneric, xcomp, sBillMode)
+  Else
+    res = modStock.FillMedicinesDispensingComboResult(txtroute, BrandOrGeneric, xcomp)
+  Endif
+  If res.Available Then
+    For Each res
+      dtdiff = DateDiff(Now(), res["fldexpiry"], gb.Day)
+      If dtdiff < 1 Then
+        xcolor = "icons/true.svg"
+      Else If dtdiff >= 1 And If dtdiff < 90 Then
+        xcolor = "icons/coll6.png"
+      Else
+        xcolor = "icons/null.svg"
+      Endif
+      If res["fldsellpr"] Then
+        xrate = res["fldsellpr"]
+      Else
+        xrate = 0
+      Endif
+      If res["fldqty"] Then
+        xqty = res["fldqty"]
+      Else
+        xqty = 0
+      Endif
+      If res["fldexpiry"] Then
+        xexpiry = Format(res["fldexpiry"], gb.MediumDate) 'modReportVar.GetDateTimeReport(res["fldexpiry"], gb.MediumDate)
+      Else
+        xexpiry = Format(Now(), gb.MediumDate)
+      Endif
+
+      Select txtroute
+        Case "suture", "msurg", "ortho", "extra"
+          xList.Add(res["col"] & "|" & xcolor & "|" & xexpiry & "|" & CStr(xrate) & "|" & CStr(xqty) & "|" & res["stockid"])
+        Case Else
+          If BrandOrGeneric = "Generic" Then
+            xbrand = modMedConstant.ConvertGenericToBrand(res["stockid"])
+          Else If BrandOrGeneric = "Brand" Then
+            xbrand = modMedConstant.ConvertGenericToDrug(res["stockid"])
+          Endif
+          xList.Add(res["col"] & "|" & xbrand & "|" & xcolor & "|" & xexpiry & "|" & CStr(xrate) & "|" & CStr(xqty) & "|" & res["stockid"])
+      End Select
+
+    Next
+  Endif
+  Return xList
+
+End
+
+''for dispensing stock present at comp with active (disp) status>0
+Public Function FillMedicinesDispensingComboAllBatch(txtroute As String, BrandOrGeneric As String, Optional sComp As String, Optional sBillMode As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+  Dim xcomp As String
+  Dim xstr As String
+  Dim xbillmode As String
+
+  If sComp Then
+    xcomp = sComp
+  Else
+    xcomp = modBasic.$compID
+  Endif
+
+  If sBillMode Then
+    If modBasic.$BillPharmFixedModes.Exist(sBillMode) = True Then
+      If txtroute = "suture" Or If txtroute = "msurg" Or If txtroute = "ortho" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblsurgbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &6)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblsurgbrand.fldsurgid in (select flddrug from tblstockrate where fldbillingmode like &6)"
+        Else
+          xstr = ""
+        Endif
+
+      Else If txtroute = "extra" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblextrabrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &5)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblextrabrand.fldextraid in (select flddrug from tblstockrate where fldbillingmode like &5)"
+        Else
+          xstr = ""
+        Endif
+
+      Else
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblmedbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &6)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblmedbrand.flddrug in (select flddrug from tblstockrate where fldbillingmode like &6)"
+        Else
+          xstr = ""
+        Endif
+      Endif
+      xbillmode = sBillMode
+    Else
+      xstr = ""
+      xbillmode = ""
+    Endif
+  Else
+    xstr = ""
+    xbillmode = ""
+  Endif
+
+  Select txtroute
+
+    Case "All"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from tblentry where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4" & xstr & ") ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 0, xcomp, 0, "Active", "", xbillmode)
+
+    Case "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from tblentry where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4 and tblmedbrand.flddrug in(select tbldrug.flddrug From tbldrug where tbldrug.fldroute=&5)" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbldrug on tblmedbrand.flddrug=tbldrug.flddrug where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblmedbrand.fldactive=&4 and tbldrug.fldroute=&5" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 0, xcomp, 0, "Active", txtroute, xbillmode)
+
+    Case "IVpush", "CIV", "IIV", "SC", "IM", "IT", "IDer", "ICar", "ISyn"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from tblentry where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&4 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&5)" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbllabel on tblmedbrand.flddrug=tbllabel.flddrug where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblmedbrand.fldactive=&4 and tbllabel.fldsubroute=&5" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 0, xcomp, 0, "Active", txtroute, xbillmode)
+
+    Case "suture", "msurg", "ortho"
+      sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from tblentry where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(Select tblsurgbrand.fldbrandid From tblsurgbrand where tblsurgbrand.fldactive=&4 and tblsurgbrand.fldsurgid in(select tblsurgicals.fldsurgid from tblsurgicals where tblsurgicals.fldsurgcateg=&5)" & xstr & ") ORDER BY tblentry.fldstockid ASC"                         '''
+      res = modDatabase.$myConn.Exec(sql, 0, xcomp, 0, "Active", txtroute, xbillmode)
+
+    Case "extra"
+      sql = "select tblentry.fldstockid as col,tblentry.fldbatch as fldbatch,tblentry.fldexpiry as fldexpiry,tblentry.fldsellpr as fldsellpr,tblentry.fldqty as fldqty,tblentry.fldstockid as stockid,tblentry.fldstockno as fldstockno from tblentry where tblentry.fldstatus>&1 and tblentry.fldcomp=&2 and tblentry.fldqty>&3 and tblentry.fldstockid in(Select tblextrabrand.fldbrandid From tblextrabrand where tblextrabrand.fldactive=&4" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      res = modDatabase.$myConn.Exec(sql, 0, xcomp, 0, "Active", xbillmode)
+
+  End Select
+
+  Return res
+
+End
+
+Public Function FillMedicinesDispensingArrayAllBatch(txtroute As String, BrandOrGeneric As String, Optional sComp As String, Optional sBillMode As String) As String[]
+
+  Dim res As Result
+  Dim xcomp As String
+  Dim xList As String[]
+  Dim dtdiff As Integer
+  Dim xcolor As String
+  Dim xexpiry As String
+  Dim xrate As Float
+  Dim xqty As Float
+  Dim xbrand As String
+
+  If sComp Then
+    xcomp = sComp
+  Else
+    xcomp = modBasic.$compID
+  Endif
+
+  xList = New String[]
+  If sBillMode Then
+    res = modStock.FillMedicinesDispensingComboAllBatch(txtroute, BrandOrGeneric, xcomp, sBillMode)
+  Else
+    res = modStock.FillMedicinesDispensingComboAllBatch(txtroute, BrandOrGeneric, xcomp)
+  Endif
+  If res.Available Then
+    For Each res
+      dtdiff = DateDiff(Now(), res["fldexpiry"], gb.Day)
+      If dtdiff < 1 Then
+        xcolor = "icons/true.svg"
+      Else If dtdiff >= 1 And If dtdiff < 90 Then
+        xcolor = "icons/coll6.png"
+      Else
+        xcolor = "icons/null.svg"
+      Endif
+      If res["fldsellpr"] Then
+        xrate = res["fldsellpr"]
+      Else
+        xrate = 0
+      Endif
+      If res["fldqty"] Then
+        xqty = res["fldqty"]
+      Else
+        xqty = 0
+      Endif
+      If res["fldexpiry"] Then
+        xexpiry = Format(res["fldexpiry"], gb.MediumDate) 'modReportVar.GetDateTimeReport(res["fldexpiry"], gb.MediumDate)
+      Else
+        xexpiry = Format(Now(), gb.MediumDate)
+      Endif
+
+      Select txtroute
+        Case "suture", "msurg", "ortho", "extra"
+          xList.Add(res["col"] & "|" & xcolor & "|" & xexpiry & "|" & CStr(xrate) & "|" & CStr(xqty) & "|" & CStr(res["fldstockno"]))
+        Case Else
+          If BrandOrGeneric = "Generic" Then
+            xbrand = modMedConstant.ConvertGenericToBrand(res["stockid"])
+          Else If BrandOrGeneric = "Brand" Then
+            xbrand = modMedConstant.ConvertGenericToDrug(res["stockid"])
+          Endif
+          xList.Add(res["col"] & "|" & xbrand & "|" & xcolor & "|" & xexpiry & "|" & CStr(xrate) & "|" & CStr(xqty) & "|" & CStr(res["fldstockno"]))
+      End Select
+    Next
+  Endif
+  Return xList
+
+End
+
+''for vaccination (stock present with active any out order)
+Public Function FillVaccineDispensingComboAllBatch(Optional sComp As String, Optional sBillMode As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+  Dim xcomp As String
+  Dim xstr As String
+  Dim xbillmode As String
+
+  If sComp Then
+    xcomp = sComp
+  Else
+    xcomp = modBasic.$compID
+  Endif
+
+  If sBillMode Then
+    If modBasic.$BillPharmFixedModes.Exist(sBillMode) = True Then
+      If modBasic.$BillFixedRateSale = "Brand" Then
+        xstr = " and fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &6)"
+      Else If modBasic.$BillFixedRateSale = "Generic" Then
+        xstr = " and flddrug in (select flddrug from tblstockrate where fldbillingmode like &6)"
+      Else
+        xstr = ""
+      Endif
+      xbillmode = sBillMode
+    Else
+      xstr = ""
+      xbillmode = ""
+    Endif
+  Else
+    xstr = ""
+    xbillmode = ""
+  Endif
+
+  sql = "select fldstockid,fldbatch,fldexpiry,fldsellpr,fldqty,fldstockid,fldstockno from tblentry where fldstatus>&1 and fldcomp=&2 and fldqty>&3 and fldstockid in(select fldbrandid from tblmedbrand where fldactive=&4" & xstr & " and flddrug in(select flddrug from tbldrug where fldcodename in(select fldcodename from tblcode where fldvaccine=&5))) ORDER BY fldstockid ASC"
+  res = modDatabase.$myConn.Exec(sql, 0, xcomp, 0, "Active", True, xbillmode)
+
+  Return res
+
+End
+
+Public Function FillVaccineDispensingArrayAllBatch(Optional sComp As String, Optional sBillMode As String) As String[]
+
+  Dim res As Result
+  Dim xcomp As String
+  Dim xList As String[]
+  Dim dtdiff As Integer
+  Dim xcolor As String
+  Dim xexpiry As String
+  Dim xrate As Float
+  Dim xqty As Float
+  Dim xbrand As String
+
+  If sComp Then
+    xcomp = sComp
+  Else
+    xcomp = modBasic.$compID
+  Endif
+
+  xList = New String[]
+  If sBillMode Then
+    res = modStock.FillVaccineDispensingComboAllBatch(xcomp, sBillMode)
+  Else
+    res = modStock.FillVaccineDispensingComboAllBatch(xcomp)
+  Endif
+  If res.Available Then
+    For Each res
+      dtdiff = DateDiff(Now(), res["fldexpiry"], gb.Day)
+      If dtdiff < 1 Then
+        xcolor = "icons/true.svg"
+      Else If dtdiff >= 1 And If dtdiff < 90 Then
+        xcolor = "icons/coll6.png"
+      Else
+        xcolor = "icons/null.svg"
+      Endif
+      If res["fldsellpr"] Then
+        xrate = res["fldsellpr"]
+      Else
+        xrate = 0
+      Endif
+      If res["fldqty"] Then
+        xqty = res["fldqty"]
+      Else
+        xqty = 0
+      Endif
+      If res["fldexpiry"] Then
+        xexpiry = Format(res["fldexpiry"], gb.MediumDate) 'modReportVar.GetDateTimeReport(res["fldexpiry"], gb.MediumDate)
+      Else
+        xexpiry = Format(Now(), gb.MediumDate)
+      Endif
+
+      xbrand = modMedConstant.ConvertGenericToBrand(res["fldstockid"])
+      xList.Add(res["fldstockid"] & "|" & xbrand & "|" & xcolor & "|" & xexpiry & "|" & CStr(xrate) & "|" & CStr(xqty) & "|" & CStr(res["fldstockno"]))
+    Next
+  Endif
+  Return xList
+
+End
+
+'''for stock stock present at comp with active (transfer) any status
+Public Function FillMedicinesTransferComboResult(txtroute As String, BrandOrGeneric As String, FromComp As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+
+  Select txtroute
+    Case "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldcomp=&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&3 and tblmedbrand.flddrug in(select tbldrug.flddrug From tbldrug where tbldrug.fldroute=&4)) ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbldrug on tblmedbrand.flddrug=tbldrug.flddrug where tblentry.fldcomp=&1 and tblentry.fldqty>&2 and tblmedbrand.fldactive=&3 and tbldrug.fldroute=&4 ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, FromComp, 0, "Active", txtroute)
+
+    Case "IVpush", "CIV", "IIV", "SC", "IM", "IT", "IDer", "ICar", "ISyn"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldcomp=&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&3 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&4)) ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select tblmedbrand.fldbrand as col from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbllabel on tblmedbrand.flddrug=tbllabel.flddrug where tblentry.fldcomp=&1 and tblentry.fldqty>&2 and tblmedbrand.fldactive=&3 and tbllabel.fldsubroute=&4 ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, FromComp, 0, "Active", txtroute)
+
+    Case "suture", "msurg", "ortho"
+      sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldcomp=&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(Select tblsurgbrand.fldbrandid From tblsurgbrand where tblsurgbrand.fldactive=&3 and tblsurgbrand.fldsurgid in(select tblsurgicals.fldsurgid from tblsurgicals where tblsurgicals.fldsurgcateg=&4)) ORDER BY tblentry.fldstockid ASC"
+      res = modDatabase.$myConn.Exec(sql, FromComp, 0, "Active", txtroute)
+
+    Case "extra"
+      sql = "select tblentry.fldstockid as col from tblentry where tblentry.fldcomp=&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(Select tblextrabrand.fldbrandid From tblextrabrand where tblextrabrand.fldactive=&3) ORDER BY tblentry.fldstockid ASC"
+      res = modDatabase.$myConn.Exec(sql, FromComp, 0, "Active")
+
+  End Select
+
+  Return res
+
+End
+
+''for selective medicine
+Public Function FillMedicinesPrescribingComboResult(txtroute As String, BrandOrGeneric As String, Optional sBillMode As String) As Result
+
+  Dim sql As String
+  Dim res As Result
+  Dim xstr As String
+  Dim xbillmode As String
+
+  If sBillMode Then
+    If modBasic.$BillPharmFixedModes.Exist(sBillMode) = True Then
+      If txtroute = "suture" Or If txtroute = "msurg" Or If txtroute = "ortho" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblsurgbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &5)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblsurgbrand.fldsurgid in (select flddrug from tblstockrate where fldbillingmode like &5)"
+        Else
+          xstr = ""
+        Endif
+
+      Else If txtroute = "extra" Then
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblextrabrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &4)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblextrabrand.fldextraid in (select flddrug from tblstockrate where fldbillingmode like &4)"
+        Else
+          xstr = ""
+        Endif
+
+      Else
+        If modBasic.$BillFixedRateSale = "Brand" Then
+          xstr = " and tblmedbrand.fldbrandid in (select fldstockid from tblstockrate where fldbillingmode like &5)"
+        Else If modBasic.$BillFixedRateSale = "Generic" Then
+          xstr = " and tblmedbrand.flddrug in (select flddrug from tblstockrate where fldbillingmode like &5)"
+        Else
+          xstr = ""
+        Endif
+      Endif
+      xbillmode = sBillMode
+    Else
+      xstr = ""
+      xbillmode = ""
+    Endif
+  Else
+    xstr = ""
+    xbillmode = ""
+  Endif
+
+  Select txtroute
+
+    Case "All"
+      sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldstatus>&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&3" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      res = modDatabase.$myConn.Exec(sql, 0, 0, "Active", "", xbillmode)
+
+    Case "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldstatus>&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&3 and tblmedbrand.flddrug in(select tbldrug.flddrug From tbldrug where tbldrug.fldroute=&4)" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select distinct(tblmedbrand.fldbrand) as col from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbldrug on tblmedbrand.flddrug=tbldrug.flddrug where tblentry.fldstatus>&1 and tblentry.fldqty>&2 and tblmedbrand.fldactive=&3 and tbldrug.fldroute=&4" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 0, 0, "Active", txtroute, xbillmode)
+
+    Case "IVpush", "CIV", "IIV", "SC", "IM", "IT", "IDer", "ICar", "ISyn"
+      If BrandOrGeneric = "Generic" Then '''for generic
+        sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldstatus>&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(select tblmedbrand.fldbrandid From tblmedbrand where tblmedbrand.fldactive=&3 and tblmedbrand.flddrug in(select tbllabel.flddrug from tbllabel where tbllabel.fldsubroute=&4)" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      Else If BrandOrGeneric = "Brand" Then '''for brand
+        sql = "select distinct(tblmedbrand.fldbrand) as col from (tblmedbrand inner join tblentry on tblentry.fldstockid=tblmedbrand.fldbrandid) inner join tbllabel on tblmedbrand.flddrug=tbllabel.flddrug where tblentry.fldstatus>&1 and tblentry.fldqty>&2 and tblmedbrand.fldactive=&3 and tbllabel.fldsubroute=&4" & xstr & " ORDER BY tblmedbrand.fldbrand ASC"
+      Endif
+      res = modDatabase.$myConn.Exec(sql, 0, 0, "Active", txtroute, xbillmode)
+
+    Case "suture", "msurg", "ortho"
+      sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldstatus>&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(Select tblsurgbrand.fldbrandid From tblsurgbrand where tblsurgbrand.fldactive=&3 and tblsurgbrand.fldsurgid in(select tblsurgicals.fldsurgid from tblsurgicals where tblsurgicals.fldsurgcateg=&4)" & xstr & ") ORDER BY tblentry.fldstockid ASC"                         '''
+      res = modDatabase.$myConn.Exec(sql, 0, 0, "Active", txtroute, xbillmode)
+
+    Case "extra"
+      sql = "select distinct(tblentry.fldstockid) as col from tblentry where tblentry.fldstatus>&1 and tblentry.fldqty>&2 and tblentry.fldstockid in(Select tblextrabrand.fldbrandid From tblextrabrand where tblextrabrand.fldactive=&3" & xstr & ") ORDER BY tblentry.fldstockid ASC"
+      res = modDatabase.$myConn.Exec(sql, 0, 0, "Active", xbillmode)
+
+  End Select
+
+  Return res
+
+End
+
+'NOTE: -------------------------------------- stock related functions -------------------------------------------
+Public Function GetStorageCodeFromStockNo(stockno As Integer) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  If stockno Then
+    xx = modHelpVariable.GetCollectionValue($ItemStorageCodeData, CStr(stockno), modBasic.$AppCacheInventoryParameters)
+    If Not xx Then
+      res = modDatabase.$myConn.Exec("select fldcode from tblentry where fldstockno=&1", stockno)
+      If res.Available Then
+        If res["fldcode"] Then
+          xx = res["fldcode"]
+          If modBasic.$AppCacheInventoryParameters = "Yes" Then
+            $ItemStorageCodeData.Add(xx, CStr(stockno))
+          Endif
+        Else
+          xx = ""
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetStorageCodeFromStockName(stockid As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldcode from tblentry where fldstockid=&1 and fldcomp=&2 ORDER BY fldstatus", stockid, modBasic.$compID)
+  If res.Available Then
+    res.MoveFirst
+    If res["fldcode"] Then
+      xx = res["fldcode"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetPharmCategoryFromStockName(stockid As String, sComp As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldcategory from tblentry where fldstockid=&1 and fldcomp=&2", stockid, sComp)
+  If res.Available Then
+    res.MoveFirst
+    If res["fldcategory"] Then
+      xx = res["fldcategory"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function TotalQTYbyStockNo(stockno As Long) As Float
+
+  Dim xx As Float
+  Dim sql As String
+  Dim res As Result
+
+  If stockno Then
+    sql = "select fldqty from tblentry where fldstockno=&1"
+    res = modDatabase.$myConn.Exec(sql, stockno)
+    If res.Available Then
+      If res["fldqty"] Then
+        xx = res["fldqty"]
+      Else
+        xx = 0
+      Endif
+    Else
+      xx = 0
+    Endif
+
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function TotalQTYbyDrug(DrugID As String, sType As String, sComp As String) As Float
+
+  Dim xx As Float
+  Dim sql As String
+  Dim res As Result
+
+  If sType = "Medicines" Then
+    sql = "select sum(fldqty) as tot from tblentry where fldstockid in(select fldbrandid from tblmedbrand where flddrug=&1) and fldcomp like &2 and fldqty>&3"
+  Else If sType = "Surgicals" Then
+    sql = "select sum(fldqty) as tot from tblentry where fldstockid in(select fldbrandid from tblsurgbrand where fldsurgid=&1) and fldcomp like &2 and fldqty>&3"
+  Else If sType = "Extra Items" Then
+    sql = "select sum(fldqty) as tot from tblentry where fldstockid in(select fldbrandid from tblextrabrand where fldextraid=&1) and fldcomp like &2 and fldqty>&3"
+  Endif
+  res = modDatabase.$myConn.Exec(sql, DrugID, sComp, 0)
+  If res.Available Then
+    If res["tot"] Then
+      xx = res["tot"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function TotalQTYbyBrand(brandID As String, sComp As String) As Float
+
+  Dim xx As Float
+  Dim sql As String
+  Dim res As Result
+
+  sql = "select sum(fldqty) as tot from tblentry where fldstockid=&1 and fldcomp like &2 and fldqty>&3"
+  res = modDatabase.$myConn.Exec(sql, brandID, sComp, 0)
+  If res.Available Then
+    If res["tot"] Then
+      xx = res["tot"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function NewStock(txtstockid As String, txtbatch As String, txtcomp As String) As Boolean
+
+  Dim res As Result
+  Dim sql As String
+  Dim yesno As Boolean
+
+  sql = "select fldstockno from tblentry where fldstockid=&1 and fldbatch=&2 and fldcomp=&3"
+  res = modDatabase.$myConn.Exec(sql, txtstockid, txtbatch, txtcomp)
+  If res.Available = False Then
+    yesno = True
+  Else If res.Available = True Then
+    yesno = False
+  Endif
+  Return yesno
+
+End
+
+Public Function GetItemStockNo(txtstockid As String, txtbatch As String, txtcomp As String) As Long
+
+  Dim stockno As Long
+  Dim res As Result
+  Dim idLock As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldstockno from tblentry where fldstockid=&1 and fldbatch=&2 and fldcomp=&3", txtstockid, txtbatch, txtcomp)
+  If res.Available = False Then
+    idLock = modBillLock.LockTableForID("Stock")
+    If idLock = True Then
+      stockno = modBillLock.CurrentStockNo()
+      modBillLock.ReleaseLockTable("Stock")
+    Endif
+  Else If res.Available = True Then
+    res.MoveLast
+    stockno = res["fldstockno"]
+  Endif
+
+  Return stockno
+  ''don't catch error
+
+End
+
+'''-Not used anywhere (to delete?)
+Public Function GetStockNameFromStockno(stockno As Integer) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  If stockno Then
+    xx = modHelpVariable.GetCollectionValue($ItemStockNameData, CStr(stockno), modBasic.$AppCacheInventoryParameters)
+    If Not xx Then
+      res = modDatabase.$myConn.Exec("select fldstockid from tblentry where fldstockno=&1", stockno)
+      If res.Available Then
+        If res["fldstockid"] Then
+          xx = res["fldstockid"]
+          If modBasic.$AppCacheInventoryParameters = "Yes" Then
+            $ItemStockNameData.Add(xx, CStr(stockno))
+          Endif
+        Else
+          xx = ""
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetBatchFromStockNo(txtstockno As Long) As String
+
+  Dim batch As String
+  Dim res As Result
+
+  If txtstockno Then
+    batch = modHelpVariable.GetCollectionValue($ItemStockBatchData, CStr(txtstockno), modBasic.$AppCacheInventoryParameters)
+    If Not batch Then
+      res = modDatabase.$myConn.Exec("select fldbatch from tblentry where fldstockno=&1", txtstockno)
+      If res.Available Then
+        If res["fldbatch"] Then
+          batch = res["fldbatch"]
+          If modBasic.$AppCacheInventoryParameters = "Yes" Then
+            $ItemStockBatchData.Add(batch, CStr(txtstockno))
+          Endif
+        Else
+          batch = ""
+        Endif
+      Else
+        batch = ""
+      Endif
+    Endif
+
+  Else
+    batch = ""
+  Endif
+  Return batch
+
+End
+
+Public Function GetExpiryFromStockNo(txtstockno As Long) As Date
+
+  Dim expiry As Date
+  Dim res As Result
+
+  If txtstockno Then
+    expiry = modHelpVariable.GetCollectionValue($ItemStockExpData, CStr(txtstockno), modBasic.$AppCacheInventoryParameters)
+    If Not expiry Then
+      res = modDatabase.$myConn.Exec("select fldexpiry from tblentry where fldstockno=&1", txtstockno)
+      If res.Available Then
+        If res["fldexpiry"] Then
+          expiry = res["fldexpiry"]
+          If modBasic.$AppCacheInventoryParameters = "Yes" Then
+            $ItemStockExpData.Add(expiry, CStr(txtstockno))
+          Endif
+        Else
+          expiry = ""
+        Endif
+      Else
+        expiry = ""
+      Endif
+    Endif
+
+  Else
+    expiry = ""
+  Endif
+  Return expiry
+
+End
+
+Public Function GetExpiryFromBatch(txtstock As String, txtbatch As String) As Date
+
+  Dim expiry As Date
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select fldexpiry from tblentry where fldstockid=&1 and fldbatch=&2", txtstock, txtbatch)
+  If res.Available Then
+    res.MoveLast
+    If res["fldexpiry"] Then
+      expiry = res["fldexpiry"]
+    Else
+      expiry = ""
+    Endif
+  Else
+    expiry = ""
+  Endif
+
+  Return expiry
+
+End
+
+Public Function GetSurgFromStockID(stockid As String) As String
+
+  Dim res As Result
+  Dim cod As String
+
+  cod = modHelpVariable.GetCollectionValue($SurgiNameFromStock, stockid, modBasic.$AppCacheInventoryParameters)
+  If Not cod Then
+    res = modDatabase.$myConn.Exec("select fldsurgid from tblsurgbrand where fldbrandid=&1", stockid)
+    If res.Available Then
+      If res["fldsurgid"] Then
+        cod = res["fldsurgid"]
+        If modBasic.$AppCacheInventoryParameters = "Yes" Then
+          $SurgiNameFromStock.Add(cod, stockid)
+        Endif
+      Else
+        cod = ""
+      Endif
+    Else
+      cod = ""
+    Endif
+  Endif
+  Return cod
+
+End
+
+Public Function GetExtraFromStockID(stockid As String) As String
+
+  Dim res As Result
+  Dim cod As String
+
+  cod = modHelpVariable.GetCollectionValue($ExtraNameFromStock, stockid, modBasic.$AppCacheInventoryParameters)
+  If Not cod Then
+    res = modDatabase.$myConn.Exec("select fldextraid from tblextrabrand where fldbrandid=&1", stockid)
+    If res.Available Then
+      If res["fldextraid"] Then
+        cod = res["fldextraid"]
+        If modBasic.$AppCacheInventoryParameters = "Yes" Then
+          $ExtraNameFromStock.Add(cod, stockid)
+        Endif
+      Else
+        cod = ""
+      Endif
+    Else
+      cod = ""
+    Endif
+  Endif
+  Return cod
+
+End
+
+Public Function GetgenericText(sItem As String, sCategory As String) As String
+
+  Dim xx As String
+
+  If sCategory = "Medicines" Then
+    xx = modMedConstant.GetDrugFromStockID(sItem)
+  Else If sCategory = "Surgicals" Then
+    xx = GetSurgFromStockID(sItem)
+  Else If sCategory = "Extra Items" Then
+    xx = GetExtraFromStockID(sItem)
+  Endif
+  Return xx
+
+End
+
+Public Function GetExtraPackVolUnit(txtitem As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldvolunit from tblextrabrand where fldbrandid=&1", txtitem)                                                                 '''
+  If res.Available Then
+    If res["fldvolunit"] Then
+      xx = res["fldvolunit"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function ItemSaleStatus(txtstockid As String, txtcomp As String) As Integer
+
+  Dim stas As Integer
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select max(fldstatus) as col from tblentry where fldstockid=&1 and fldcomp like &2 and fldqty>&3", txtstockid, txtcomp, 0) ''or without qty>0
+  If res.Available = False Then
+    stas = 1
+  Else If res.Available = True Then
+    If res["col"] Then
+      stas = res["col"] + 1
+    Else
+      stas = 1
+    Endif
+  Endif
+  Return stas
+
+End
+
+Public Function GetDefaultProfitMargin(txtroute As String) As Float
+
+  Dim xx As Float
+
+  If txtroute Then
+    If txtroute = "oral" Or txtroute = "liquid" Or txtroute = "fluid" Or txtroute = "injection" Or txtroute = "resp" Or txtroute = "topical" Or txtroute = "eye/ear" Or txtroute = "anal/vaginal" Then
+      xx = modBasic.$MedProfit
+    Else If txtroute = "suture" Or txtroute = "msurg" Or txtroute = "ortho" Then
+      xx = modBasic.$SurgProfit
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetCurrentSellingPrice(txtitem As String, sComp As String) As Float
+
+  Dim res As Result
+  Dim xx As Float
+
+  res = modDatabase.$myConn.Exec("select fldsellpr from tblentry where fldstockid=&1 and fldstatus=&2 and fldcomp=&3", txtitem, 1, sComp)
+  If res.Available Then
+    res.MoveFirst
+    If res["fldsellpr"] Then
+      xx = Round(res["fldsellpr"], -2)
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetInactiveSellingPrice(txtitem As String, sComp As String) As Float
+
+  Dim res As Result
+  Dim xx As Float
+
+  res = modDatabase.$myConn.Exec("select fldsellpr from tblentry where fldstockid=&1 and fldstatus=&2 and fldcomp=&3", txtitem, 0, sComp)
+  If res.Available Then
+    res.MoveLast
+    If res["fldsellpr"] Then
+      xx = Round(res["fldsellpr"], -2)
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetAverageSellingPrice(txtitem As String) As Float
+
+  Dim res As Result
+  Dim xx As Float
+
+  res = modDatabase.$myConn.Exec("select avg(fldsellpr) as col from tblentry where fldstockid=&1 and fldstatus>&2", txtitem, 0)
+  If res.Available Then
+    res.MoveFirst
+    If res["col"] Then
+      xx = Round(res["col"], -2)
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End
+
+' ' Public Function GetSellingPriceFixByStockID(sCategory As String, stockid As String, billMode As String) As Variant[]
+' '
+' '   Dim xx As Variant[]
+' '   Dim res1 As Result
+' '
+' '   res1 = modDatabase.$myConn.Exec("select fldstockid,flditemname,fldrate,fldnullrate from tblstockrate where fldbillingmode=&1 and fldcategory=&2 and flddrug=&3", billMode, sCategory, GetgenericText(stockid, sCategory))
+' '   If res1.Available Then
+' '     For Each res1
+' '
+' '       If res1["fldstockid"] Then
+' '         If modBasic.$BillFixedRateSale = "Generic" Then
+' '           If res1["fldrate"] Then
+' '             xx = [res1["flditemname"], Round(res1["fldrate"], -2)]
+' '             Break
+' '           Else
+' '             If res1["fldnullrate"] Then
+' '               xx = [res1["flditemname"], 0]
+' '               Break
+' '             Endif
+' '           Endif
+' '         Else If modBasic.$BillFixedRateSale = "Brand" Then
+' '           If stockid = res1["fldstockid"] Then
+' '             If res1["fldrate"] Then
+' '               xx = [res1["flditemname"], Round(res1["fldrate"], -2)]
+' '               Break
+' '             Else
+' '               If res1["fldnullrate"] Then
+' '                 xx = [res1["flditemname"], 0]
+' '                 Break
+' '               Endif
+' '             Endif
+' '           Endif
+' '         Endif
+' '       Else
+' '         If res1["fldrate"] Then
+' '           xx = [res1["flditemname"], Round(res1["fldrate"], -2)]
+' '           Break
+' '         Else
+' '           If res1["fldnullrate"] Then
+' '             xx = [res1["flditemname"], 0]
+' '             Break
+' '           Endif
+' '         Endif
+' '       Endif
+' '
+' '     Next
+' '   Endif
+' '
+' '   Return xx
+' '
+' ' End
+
+Public Function GetCurrSellingPriceByStockNo(stockno As Long) As Float
+
+  Dim res As Result
+  Dim xx As Float
+
+  res = modDatabase.$myConn.Exec("select fldsellpr from tblentry where fldstockno=&1", stockno)
+  If res.Available Then
+    If res["fldsellpr"] Then
+      xx = Round(res["fldsellpr"], -2)
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetSellingPriceByStockNo(stockno As Long, billMode As String) As Float
+
+  Dim res As Result
+  ' Dim xvarfix As Variant[]
+  Dim xx As Float
+  Dim CPharmFix As CFixRatePharmacy
+
+  res = modDatabase.$myConn.Exec("select fldstockid,fldcategory,fldsellpr from tblentry where fldstockno=&1", stockno)
+  If res.Available Then
+    If res["fldsellpr"] Then
+      xx = Round(res["fldsellpr"], -2)
+    Else
+      xx = 0
+    Endif
+
+    CPharmFix = New CFixRatePharmacy(res["fldcategory"], res["fldstockid"], billMode)
+    If CPharmFix.GetFixItem() Then
+      xx = CPharmFix.GetFixRate()
+    Endif
+    ' xvarfix = GetSellingPriceFixByStockID(res["fldcategory"], res["fldstockid"], billMode)
+    ' If xvarfix Then
+    '   xx = xvarfix[1]
+    ' Endif
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetAverageCostPriceByStockNo(stockno As Long) As Float
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim xx As Float
+
+  res = modDatabase.$myConn.Exec("select avg(fldnetcost) as netcost from tblpurchase where fldstockno=&1", stockno)
+  If res.Available = True Then
+    If res["netcost"] Then
+      xx = res["netcost"]
+    Else
+      xx = 0
+    Endif
+  Endif
+
+  If xx = 0 Then
+    res1 = modDatabase.$myConn.Exec("select avg(fldnetcost) as netcost from tbltransfer where fldstockno=&1", stockno)
+    If res1.Available = True Then
+      If res1["netcost"] Then
+        xx = res1["netcost"]
+      Else
+        xx = 0
+      Endif
+    Else
+      xx = 0
+    Endif
+  Endif
+
+  If xx = 0 Then
+    res2 = modDatabase.$myConn.Exec("select avg(fldnetcost) as netcost from tblpurchase where fldstockno=&1", GetPrevSockNoFromCurrNo(stockno))
+    If res2.Available = True Then
+      If res2["netcost"] Then
+        xx = res2["netcost"]
+      Else
+        xx = 0
+      Endif
+    Else
+      xx = 0
+    Endif
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetPrevSockNoFromCurrNo(stockno As Long) As Long
+
+  Dim res As Result
+  Dim xx As Long
+  Dim aa As Integer
+
+  xx = stockno
+  aa = 0
+  res = modDatabase.$myConn.Exec("select fldoldstockno from tbltransfer where fldstockno=&1", xx)
+  If res.Available Then
+    For Each res
+      xx = res["fldoldstockno"]
+      aa = FindStockNoInPurchase(xx)
+      If aa = 1 Then
+        Break
+      Endif
+    Next
+  Else
+    xx = 0
+  Endif
+
+  Return xx
+
+End
+
+Public Function FindStockNoInPurchase(stockno As Long) As Integer
+
+  Dim res As Result
+  Dim xx As Integer
+
+  res = modDatabase.$myConn.Exec("select fldstockno from tblpurchase where fldstockno=&1", stockno)
+  If res.Available Then
+    xx = 1
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function GetAverageCostPriceByStockName(stockid As String) As Float
+
+  Dim res As Result
+  Dim xtotal As Float
+  Dim xval As Float
+
+  xtotal = 0
+  res = modDatabase.$myConn.Exec("select fldstockno from tblentry where fldstockid=&1 and fldqty>&2", stockid, 0)
+  If res.Available Then
+    For Each res
+      xtotal = xtotal + GetAverageCostPriceByStockNo(res["fldstockno"])
+    Next
+    xval = xtotal / res.Count
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Sub GetActiveStatusItem(txtroute As String, txtitem As String) As String
+
+  Dim xx As String
+  Dim res As Result
+  Dim tbl As String
+  Dim xval As String
+
+  xval = modNonMedical.GetBillItemCategoryFromCombo(txtroute)
+  If xval = "Medicines" Then
+    tbl = "tblmedbrand"
+  Else If xval = "Surgicals" Then
+    tbl = "tblsurgbrand"
+  Else If xval = "Extra Items" Then
+    tbl = "tblextrabrand"
+  Endif
+  res = modDatabase.$myConn.Exec("select fldactive from " & tbl & " where fldbrandid=&1", txtitem)
+  If res["fldactive"] Then
+    xx = res["fldactive"]
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetMaximumSales(strItem As String, strType As String) As Float
+
+  Dim res As Result
+  Dim tbl As String
+  Dim xx As Float
+
+  If strType = "Medicines" Then
+    tbl = "tblmedbrand"
+  Else If strType = "Surgicals" Then
+    tbl = "tblsurgbrand"
+  Else If strType = "Extra Items" Then
+    tbl = "tblextrabrand"
+  Endif
+
+  res = modDatabase.$myConn.Exec("select fldmaxqty from " & tbl & " where fldbrandid=&1", strItem)
+  If res.Available Then
+    If res["fldmaxqty"] Then
+      xx = res["fldmaxqty"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function GetMinimumStock(strItem As String, strType As String) As Float
+
+  Dim res As Result
+  Dim tbl As String
+  Dim xx As Float
+
+  If strType = "Medicines" Then
+    tbl = "tblmedbrand"
+  Else If strType = "Surgicals" Then
+    tbl = "tblsurgbrand"
+  Else If strType = "Extra Items" Then
+    tbl = "tblextrabrand"
+  Endif
+
+  res = modDatabase.$myConn.Exec("select fldminqty from " & tbl & " where fldbrandid=&1", strItem)
+  If res.Available Then
+    If res["fldminqty"] Then
+      xx = res["fldminqty"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+''----------------------------------------- Interval wise data ----------------------------------------------
+Public Function GetSalePharmQTY($con As Connection, sType As String, sItem As String, dt1 As Date, dt2 As Date, compid As String) As Float
+
+  Dim rs3 As Result
+  Dim salqty As Float
+
+  rs3 = $con.Exec("select SUM(flditemqty) as qty from tblpatbilling where fldtime>=&1 and fldtime<=&2 and flditemname=&3 and flditemtype=&4 and fldcomp like &5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItem, sType, compid)
+  salqty = 0
+  If rs3.Available = True Then
+    If rs3["qty"] Then
+      salqty = rs3["qty"]
+    Endif
+  Endif
+  Return salqty
+
+End
+
+Public Function GetToDispenseStockOneComp(sItem As String, compid As String, txtday As Float) As Float
+
+  Dim sql2 As String
+  Dim res2 As Result
+  Dim curqty As Float
+
+  If modBasic.$SkipExpiry = "ExpireOnUse" Then
+    sql2 = "select SUM(fldqty) as col from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldexpiry>&4 and fldqty>&5"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, DateAdd(Date(), gb.Day, CInt(txtday)), 0)
+  Else If modBasic.$SkipExpiry = "Expired" Then
+    sql2 = "select SUM(fldqty) as col from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldexpiry>&4 and fldqty>&5"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, Date(), 0)
+  Else
+    sql2 = "select SUM(fldqty) as col from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldqty>&4"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, 0)
+  Endif
+
+  If res2.Available Then
+    If res2["col"] Then
+      curqty = res2["col"]
+    Else
+      curqty = 0
+    Endif
+  Else
+    curqty = 0
+  Endif
+  Return curqty
+
+End
+
+Public Function GetToDispenseRateOneComp(billMode As String, sItem As String, compid As String, txtday As Float) As Float
+
+  Dim sql2 As String
+  Dim res2 As Result
+  Dim xrate As Float
+
+  If modBasic.$SkipExpiry = "ExpireOnUse" Then
+    sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldexpiry>&4 and fldqty>&5 ORDER BY fldstatus ASC"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, DateAdd(Date(), gb.Day, CInt(txtday)), 0)
+  Else If modBasic.$SkipExpiry = "Expired" Then
+    sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldexpiry>&4 and fldqty>&5 ORDER BY fldstatus ASC"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, Date(), 0)
+  Else
+    sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldqty>&4 ORDER BY fldstatus ASC"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, 0)
+  Endif
+
+  xrate = 0
+  If res2.Available Then
+    res2.MoveFirst
+    xrate = modStock.GetSellingPriceByStockNo(res2["fldstockno"], billMode)
+  Endif
+
+  Return xrate
+
+End
+
+Public Function GetToDispenseCostOneComp(billMode As String, sItem As String, compid As String, txtday As Float, txtqty As Float) As Float
+
+  Dim sql2 As String
+  Dim res2 As Result
+  Dim cstamt As Float
+
+  If modBasic.$SkipExpiry = "ExpireOnUse" Then
+    sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldexpiry>&4 and fldqty>&5 ORDER BY fldstatus ASC"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, DateAdd(Date(), gb.Day, CInt(txtday)), 0)
+  Else If modBasic.$SkipExpiry = "Expired" Then
+    sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldexpiry>&4 and fldqty>&5 ORDER BY fldstatus ASC"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, Date(), 0)
+  Else
+    sql2 = "select fldstockno,fldexpiry,fldqty,fldstatus from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus>&3 and fldqty>&4 ORDER BY fldstatus ASC"
+    res2 = modDatabase.$myConn.Exec(sql2, sItem, compid, 0, 0)
+  Endif
+
+  cstamt = 0
+  If res2.Available Then
+    For Each res2
+      If txtqty > 0
+        If txtqty <= res2["fldqty"] Then
+          cstamt = cstamt + txtqty * modStock.GetSellingPriceByStockNo(res2["fldstockno"], billMode)
+          txtqty = 0
+          Break
+        Else If txtqty > res2["fldqty"] Then
+          cstamt = cstamt + res2["fldqty"] * modStock.GetSellingPriceByStockNo(res2["fldstockno"], billMode)
+          txtqty = txtqty - res2["fldqty"]
+        Endif
+      Endif
+    Next
+  Endif
+
+  Return cstamt
+
+End
+
+Public Function GetCurrentExpiredStockOneComp(sItem As String, compid As String) As Boolean
+
+  Dim rs5 As Result
+  Dim ret As Boolean
+
+  ret = False
+  rs5 = modDatabase.$myConn.Exec("select fldexpiry from tblentry where fldstockid=&1 and fldcomp=&2 and fldstatus=&3", sItem, compid, 1)
+  If rs5.Available = True Then
+    If rs5["fldexpiry"] <= Now() Then
+      ret = True
+    Endif
+  Endif
+
+  Return ret
+
+End
+
+Public Function GetGenericListByRoute(txtroute As String, inStock As Boolean) As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  If txtroute = "oral" Or txtroute = "liquid" Or txtroute = "fluid" Or txtroute = "injection" Or txtroute = "resp" Or txtroute = "topical" Or txtroute = "eye/ear" Or txtroute = "anal/vaginal" Then
+    If inStock = True Then
+      res = modDatabase.$myConn.Exec("select flddrug as col from tbldrug where fldroute=&1 and flddrug in(select flddrug from tblmedbrand where fldbrandid in(select fldstockid from tblentry where fldqty>&2))", txtroute, 0)
+    Else
+      res = modDatabase.$myConn.Exec("select flddrug as col from tbldrug where fldroute=&1", txtroute)
+    Endif
+  Else If txtroute = "suture" Or txtroute = "msurg" Or txtroute = "ortho" Then
+    If inStock = True Then
+      res = modDatabase.$myConn.Exec("select fldsurgid as col from tblsurgicals where fldsurgcateg=&1 and fldsurgid in(select fldsurgid from tblsurgbrand where fldbrandid in(select fldstockid from tblentry where fldqty>&2))", txtroute, 0)
+    Else
+      res = modDatabase.$myConn.Exec("select fldsurgid as col from tblsurgicals where fldsurgcateg=&1", txtroute)
+    Endif
+  Else If txtroute = "extra" Then
+    If inStock = True Then
+      res = modDatabase.$myConn.Exec("select fldextraid as col from tblextra where fldextraid in(select fldextraid from tblextrabrand where fldbrandid in(select fldstockid from tblentry where fldqty>&1))", 0)
+    Else
+      res = modDatabase.$myConn.Exec("select fldextraid as col from tblextra")
+    Endif
+  Endif
+  xx = modControlSub.GetDirectFillresult(res)
+  Return xx
+
+End
+
+Public Function GetStockIDList(txtroute As String, sGeneric As String) As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  If txtroute = "oral" Or txtroute = "liquid" Or txtroute = "fluid" Or txtroute = "injection" Or txtroute = "resp" Or txtroute = "topical" Or txtroute = "eye/ear" Or txtroute = "anal/vaginal" Then
+    res = modDatabase.$myConn.Exec("select fldbrandid as col from tblmedbrand where flddrug=&1", sGeneric)
+  Else If txtroute = "suture" Or txtroute = "msurg" Or txtroute = "ortho" Then
+    res = modDatabase.$myConn.Exec("select fldbrandid as col from tblsurgbrand where fldsurgid=&1", sGeneric)
+  Else If txtroute = "extra" Then
+    res = modDatabase.$myConn.Exec("select fldbrandid as col from tblextrabrand where fldextraid", sGeneric)
+  Endif
+  xx = modControlSub.GetDirectFillresult(res)
+  Return xx
+
+End
+
+''====================fixed rate================
+Public Function GetFixedBillingModes() As String[]
+
+  Dim res As Result
+  Dim xList As String[]
+
+  res = modDatabase.$myConn.Exec("select distinct(fldbillingmode) as col from tblstockrate where flddrug like &1", "%")
+  xList = modControlSub.GetDirectFillresult(res)
+  Return xList
+
+End
+
+''============= supplier related ==============
+Public Function GetSupplierPaymentByRef(xsuppId As String, srefNo As String) As Float
+
+  Dim res As Result
+  Dim xval As Float
+
+  xval = 0
+  res = modDatabase.$myConn.Exec("select SUM(fldpayamount) as xtot from tblpayment where fldcategory=&1 and fldreference=&2 and fldsuppname=&3 and fldsave=&4", "Payment", srefNo, xsuppId, True)
+  If res.Available Then
+    For Each res
+      If res["xtot"] Then
+        xval = xval + res["xtot"]
+      Endif
+    Next
+  Endif
+  Return xval
+
+End
+
+Public Function GetPurchOrderDateFromRequest(xRequestNo As String) As Date
+
+  Dim res As Result
+  Dim xx As Date
+
+  res = modDatabase.$myConn.Exec("select fldtime from tblpurorder where fldreference=&1", xRequestNo)
+  If res.Available Then
+    res.MoveFirst
+    If res["fldtime"] Then
+      xx = res["fldtime"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetPurchOrderSupplierFromRequest(xRequestNo As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldsuppname from tblpurorder where fldreference=&1", xRequestNo)
+  If res.Available Then
+    res.MoveFirst
+    If res["fldsuppname"] Then
+      xx = res["fldsuppname"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetDepartmentExMedItem(sBrand As String, sTable As String) As String
+
+  Dim res As Result
+  Dim xdeprt As String
+
+  res = modDatabase.$myConn.Exec(Subst("select flddepart from &1", sTable) & " where fldbrandid=&1", sBrand)
+  If res.Available Then
+    If res["flddepart"] Then
+      xdeprt = res["flddepart"]
+    Else
+      xdeprt = ""
+    Endif
+  Else
+    xdeprt = ""
+  Endif
+
+  Return xdeprt
+
+End

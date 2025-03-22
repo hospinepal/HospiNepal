@@ -1,0 +1,356 @@
+' Gambas class file
+
+Private $encid As String
+Private $BillMode As String
+Private $sPackage As String
+Private $xFinClear As Boolean
+Private $PatientNum As String
+Private $xNHISCode As String
+
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Public Sub _new(encid As String, DiscType As String)
+
+  $encid = encid
+  $sPackage = DiscType
+
+End
+
+Public Sub Form_Open()
+
+  Dim xstatus As String
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  cmbdisctype.List = modBasic.$BillDiscountCash
+  If cmbdisctype.List.Count = 0 Then
+    cmbdisctype.Add($sPackage)
+  Endif
+  cmbdisctype.Text = $sPackage
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  $PatientNum = modPatient.GetPatientNoByEnc($encid)
+  $xNHISCode = modPatient.GetPatientExtCOdebyEnc($encid)
+  $BillMode = modNonMedical.GetDiscBindBillMode($sPackage)
+  If Not $BillMode Then
+    $BillMode = modpatient.GetPatBillingMode($encid)
+  Endif
+
+  xstatus = modPatient.CurrentAdmissionStatus($encid)
+  txtlocation.Text = modPatient.GetLocationSetting($encid, xstatus)
+  $xFinClear = modNonMedical.GetFinanceClearance($encid)
+  cmbtype.List = ["Minor", "Intermediate", "Plaster"]
+
+  btnrefer.Tag = modBillings.GetReferralUserSetting("Procedure", $encid)
+  If btnrefer.Tag Then
+    btnrefer.Text = modGeneral.GetUserFullName(btnrefer.Tag)
+  Endif
+  If modBasic.$ReferralLockEntry = "Yes" Then
+    btnrefer.Enabled = False
+  Endif
+  FillLabtable()
+  CompleteGrid()
+  If $xFinClear = True Then
+    btnsave.Enabled = False
+  Endif
+  cmbprocedure.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Public Sub cmbdisctype_Click()
+
+  If cmbdisctype.Text Then
+    $BillMode = modNonMedical.GetDiscBindBillMode(cmbdisctype.Text)
+    If Not $BillMode Then
+      $BillMode = modpatient.GetPatBillingMode($encid)
+    Endif
+    cmbprocedure.Clear()
+    cmbtype.Text = ""
+  Endif
+
+End
+
+Public Sub cmbdisctype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdisctype)
+  modFillContainer.RestrictComboToContent(cmbdisctype)
+
+End
+
+Public Sub cmbtype_Click()
+
+  If cmbtype.Text Then
+    cmbprocedure.List = modNonMedical.NonStockBillActiveItemArray("Procedures", $BillMode, cmbtype.Text)
+  Endif
+
+End
+
+Public Sub cmbprocedure_GotFocus()
+
+  Dim xLst As String[]
+
+  If cmbtype.Text Then
+    If Not cmbprocedure.Text Then
+      If modBasic.$ItemListFormat = "GridView" Then
+        xLst = modNonMedical.NonStockBillActiveItemArray("Procedures", $BillMode, cmbtype.Text)
+        If xLst.Count Then
+          cmbprocedure.Text = GridViewNew("Select Particulars", xLst, False, cmbprocedure)
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbprocedure_Click()
+
+  Dim xdate As Date
+
+  If cmbprocedure.Text Then
+    xdate = modBillings.CheckLastSalesItemDate(cmbprocedure.Text, $PatientNum, $xNHISCode, cmbdisctype.Text)
+    If xdate Then
+      txtlastsaledate.Text = modReportVar.GetDateTimeReport(xdate, gb.MediumDate)
+      If DateDiff(xdate, Now(), gb.Month) <= 3 Then
+        txtlastsaledate.Foreground = Color.Red
+      Else
+        txtlastsaledate.Foreground = Color.Default
+      Endif
+    Else
+      txtlastsaledate.Text = ""
+      txtlastsaledate.Foreground = Color.Default
+    Endif
+  Endif
+
+End
+
+Public Sub btnsubOK_Click()
+
+  If cmbprocedure.Text Then
+    If modNonMedical.GetControlServCombo(cmbprocedure.Text) = False Then
+      cmbprocedure.Text = ""
+      Balloon.Warning(("Item not listed"), cmbprocedure)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Else
+      If modMisc.AllowDiagnoBilling($encid) = True Then
+        If modNonMedical.AllowEntryWithDeposit($encid, "Procedure") = True Then
+          modPatientGeneral.AddProcedureData($encid, 0, "Minor Procedures", cmbprocedure.Text, "Done", $BillMode, Now(), "Waiting", txtsummary.RichText)
+          FillLabtable()
+        Endif
+      Else
+        Message.Warning("Diagnosis not provided", ("OK"))
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub FillLabtable()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldtime,fldencounterval,flditem,fldreportquali,fldid from tblpatgeneral where fldencounterval=&1 and fldinput=&2 and fldsave=&3 and fldreportquali=&4 and fldstatus=&5"                                             ''
+  res = modDatabase.$myConn.Exec(sql, $encid, "Minor Procedures", False, "Done", "Waiting")
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldtime"], gb.GeneralDate)
+      Else If Column = 5 Then
+        GridView1[res.Index, Column].Picture = Picture["icon:/small/cancel"]
+        GridView1[res.Index, Column].Text = ""
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Time"
+    .Columns[3].Text = "Procedure"
+    .Columns[4].Text = "Status"
+  End With
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim xauto As String
+
+  Dim xrefer As String
+  Dim xpayble As String
+
+  If btnrefer.Tag Then
+    xrefer = btnrefer.Tag
+  Else
+    xrefer = modBillings.GetReferralUserSetting("Procedure", $encid)
+  Endif
+  xpayble = modBillings.GetPayableUserSetting("Procedure", $encid)
+
+  res = modDatabase.$myConn.Exec("select fldid,fldencounterval,fldgroupid,fldnewdate,flditem,fldreportquali,flddetail,fldtime from tblpatgeneral where fldencounterval=&1 and fldinput=&2 and fldsave=&3 and fldcomp=&4 and fldreportquali=&5 and fldstatus=&6", $encid, "Minor Procedures", False, modBasic.$compID, "Done", "Waiting")                                      ''
+  If res.Available = True Then
+
+    Inc Application.Busy
+    xauto = modBasic.$AutoBillProcedure
+
+    modDatabase.$myConn.Begin
+    For Each res
+      If xauto Then
+        If xauto = "Yes" Or If xauto = "Full" Then
+          modBillings.GetAutoBillingEntry($encid, cmbdisctype.Text, "Procedure", res!flditem, 1, "Done", res!fldid, True, False, xpayble, xrefer)                          ''
+        Else If xauto = "Partial" Then
+          modBillings.GetAutoBillingEntry($encid, cmbdisctype.Text, "Procedure", res!flditem, 1, "Punched", res!fldid, False, False, xpayble, xrefer)
+        Endif
+      Endif
+      res1 = modDatabase.$myConn.Edit("tblpatgeneral", "fldid=&1", res!fldid)
+      res1["fldstatus"] = "Cleared"
+      res1["fldsave"] = True
+      res1["flduserid"] = modBasic.$lbluser
+      res1["flduptime"] = Now()
+      res1["fldcomp"] = modBasic.$compID
+      res1["xyz"] = False
+      res1.Update()
+    Next
+    modDatabase.$myConn.Commit
+    FillLabtable()
+    CompleteGrid()
+    Dec Application.Busy
+
+    Balloon.Info(("Information saved"), btnsave)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Column = 5 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblpatgeneral", "fldencounterval=&1 and fldinput=&2 and fldsave=&3 and fldcomp=&4 and fldreportquali=&5", $encid, "Minor Procedures", False, modBasic.$compID, "Done")
+      FillLabtable()
+    Endif
+  Endif
+
+End
+
+Public Sub btnrefer_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable User"), modBasic.$PayUserList)
+  If xMedUser And If xMedUser.Count Then
+    btnrefer.Tag = xMedUser[0]
+    btnrefer.Text = xMedUser[1]
+  Else
+    btnrefer.Tag = ""
+    btnrefer.Text = ""
+  Endif
+
+End
+
+Private Sub CompleteGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,fldencounterval,flditem,fldreportquali from tblpatgeneral where fldencounterval=&1 and fldinput=&2 and fldsave=&3 and fldreportquali=&4 and fldstatus=&5"                                             ''
+  $rData2 = modDatabase.$myConn.Exec(sql, $encid, "Minor Procedures", True, "Done", "Cleared")
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData2, $aMyFields2)
+
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 180 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 320 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Time"
+    .Columns[3].Text = "Procedure"
+    .Columns[4].Text = "Status"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 1 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData2[$aMyFields2[Column]], gb.GeneralDate)
+  Else
+    GridView2.Data.Text = $rData2[$aMyFields2[Column]]
+  Endif
+
+End
+
+Public Sub btnrefer_Change()
+
+  If btnrefer.Text = "" Then
+    btnrefer.Tag = ""
+  Endif
+
+End
+
+Public Sub btnsummary_Click()
+
+  txtsummary.RichText = txtsummary.RichText & modCloudAI.GetPatCloudAIResponse($encid)
+
+End
+
+Public Sub cmbprocedure_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbprocedure)
+  modFillContainer.RestrictComboToContent(cmbprocedure)
+
+End
+
+Public Sub dctsummary_Click()
+
+  Dim xx As String
+
+  xx = GetRichTextArea("Procedure Note", txtsummary.RichText)
+  If xx Then
+    txtsummary.RichText = xx
+  Endif
+
+End
+
+Public Sub btntemplsumm_Click()
+
+  txtsummary.RichText = txtsummary.RichText & DictionaryVIew(modBasic.$dictadvPath)
+
+End

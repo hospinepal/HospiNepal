@@ -1,0 +1,169 @@
+' Gambas class file
+
+Public Sub Form_Open()
+
+  Me.Center
+  modGeneralMain.EnableCollectionCache()
+  modBasic.LoadGeneralVariables()
+  cmbvendor.List = modSupplier.FillVendorNameCombo("Active")
+  dtentrydate.Value = Now()
+  dtpurdate.Value = Now()
+
+End
+
+Public Sub Button1_Click()
+
+  Dim resx As Result
+
+  resx = modDatabase.$myConn.Limit(2).Exec("select fldpurtype,fldbillno,fldsuppname,fldpurdate,fldtime,fldcomp from tblpurchase where fldsuppname=&1", cmbvendor.Text)                      ''
+  If resx.Available Then
+    resx.MoveFirst
+    cmbtype.Text = resx["fldpurtype"]
+    txtbillno.Text = resx["fldbillno"]
+    dtentrydate.Value = resx["fldtime"]
+    txtcompid.Text = resx["fldcomp"]
+    dtpurdate.Value = resx["fldpurdate"]
+    cmbvendor.Enabled = False
+  Endif
+
+End
+
+Public Sub Button2_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+
+  res2 = modDatabase.$myConn.Exec("select fldid from tblpurchase where fldpurtype=&1 and fldbillno=&2 and fldsuppname=&3 and fldcomp=&4 and fldsav=&5", cmbtype.Text, Trim(txtbillno.Text), cmbvendor.Text, txtcompid.Text, True)
+  If res2.Available = False Then
+    res = modDatabase.$myConn.Exec("select fldstockno,fldstockid,fldcategory,fldsellpr,fldqty from tblentry where fldqty<&1", 0)
+    If res.Available Then
+      Inc Application.Busy
+      For Each res
+        res1 = modDatabase.$myConn.Create("tblpurchase")
+        res1["fldpurtype"] = cmbtype.Text
+        res1["fldbillno"] = txtbillno.Text
+        res1["fldsuppname"] = cmbvendor.Text
+        res1["fldcategory"] = res["fldcategory"]
+        res1["fldstockno"] = res["fldstockno"]
+        res1["fldstockid"] = res["fldstockid"]
+        res1["fldmrp"] = 0
+        res1["fldtotalcost"] = (0 - res["fldqty"]) * res["fldsellpr"]
+        res["fldtaxamt"] = 0
+        res1["fldmargin"] = 0
+        res1["fldtotalqty"] = 0 - res["fldqty"]
+        res1["fldreturnqty"] = 0
+        res1["fldcasdisc"] = 0
+        res1["fldcasbonus"] = 0
+        res1["fldqtybonus"] = 0
+        res1["fldcarcost"] = 0
+        res1["fldnetcost"] = res["fldsellpr"]
+        res1["flsuppcost"] = res["fldsellpr"]
+        res1["fldsellprice"] = res["fldsellpr"]
+        res1["fldpurdate"] = dtpurdate.Value
+        res1["flduserid"] = modBasic.$lbluser
+        res1["fldtime"] = dtentrydate.Value
+        res1["fldcomp"] = txtcompid.Text
+        res1["fldsav"] = True
+        res1["fldreference"] = ""
+        res1["fldchk"] = False
+        res1["xyz"] = False
+        res1.Update()
+      Next
+      Dec Application.Busy
+    Endif
+  Endif
+
+End
+
+Public Sub Button3_Click()
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res4 As Result
+
+  Dim idLock As Boolean
+  Dim ref As String
+
+  Dim sASMT As Float
+
+  If cmbtype.Text And If cmbvendor.Text And If txtbillno.Text Then
+    If Message.Question(("Do you want to save selected entries?"), ("No"), ("Yes")) = 2 Then
+
+      Inc Application.Busy
+      res1 = modDatabase.$myConn.Exec("select fldid,fldpurtype,fldpurdate,fldbillno,fldsuppname,fldcategory,fldstockno,fldstockid,fldmrp,fldtotalcost,fldtotalqty,fldnetcost from tblpurchase where fldpurtype=&1 and fldbillno=&2 and fldsuppname=&3 and fldcomp=&4 and fldsav=&5", cmbtype.Text, Trim(txtbillno.Text), cmbvendor.Text, txtcompid.Text, True)
+      If res1.Available = True Then
+        'get total amount
+        res4 = modDatabase.$myConn.Exec("select sum(fldtotalcost) as tot from tblpurchase where fldsuppname=&1 and fldbillno=&2 and fldcomp=&3 and fldsav=&4", cmbvendor.Text, Trim(txtbillno.Text), txtcompid.Text, True)
+        sASMT = res4!tot
+
+        idLock = modBillLock.LockTableForID("Purchase")
+        If idLock = True Then
+
+          modDatabase.$myConn.Begin
+          ref = modBillLock.PurchaseReference()
+
+          If ref Then
+            'add to purchase bill table
+            res3 = modDatabase.$myConn.Create("tblpurchasebill")
+            res3["fldsuppname"] = cmbvendor.Text
+            res3["fldpurtype"] = cmbtype.Text
+            res3["fldbillno"] = txtbillno.Text
+            res3["fldcategory"] = "PurEntry"
+            If cmbtype.Text = "Cash Payment" Then
+              res3["flddebit"] = sASMT
+            Else If cmbtype.Text = "Credit Payment" Then
+              res3["flddebit"] = 0
+            Endif
+            res3["fldcredit"] = sASMT
+            res3["fldtotaltax"] = 0
+            res3["fldlastdisc"] = 0
+            res3["fldpurdate"] = dtpurdate.Value
+            res3["flduserid"] = modBasic.$lbluser
+            res3["fldtime"] = Now()
+            res3["fldcomp"] = modBasic.$compID
+            res3["fldsav"] = True
+            res3["fldreference"] = ref
+            res3["xyz"] = False
+            res3.Update()
+
+            'add amt to vendor list
+            modStockSub.AddAmountToVendor(cmbvendor.Text, sASMT, cmbtype.Text)
+
+            'for each entry in purchase table
+            For Each res1
+              'add to tblentry
+              modStockSub.AddToExistEntry(res1!fldstockno, res1!fldtotalqty, txtcompid.Text)
+
+              'add reference to entry in purchase table and make sav=0
+              res2 = modDatabase.$myConn.Edit("tblpurchase", "fldid=&1", res1!fldid)
+              res2["fldsav"] = False
+              res2["fldreference"] = ref
+              res2["flduserid"] = modBasic.$lbluser
+              res2["fldtime"] = dtentrydate.Value
+              res2["fldcomp"] = txtcompid.Text
+              res2["xyz"] = False
+              res2.Update()
+            Next
+          Endif  ''if ref no exist
+          modDatabase.$myConn.Commit
+          Print "REFERENCE: " & ref
+
+          modBillLock.ReleaseLockTable("Purchase")
+        Endif ''if locked
+      Endif  ''if result available
+      Dec Application.Busy
+
+    Endif  ''if allowed to save
+  Endif  ''if vendor name exist
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Purchase")
+  Endif
+  Print db.Error & "<br>" & Error.Text
+
+End

@@ -1,0 +1,323 @@
+' Gambas class file
+
+Private $empID As String
+Private $depID As String
+
+Private $DHUser As String
+Private $DHPass As String
+Private $DHMobile As String
+Private $DHAppCode As String
+Private $DHURL As String
+Private $DHQuote As String
+Private $DHAgent As String
+Private $DHCaCert As String
+
+Private $EmpName As String
+Private $EmpSurName As String
+Private $EmpSex As String
+Private $EmpDOB As String
+Private $EmpHospNo As String
+Private $EmpDistrict As String
+Private $EmpAddress As String
+Private $EmpWard As String
+Private $EmpContact As String
+Private $EmpEmail As String
+Private $EmpGuardian As String
+Private $EmpRelation As String
+Private $EmpImagePath As String
+Private $EmpGroup As String
+Private $EmpCategory As String
+Private $EmpStatus As String
+Private $EmpEndDate As String
+
+Public Sub _new(sEmpCode As String)
+
+  Dim xtoken As String
+  Dim emplcode As String
+  Dim asx As String[]
+
+  emplcode = sEmpCode
+
+  If emplcode Then
+    asx = Split(emplcode, ".")
+    $empID = asx[0]
+    If asx.Count = 2 Then
+      $depID = asx[1]
+    Else
+      $depID = ""
+    Endif
+
+    LoadSettings()
+    xtoken = GetTokenVal()
+    If xtoken Then
+      GetEmployeeDetail(xtoken)
+    Endif
+  Endif
+
+End
+
+Private Sub LoadSettings()
+
+  $DHUser = Trim(UnBase64(modSettings.ShowSettingFromFIle("PAHS/UserName")))
+  $DHPass = Trim(UnBase64(modSettings.ShowSettingFromFIle("PAHS/Password")))
+  $DHMobile = Trim(modSettings.ShowSettingFromFIle("PAHS/MobileIdentity"))
+  $DHAppCode = Trim(modSettings.ShowSettingFromFIle("PAHS/AppCode"))
+  $DHURL = Trim(modSettings.ShowSettingFromFIle("PAHS/URL"))
+  $DHAgent = Trim(modSettings.ShowSettingFromFIle("PAHS/UserAgent"))
+  $DHQuote = Trim(modSettings.ShowSettingFromFIle("PAHS/QuotePass"))
+  $DHCaCert = Trim(modSettings.ShowSettingFromFIle("PAHS/CACertificate"))
+
+End
+
+Private Function GetTokenVal() As String
+
+  Dim xcmd As String
+  Dim xauth As Collection
+  Dim xcontent As String
+  Dim xurl As String
+  Dim xhead As String
+  Dim xout As String
+
+  Dim aColl As Collection
+  Dim xtoken As String
+
+  xurl = Trim($DHURL) &/ "ApiLogin"
+  xcontent = "Content-Type: application/json"
+
+  xauth = New Collection
+  xauth.Add($DHUser, "User")
+  xauth.Add($DHPass, "Pass")
+  xauth.Add($DHMobile, "MobileIdentity")
+  xauth.Add($DHAppCode, "NimbleAppCode")
+
+  xhead = Space(1)
+  If $DHCaCert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If $DHAgent Then
+    xhead = xhead & "-A " & $DHAgent & Space(1)
+  Endif
+  xcmd = "curl" & xhead & " -H " & Quote(xcontent) & "  -X POST " & xurl & " -d '" & JSON.Encode(xauth) & "'"     ''
+  modBasic.DebugAPIString("Execute " & Replace(xcmd, $DHPass, "***"))
+  Shell xcmd To xout
+  modBasic.DebugAPIString("Response: " & xout)
+
+  If xout Then
+    aColl = JSON.Decode(xout)
+    If aColl Then
+      xtoken = aColl["data"]["Token"]
+    Endif
+  Endif
+
+  Return xtoken
+
+End
+
+Private Sub GetEmployeeDetail(xtoken As String)
+
+  Dim xcmd As String
+  Dim xurl As String
+  Dim xout As String
+  Dim DHOutput As Collection
+  Dim depVar As Variant[]
+  Dim aColl As Collection
+  Dim xallow As Boolean
+  Dim xwork As String
+  Dim xdate As Date
+
+  xallow = False
+  xurl = Trim($DHURL) &/ "GetEmployeeDetails?Token=" & xtoken & "&EmpCode=" & $empID
+  xcmd = "curl " & "'" & xurl & "'"
+  modBasic.DebugAPIString("Execute " & xcmd)
+  Shell xcmd To xout
+  modBasic.DebugAPIString("Response: " & xout)
+
+  If xout Then
+    DHOutput = JSON.Decode(xout)
+    If DHOutput And If DHOutput["data"] Then
+      $EmpGroup = DHOutput["data"]["EmployeeInfo"]["GroupName"]
+      $EmpCategory = DHOutput["data"]["EmployeeInfo"]["EmploymentType"]
+      xwork = DHOutput["data"]["EmployeeInfo"]["WorkingStatus"]
+      $EmpEndDate = DHOutput["data"]["EmployeeInfo"]["ContractEndDate"]
+
+      If $depID Then
+        If $EmpCategory = "Permanent" Then
+          depVar = DHOutput["data"]["Dependents"]
+          If depVar And If depVar.Count Then
+            For Each aColl In depVar
+
+              If aColl["MemberID"] = $depID Then
+                $EmpName = aColl["FirstName"]
+                $EmpSurName = aColl["SurName"]
+                $EmpSex = aColl["Gender"]
+                $EmpDOB = aColl["DOB"]
+                $EmpHospNo = aColl["HospitalNo"]
+                $EmpRelation = aColl["Relation"]
+                $EmpGuardian = DHOutput["data"]["EmployeeInfo"]["EmpName"]
+                $EmpImagePath = aColl["ImagePath"]
+
+                If $EmpRelation = "Son" Or If $EmpRelation = "Daughter" Then
+                  xdate = ConvertToDate($EmpDOB)
+                  If DateDiff(xdate, Now(), gb.Day) < 6570 Then
+                    xallow = True
+                  Endif
+                Else If $EmpRelation = "Spouse"
+                  xallow = True
+                Endif
+              Endif
+
+            Next
+          Endif
+        Endif
+
+      Else
+        $EmpName = DHOutput["data"]["EmployeeInfo"]["EmpName"]
+        $EmpSurName = DHOutput["data"]["EmployeeInfo"]["SurName"]
+        $EmpSex = DHOutput["data"]["EmployeeInfo"]["Gender"]
+        $EmpDOB = DHOutput["data"]["EmployeeInfo"]["DOB"]
+        $EmpHospNo = DHOutput["data"]["EmployeeInfo"]["HospitalNumber"]
+        $EmpRelation = DHOutput["data"]["EmployeeInfo"]["Relation"]
+        $EmpGuardian = DHOutput["data"]["EmployeeInfo"]["Guardian"]
+        $EmpImagePath = DHOutput["data"]["EmployeeInfo"]["ImagePath"]
+        xallow = True
+      Endif
+
+      $EmpDistrict = DHOutput["data"]["EmployeeInfo"]["District"]
+      $EmpAddress = DHOutput["data"]["EmployeeInfo"]["PermanentAddress"]
+      $EmpWard = DHOutput["data"]["EmployeeInfo"]["WardNo"]
+      $EmpContact = DHOutput["data"]["EmployeeInfo"]["ContactNo"]
+      $EmpEmail = DHOutput["data"]["EmployeeInfo"]["Email"]
+
+      If xallow = True Then
+        $EmpStatus = xwork
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Function GetEmployeeName() As String
+
+  Return $EmpName
+
+End
+
+Public Function GetEmployeeSurName() As String
+
+  Return $EmpSurName
+
+End
+
+Public Function GetEmployeeGender() As String
+
+  Return $EmpSex
+
+End
+
+Public Function GetEmployeeDOB() As Date
+
+  Dim xdate As Date
+
+  xdate = ConvertToDate($EmpDOB)
+
+  Return xdate
+
+End
+
+Public Function GetEmployeeHospNo() As String
+
+  Return $EmpHospNo
+
+End
+
+Public Function GetEmployeeDistrict() As String
+
+  Return $EmpDistrict
+
+End
+
+Public Function GetEmployeeAddress() As String
+
+  Return $EmpAddress
+
+End
+
+Public Function GetEmployeeWard() As String
+
+  Return $EmpWard
+
+End
+
+Public Function GetEmployeeContact() As String
+
+  Return $EmpContact
+
+End
+
+Public Function GetEmployeeEmail() As String
+
+  Return $EmpEmail
+
+End
+
+Public Function GetEmployeeGuardian() As String
+
+  Return $EmpGuardian
+
+End
+
+Public Function GetEmployeeRelation() As String
+
+  Return $EmpRelation
+
+End
+
+Public Function GetEmployeeImage() As String
+
+  Return $EmpImagePath
+
+End
+
+Public Function GetEmployeePackage() As String
+
+  Dim xx As String
+
+  If $EmpGroup Then
+    xx = $EmpGroup & "-" & $EmpCategory
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetEmployeeStatus() As String
+
+  Return $EmpStatus
+
+End
+
+Public Function GetEmployeeEndDate() As Date
+
+  Dim xdate As Date
+
+  xdate = ConvertToDate($EmpEndDate)
+  Return xdate
+
+End
+
+Private Function ConvertToDate(sDate As String) As Date
+
+  Dim asx As String[]
+  Dim xdate As Date
+
+  If sDate Then
+    asx = Split(sDate, "-")
+    xdate = Date(CInt(asx[0]), CInt(asx[1]), CInt(asx[2]), 0, 0, 0, 0)
+  Else
+    xdate = ""
+  Endif
+
+  Return xdate
+
+End

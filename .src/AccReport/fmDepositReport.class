@@ -1,0 +1,527 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $SSQLFields As String[]
+
+Private $ColCount As Integer
+Private $newColumn As String[]
+Private $ProgressBar1 As ProgressBar
+Private $RepoStr As String
+
+Public Sub Form_Open()
+
+  Dim xhospfld As String
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  If modHelpVariable.$LogInCategory = "Cashier" Then
+    mnuforms.Visible = True
+  Else
+    mnuforms.Visible = False
+  Endif
+  cmbstatus.List = ["Recorded", "Registered", "Follow Up", "Refer(OPD)", "Death(OPD)", "Admitted", "Discharged", "LAMA", "Refer", "Death", "Absconder"]
+  cmbstatus.Text = "Admitted"
+  cmblocation.List = modGeneral.GetDepartmentWithBedList()
+  cmblocation.Add("%")
+  cmblocation.Text = "%"
+  cmbdisctype.List = modNonMedical.FillDiscountCombo()
+  cmbdisctype.Text = "%"
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+
+  If modHelpVariable.$LogInCategory = "Account" Then
+    mnuremovelock.Visible = True
+  Else
+    mnuremovelock.Visible = False
+  Endif
+
+  xhospfld = modDataRepo.HospitalField()
+  $SSQLFields = ["fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldcurrlocat", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldadmission"]
+  If xhospfld Then
+    $SSQLFields.Add(xhospfld)
+  Endif
+  rball.Value = True
+  $RepoStr = modDataRepo.GetRepoLastStr()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub mnufiscal_Click()
+
+  Dim res As Result
+  Dim xyear As String
+
+  xyear = InputCombo("Select Fiscal Year Range", "Select Year", modBasic.$FiscalYearList, "", True)
+  If xyear Then
+    res = modDatabase.$myConn.Exec("select fldfrom,fldend from tblfiscalid where fldlabel=&1", xyear)
+    If res.Available Then
+      res.MoveFirst
+      dtfir.Value = res["fldfrom"]
+      dtlast.Value = res["fldend"]
+    Endif
+  Endif
+
+End
+
+Private Function GetSQLColumns() As String[]
+
+  Dim xFldList As String[]
+  Dim i As Integer
+
+  modCustPatient.FillNewCOlumnCollection(Me.Tag)
+  $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+  xFldList = $SSQLFields.Copy()
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      xFldList.Add("fldencounterval")
+    Next
+  Endif
+  Return xFldList
+
+End
+
+Private Function FillInvoiceGrid(xFldList As String[], sCon As Connection) As Result
+
+  Dim xfld As String
+  Dim res As Result
+
+  If cmbstatus.Text = "Admitted" Then
+    xfld = "flddoa"
+  Else If cmbstatus.Text = "Registered" Then
+    xfld = "fldregdate"
+  Else
+    xfld = "flddod"
+  Endif
+
+  If cmblocation.Text = "%" Then
+    If chkalldate.Value = True Then
+      res = sCon.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and flddisctype like &2" & $RepoStr, cmbstatus.Text, cmbdisctype.Text)
+    Else
+      res = sCon.Exec("select " & xFldList.Join(",") & " from tblencounter where " & xfld & ">=&1 and " & xfld & "<=&2 and fldadmission like &3 and flddisctype like &4" & $RepoStr, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbstatus.Text, cmbdisctype.Text)                                              ''   ''
+    Endif
+  Else
+    If chkalldate.Value = True Then
+      res = sCon.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &2) and flddisctype like &3" & $RepoStr, cmbstatus.Text, cmblocation.Text, cmbdisctype.Text)
+    Else
+      res = sCon.Exec("select " & xFldList.Join(",") & " from tblencounter where " & xfld & ">=&1 and " & xfld & "<=&2 and fldadmission like &3 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &4) and flddisctype like &5" & $RepoStr, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbstatus.Text, cmblocation.Text, cmbdisctype.Text)                                              ''   ''
+    Endif
+  Endif
+
+  Return res
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+
+  Dim xxx As Variant
+  Dim i As Integer
+
+  If Column = 1 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
+  Else If Column = 2 Then
+    xxx = modPatient.GetPatientAgeString(xVariable, Now()) & "/" & modPatient.GetPatientSex(xVariable, modDatabase.$syConn)
+  Else If Column = 3 Then
+    xxx = modPatient.GetPatientExtCOdebyEnc(xVariable)
+  Else If Column = 4 Then
+    xxx = modPatient.ShowDiscountCategEnc(xVariable)
+
+  Else If Column = 6 Then
+    If modNonMedical.GetFinanceClearance(xVariable) = True Then
+      xxx = "icon:/small/lock"
+    Else
+      xxx = ""
+    Endif
+  Else If Column = 7 Then
+    If chkexpen.Value = True Then
+      xxx = modReportVar.GetLocaleNumberFormat(modNonMedical.GetPatientDeposit(modDatabase.$syConn, xVariable), gb.Currency)
+    Endif
+  Else If Column = 8 Then
+    If chkexpen.Value = True Then
+      If rbcredit.Value = True Then
+        xxx = modReportVar.GetLocaleNumberFormat(modNonMedical.GetAdmitInvoiceTotalPackage(xVariable, "Credit"), gb.Currency)
+      Else
+        xxx = modReportVar.GetLocaleNumberFormat(modNonMedical.GetAdmitInvoiceTotalPackage(xVariable, "%"), gb.Currency)
+      Endif
+    Endif
+  Else If Column = 9 Then
+    If chkexpen.Value = True Then
+      If rbcredit.Value = True Then
+        xxx = modReportVar.GetLocaleNumberFormat(modNonMedical.GetAdmitReceiptTotalPackage(xVariable, "Credit"), gb.Currency)
+      Else
+        xxx = modReportVar.GetLocaleNumberFormat(modNonMedical.GetAdmitReceiptTotalPackage(xVariable, "%"), gb.Currency)
+      Endif
+    Endif
+  Else If Column = 10 Then
+    If chkexpen.Value = True Then
+      xxx = modReportVar.GetLocaleNumberFormat(modNonMedical.TotalUnpaidValuePatient(modDatabase.$syConn, xVariable), gb.Currency)
+    Endif
+
+  Else If Column = 12 Then
+    xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+  Else
+    xxx = xVariable
+  Endif
+
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      If Column = $ColCount + i Then
+        xxx = modCustPatient.NewColValue(Me.Tag, $newColumn[i], xVariable)
+      Endif
+    Next
+  Endif
+  Return xxx
+
+End
+
+Public Sub mnusearchencid_Click()
+
+  Dim encid As String
+  Dim xFldList As String[]
+
+  encid = GetEncid()
+  If encid Then
+    Inc Application.Busy
+    xFldList = GetSQLColumns()
+    If Not cmbstatus.Text Then
+      $rData = modDatabase.$syConn.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and flddisctype like &2 and fldencounterval=&3" & $RepoStr, "%", cmbdisctype.Text, encid)
+    Else
+      If cmblocation.Text = "%" Then
+        $rData = modDatabase.$syConn.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and flddisctype like &2 and fldencounterval=&3" & $RepoStr, cmbstatus.Text, cmbdisctype.Text, encid)
+      Else
+        $rData = modDatabase.$syConn.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &2) and flddisctype like &3 and fldencounterval=&4" & $RepoStr, cmbstatus.Text, cmblocation.Text, cmbdisctype.Text, encid)
+      Endif
+    Endif
+    SHowGridParam()
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub mnusearchname_Click()
+
+  Dim xname As String[]
+  Dim xFldList As String[]
+
+  xname = InputDoubleText(("Search Patient Name"), ["First Name", "SurName"], ["%", "%"], modBasic.$SurNameList)
+  If xname Then
+    Inc Application.Busy
+    xFldList = GetSQLColumns()
+    If Not cmbstatus.Text Then
+      $rData = modDatabase.$syConn.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and flddisctype like &2 and fldpatientval in(select fldpatientval from tblpatientinfo where lower(fldptnamefir) like &3 and lower(fldptnamelast) like &4)" & $RepoStr, "%", cmbdisctype.Text, LCase(xname[0]), LCase(xname[1]))
+    Else
+      If cmblocation.Text = "%" Then
+        $rData = modDatabase.$syConn.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and flddisctype like &2 and fldpatientval in(select fldpatientval from tblpatientinfo where lower(fldptnamefir) like &3 and lower(fldptnamelast) like &4)" & $RepoStr, cmbstatus.Text, cmbdisctype.Text, LCase(xname[0]), LCase(xname[1]))
+      Else
+        $rData = modDatabase.$syConn.Exec("select " & xFldList.Join(",") & " from tblencounter where fldadmission like &1 and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &2) and flddisctype like &3 and fldpatientval in(select fldpatientval from tblpatientinfo where lower(fldptnamefir) like &4 and lower(fldptnamelast) like &5)" & $RepoStr, cmbstatus.Text, cmblocation.Text, cmbdisctype.Text, LCase(xname[0]), LCase(xname[1]))
+      Endif
+    Endif
+    SHowGridParam()
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim xFieldList As String[]
+
+  If cmbstatus.Text Then
+    Inc Application.Busy
+    xFieldList = GetSQLColumns()
+    $rData = FillInvoiceGrid(xFieldList, modDatabase.$syConn)
+    SHowGridParam()
+    Dec Application.Busy
+  Endif
+
+End
+
+Private Sub SHowGridParam()
+
+  Dim i As Integer
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  $ColCount = $SSQLFields.Count
+  With GridView1
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Encounter"
+    .Columns[1].Text = "Name"
+    .Columns[2].Text = "Age/Sex"
+    .Columns[3].Text = "Code"
+    .Columns[4].Text = "Package"
+    .Columns[5].Text = "Location"
+    .Columns[7].Text = "Deposits"
+    .Columns[8].Text = "Invoices"
+    .Columns[9].Text = "Receipts"
+    .Columns[10].Text = "Pending"
+    .Columns[11].Text = "Status"
+
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        .Columns[$ColCount + i].Text = $newColumn[i]
+        .Columns[$ColCount + i].Width = 150 * modBasic.$AppWidthRatio
+      Next
+    Endif
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 6 Then
+    GridView1.Data.Picture = Picture[GetGridViewValue(Column, $rData[$aMyFields[Column]])]
+    GridView1.Data.Text = ""
+  Else
+    If Column > $SSQLFields.Count - 1 Then
+      GridView1.Data.RichText = modString.TextToHTML(GetGridViewValue(Column, $rData[$aMyFields[Column]]))
+    Else
+      GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+    Endif
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Public Sub btnexpo_Click()
+
+  Dim xHeader As String[]
+  Dim xhide As Integer[]
+  Dim Column As Integer
+  Dim xCollRow As Collection
+  Dim xColum As Integer
+
+  Dim $hGridExportTable As CExportResult
+  Dim xparam1 As String
+  Dim xparam2 As String
+  Dim encColumn As Integer
+  Dim xFldList As String[]
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  xHeader = New String[]
+  xhide = New Integer[]
+  For Column = 0 To GridView1.Columns.Count - 1
+    xHeader.Add(GridView1.Columns[Column].Text)
+    If GridView1.Columns[Column].Width < 5 Then
+      xhide.Add(Column)
+    Endif
+  Next
+  xparam1 = "DEPOSIT REPORT"
+  xparam2 = modReportVar.GetDateTimeReport(Now(), gb.GeneralDate)
+  encColumn = 0
+  $hGridExportTable = New CExportResult(Me.Tag, xHeader, xhide, xparam1, xparam2, encColumn)
+
+  Inc Application.Busy
+  xFldList = GetSQLColumns()
+
+  For Each $rData
+    xCollRow = New Collection
+    For xColum = 0 To xFldList.Count - 1
+      xCollRow.Add(GetGridViewValue(xColum, $rData[xFldList[xColum]]), CStr(xColum))
+    Next
+    $hGridExportTable.Add($rData.Index, xCollRow)
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Endif
+  Next
+
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  modControlSub.DisplayReportExport($hGridExportTable.HTMLPath())
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnubill_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    xPath = modCHTMLInvoice.ShowTotalInvoicebyPatient(GridView1[GridView1.Row, 0].Text, "Admitted")
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 0].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuexpenseall_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    xPath = modCHTMLInvoice.ShowTotalExpensebyPatient(modDatabase.$syConn, GridView1[GridView1.Row, 0].Text, "Admitted")
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 0].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnucreditpack_Click()
+
+  Dim xmodeList As String[]
+  Dim xmode As String
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xmodeList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(flddisctype) as col from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldbilltype=&3", GridView1[GridView1.Row, 0].Text, True, "Credit"))
+    xmode = InputCombo("Select Package", GridView1[GridView1.Row, 0].Text, xmodeList, "%", True)
+    If xmode Then
+      Inc Application.Busy
+      xPath = modCHTMLInvoice.ShowCreditSelExpensebyPatient(modDatabase.$syConn, GridView1[GridView1.Row, 0].Text, "Admitted", xmode)
+      Dec Application.Busy
+      modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 0].Text, xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub mnuexpense_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    xPath = modCHTMLInvoice.ShowSummaryExpensebyPatient(modDatabase.$syConn, GridView1[GridView1.Row, 0].Text, "Admitted")
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 0].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnunoninvoiced_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    If rbcredit.Value = True Then
+      xPath = modCHTMLInvoice.ShowPendingExpensebyPatient(modDatabase.$syConn, GridView1[GridView1.Row, 0].Text, "Admitted", ["Credit"])
+    Else
+      xPath = modCHTMLInvoice.ShowPendingExpensebyPatient(modDatabase.$syConn, GridView1[GridView1.Row, 0].Text, "Admitted", ["Credit", "Cash"])
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 0].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuremovelock_Click()
+
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    res = modDatabase.$myConn.Edit("tblpatientdate", "fldencounterval=&1 and fldhead=&2", GridView1[GridView1.Row, 0].Text, "Clearance")
+    If res.Available Then
+      For Each res
+        res["fldhead"] = "Clearance Removed"
+        res.Update
+      Next
+    Endif
+    Dec Application.Busy
+    btnrefresh_Click()
+  Endif
+
+End
+
+Public Sub mnuaddcolumn_Click()
+
+  Dim hForm As FmAddNewColumn
+
+  hForm = New FmAddNewColumn(Me.Tag)
+  hForm.ShowModal
+
+End
+
+Public Sub mnuexpocolumn_Click()
+
+  Dim hForm As FmCustColumnSet
+
+  hForm = New FmCustColumnSet(Me.Tag)
+  hForm.ShowModal
+
+End
+
+Public Sub mnucashier_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modSettings.SaveValuesToLog("LastValue/Encounter", GridView1[GridView1.Row, 0].Text)
+    modWorkSpace.Remove(fmCashBilling)
+    modWorkSpace.Add(fmCashBilling)
+  Endif
+
+End
+
+Public Sub mnudischarge_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modSettings.SaveValuesToLog("LastValue/Encounter", GridView1[GridView1.Row, 0].Text)
+    modWorkSpace.Remove(fmCashDischarge)
+    modWorkSpace.Add(fmCashDischarge)
+  Endif
+
+End

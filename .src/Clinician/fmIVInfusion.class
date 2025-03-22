@@ -1,0 +1,231 @@
+' Gambas class file
+
+Private $encid As String
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+
+End
+
+Public Sub Form_Open()
+
+  Dim xstatus As String
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+
+  xstatus = modPatient.CurrentAdmissionStatus($encid)
+  txtlocation.Text = modPatient.GetLocationSetting($encid, xstatus)
+  ShowMedFluids()
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub ShowMedFluids()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldid,flditem,flddose,fldfreq,flddays,fldcurval,fldstarttime,fldstarttime,fldstatus from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldroute=&3 and fldstarttime<=&4 and fldendtime>=&5 ORDER BY fldid DESC"
+  res = modDatabase.$myConn.Exec(sql, $encid, True, "fluid", modDate.EndSqlDate(Now()), modDate.StartSqlDate(Now()))
+
+  grdfluid.Clear
+  grdfluid.Columns.Count = res.Fields.Count
+  grdfluid.Rows.Count = res.Count
+
+  With grdfluid
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 35 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 1
+    .Columns[9].Width = 1
+
+    .Columns[2].Text = "Medicine"
+    .Columns[3].Text = "Dose"
+    .Columns[4].Text = "Freq"
+    .Columns[6].Text = "Status"
+  End With
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(grdfluid, res.Index, Column)
+      If Column = 1 Then
+        grdfluid[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldstarttime"], gb.GeneralDate)
+      Else If Column = 7 Then
+        grdfluid[res.Index, Column].Picture = Picture[GetFluidAdminStatusCode(res[fld.Name])]
+        grdfluid[res.Index, Column].Text = ""
+      Else
+        grdfluid[res.Index, Column].Text = res[fld.Name]
+      Endif
+      grdfluid.Rows[res.Index].Height = Max(grdfluid.Rows[res.Index].Height, grdfluid[res.Index, Column].Font.RichTextHeight(grdfluid[res.Index, Column].Text, grdfluid.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (grdfluid.Rows.Height - grdfluid.Font.Height))
+      grdfluid[res.Index, Column].WordWrap = True
+
+      Column = Column + 1
+    Next
+  Next
+  grdfluid.Row = 0
+
+End
+
+Public Sub grdfluid_Click()
+
+  Dim xx As String[] = ["Continue", "Completed", "Discontinue", "Hold", "Change", "ReWrite", "Cancelled", "Wasted"]
+  Dim res As Result
+  Dim xval As String
+  Dim yval As Integer
+  Dim Row As Integer
+
+  Row = grdfluid.Row
+  FillFluidGridView(grdfluid[grdfluid.Row, 0].Text, grdfluid[grdfluid.Row, 2].Text)
+  If grdfluid.Column = 6 Then
+    xval = InputCombo(grdfluid[grdfluid.Row, 2].Text, ("Select Current Status"), xx, grdfluid[grdfluid.Row, 6].Text, True)
+    If xval Then
+      res = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1", grdfluid[grdfluid.Row, 0].Text)
+      res["fldcurval"] = xval
+      res["xyz"] = False
+      res.Update()
+      ShowMedFluids()
+    Endif
+
+  Else If grdfluid.Column = 7 Then
+    If grdfluid[grdfluid.Row, 6].Text = "Continue" Then
+      If grdfluid[grdfluid.Row, 7].Picture = Picture["icon:/small/next"] Then
+        yval = InputValue(("Enter Rate of Administration in mL/Hour"), grdfluid[grdfluid.Row, 2].Text, 0)
+        If yval Then
+          modPharmSub.InsertNurDosing(grdfluid[grdfluid.Row, 0].Text, $encid, yval, "mL/Hour", Now())
+          FillFluidGridView(grdfluid[grdfluid.Row, 0].Text, grdfluid[grdfluid.Row, 2].Text)
+          ShowMedFluids()
+        Endif
+      Endif
+    Endif
+
+  Endif
+  grdfluid.Row = Row
+
+End
+
+Private Sub FillFluidGridView(dosno As Long, sItem As String)
+
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  res = modDatabase.$syConn.Exec("select fldid,fldid,fldvalue,fldunit,fldfromtime,fldtotime,fldid,flddoseno from tblnurdosing where fldencounterval=&1 and flddoseno=&2 and fldfromtime IS NOT NULL ORDER BY fldid DESC", $encid, dosno)
+  grdfluiddata.Clear
+  grdfluiddata.Columns.Count = res.Fields.Count
+  grdfluiddata.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(grdfluiddata, res.Index, Column)
+      If Column = 1 Then
+        grdfluiddata[res.Index, Column].Text = sItem
+      Else If Column = 2 Then
+        grdfluiddata[res.Index, Column].Text = res[fld.Name]
+        grdfluiddata[res.Index, Column].Alignment = Align.Right
+      Else If Column = 4 Then
+        grdfluiddata[res.Index, Column].Text = modReportVar.GetDateTimeReport(res[fld.Name], gb.GeneralDate)
+      Else If Column = 5 Then
+        grdfluiddata[res.Index, Column].Text = modReportVar.GetDateTimeReport(res[fld.Name], gb.GeneralDate)
+      Else If Column = 6 Then
+        grdfluiddata[res.Index, Column].Picture = Picture[GetPictureDosing(res[fld.Name])]
+      Else
+        grdfluiddata[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+
+  With grdfluiddata
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 350 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+    .Columns[5].Width = 1
+    .Columns[6].Width = 35 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 1
+
+    .Columns[1].Text = "Particulars"
+    .Columns[2].Text = "Rate"
+    .Columns[3].Text = "Unit"
+  End With
+
+End
+
+Public Sub grdfluiddata_Click()
+
+  Dim res As Result
+  Dim Row As Integer
+
+  If grdfluiddata.Column = 6 Then
+    If grdfluiddata[grdfluiddata.Row, 6].Picture = Picture["icon:/small/stop"] Then
+      Row = grdfluid.Row
+      res = modDatabase.$myConn.Edit("tblnurdosing", "fldid=&1", grdfluiddata[grdfluiddata.Row, 0].Text)
+      res["fldtotime"] = Now()
+      res["xyz"] = False
+      res.Update
+      FillFluidGridView(grdfluiddata[grdfluiddata.Row, 7].Text, grdfluiddata[grdfluiddata.Row, 1].Text)
+      ShowMedFluids()
+      grdfluid.Row = Row
+    Endif
+  Endif
+
+End
+
+Private Function GetPictureDosing(dosid As Long) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select flddoseno,fldfromtime,fldtotime from tblnurdosing where fldid=&1", dosid)
+  If res.Available Then
+    If res["fldfromtime"] And If Not res["fldtotime"] Then
+      xx = "icon:/small/stop"
+    Else If res["fldfromtime"] And If res["fldtotime"] Then
+      xx = "icon:/small/lock"
+    Endif
+  Endif
+  Return xx
+
+End
+
+Private Function GetFluidAdminStatusCode(dosno As Long) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$syConn.Exec("select fldid,fldfromtime,fldtotime from tblnurdosing where fldencounterval=&1 and flddoseno=&2 ORDER BY fldid DESC", $encid, dosno)
+  If res.Available Then
+    If res["fldfromtime"] And If Not res["fldtotime"] Then
+      xx = "icon:/small/stop"
+    Else
+      xx = "icon:/small/next"
+    Endif
+  Else
+    xx = "icon:/small/next"
+  Endif
+  Return xx
+
+End

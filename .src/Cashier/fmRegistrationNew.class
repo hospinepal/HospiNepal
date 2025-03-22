@@ -1,0 +1,1275 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $selDate As Boolean
+
+Private $sValue As String
+Private $ImgPath As String
+
+Public Sub Run() As String
+
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False", True)
+  DisplayTextBoxEnableSetting()
+
+  cmbsex.List = ["Male", "Female", "Other"]
+  chknull.Value = False
+  cmbdistrict.List = modBasic.$DistrictList
+
+  btnyear.Text = "Year"
+  btnmon.Text = "Mon"
+  lblstatus.Text = "NEW PATIENT"
+  cmbsex.Text = modBasic.$RegGender
+  cmbdistrict.Text = modBasic.$RegDistrict
+  cmbconsult.Text = modGeneral.GetCompNameFromCompID(modBasic.$compID)
+
+  FillRegistrationGrid()
+  SetRequiredVariables()
+  txtpatno.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["Y"] And If Key.Alt Then
+    btnyear.Text = "Year"
+    btnmon.Text = "Mon"
+  Else If Key.Code = Key["M"] And If Key.Alt Then
+    btnyear.Text = "Mon"
+    btnmon.Text = "Day"
+  Else If Key.Code = Key["D"] And If Key.Alt Then
+    btnyear.Text = "Day"
+    btnmon.Text = "Hour"
+  Else If Key.Code = Key.Insert Then
+    btnChange_Click()
+  Else If Key.Code = Key.Esc Then
+    If txtencounter.Text Then
+      $sValue = txtencounter.Text
+      Me.Close(True)
+    Else
+      Me.Close()
+    Endif
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+''-------------------------------- buttons -------------------------------------------
+Public Sub btngetpatno_Click()
+
+  GetPatientInfoAll()
+
+End
+
+Public Sub btngetpatno_GotFocus()
+
+  GetPatientInfoAll()
+
+End
+
+Private Sub GetPatientInfoAll()
+
+  Dim res As Result
+  Dim sql As String
+  Dim lstdat As Date
+  Dim xaddr As String[]
+
+  $selDate = False
+  dtdobmain.Value = ""
+  $ImgPath = ""
+  txtnamefir.Enabled = True
+  txtnamelast.Enabled = True
+  If txtpatno.Text Then
+    If modPatient.GetRegistrationAllow(Trim(txtpatno.Text)) = True Then
+      sql = "select fldptnamefir,fldptnamelast,fldethniccode,fldptaddvill,fldptaddward,fldptadddist,fldptsex,fldptcontact,fldptguardian,fldptbirday,fldptadmindate,fldemail,fldrelation,fldptcode,fldencrypt from tblpatientinfo where fldpatientval=&1"
+      res = modDatabase.$myConn.Exec(sql, Trim(txtpatno.Text))
+      If res.Available = False Then
+        modLinkDB.CheckPatientDataRemote(Trim(txtpatno.Text))
+        txtpatno.SetFocus
+      Else
+        txtvisit.Text = modPatient.GetPatientHMISStattus(Trim(txtpatno.Text))
+        cmbdistrict.Text = res["fldptadddist"]  ''district always before address
+        cmbsex.Text = res["fldptsex"]
+        If res["fldptaddward"] Then
+          txtward.Text = res["fldptaddward"]
+          txtaddfir.Text = res["fldptaddvill"]
+        Else
+          If res["fldptaddvill"] Then
+            xaddr = Split(res["fldptaddvill"], "-")
+            If xaddr.Count > 1 Then
+              If IsInteger(xaddr[xaddr.Count - 1]) Then
+                txtward.Text = xaddr[xaddr.Count - 1]
+                txtaddfir.Text = xaddr.Copy(0, xaddr.Count - 1).Join("-")
+              Else
+                txtward.Text = ""
+                txtaddfir.Text = xaddr.Join("-")
+              Endif
+            Else
+              txtward.Text = ""
+              txtaddfir.Text = xaddr.Join("-")
+            Endif
+          Endif
+        Endif
+        If modBasic.$SuperUser = True Then
+          txtnamefir.Text = modPassword.DecryptPatData(res["fldptnamefir"], res["fldencrypt"])
+          txtnamelast.Text = modPassword.DecryptPatData(res["fldptnamelast"], res["fldencrypt"])
+          txtcontact.Text = modPassword.DecryptPatData(res["fldptcontact"], res["fldencrypt"])
+          txtemail.Text = modPassword.DecryptPatData(res["fldemail"], res["fldencrypt"])
+        Else
+          txtnamefir.Text = res["fldptnamefir"]
+          txtnamelast.Text = res["fldptnamelast"]
+          txtcontact.Text = res["fldptcontact"]
+          txtemail.Text = res["fldemail"]
+        Endif
+        txtethcode.Text = res["fldethniccode"]
+        txtpatcode.Text = res["fldptcode"]
+        If res["fldptbirday"] Then
+          chknull.Value = False
+          dtdobmain.Value = res["fldptbirday"]
+          $selDate = True
+          modDateSub.DateToYearandMonth(res["fldptbirday"], txtyears, txtmonths, btnyear, btnmon)
+        Else
+          chknull.Value = True
+        Endif
+        lblstatus.Text = "RECORDED PATIENT"
+        lstdat = modPatient.GetRecordDate(modPatient.GetLastEncoutnerFromPatNo(Trim(txtpatno.Text)))
+        If modBasic.$RegistLockProfile Then
+          If DateDiff(res["fldptadmindate"], Now(), gb.Hour) > modBasic.$RegistLockProfile Then
+            btnChange.Enabled = False
+          Endif
+        Endif
+        btnshowrefr.SetFocus
+      Endif
+
+      If Not txtnamefir.Text Then
+        If modBasic.$AllowPatNoEntry = "Yes" Then
+          txtnamefir.SetFocus
+        Else
+          txtpatno.SetFocus
+        Endif
+      Endif
+    Else
+      txtpatno.Text = ""
+      Message.Warning("Multiple Registration is disabled", ("OK"))
+      txtnamefir.Text = ""
+      txtnamelast.Text = ""
+      txtpatno.SetFocus
+    Endif
+  Else
+    txtnamefir.SetFocus
+  Endif
+
+End
+
+Private Function AllowDataSave() As Boolean
+
+  Dim xx As Boolean
+
+  xx = True
+  If modBasic.$RegistEssAddress = "Yes" Then
+    If Not txtaddfir.Text Then
+      xx = False
+    Endif
+  Endif
+
+  If modBasic.$RegistEssDistrict = "Yes" Then
+    If Not cmbdistrict.Text Then
+      xx = False
+    Endif
+  Endif
+
+  If modBasic.$RegistEssAge = "Yes" Then
+    If Not dtdobmain.Value And If Not txtyears.Value And If Not txtmonths.Value Then
+      xx = False
+    Else If chknull.Value = True
+      xx = False
+    Endif
+  Endif
+
+  If modBasic.$RegistEssContact = "Yes" Then
+    If Not txtcontact.Text Then
+      xx = False
+    Endif
+  Endif
+
+  If modBasic.$RegistEssEMail = "Yes" Then
+    If Not txtemail.Text Then
+      xx = False
+    Endif
+  Endif
+
+  If modBasic.$RegistEssCode = "Yes" Then
+    If Not txtpatcode.Text Then
+      xx = False
+    Endif
+  Endif
+
+  If modBasic.$RegistEssWardNo = "Yes" Then
+    If Not txtward.Text Then
+      xx = False
+    Endif
+  Endif
+
+  If modBasic.$RegistEssEthnic = "Yes" Then
+    If Not txtethcode.Text Then
+      xx = False
+    Endif
+  Endif
+
+  Return xx
+
+End
+
+Public Sub btnOK_GotFocus()
+
+  btnOK.Font.Bold = True
+
+End
+
+Public Sub btnOK_LostFocus()
+
+  btnOK.Font.Bold = False
+  btnCancel.SetFocus
+
+End
+
+Public Sub btnCancel_KeyPress()
+
+  btnCancel_Click()
+
+End
+
+Public Sub btnCancel_Click()
+
+  If txtencounter.Text Then
+    $sValue = txtencounter.Text
+    Me.Close(True)
+  Endif
+
+End
+
+Public Sub btnshowrefr_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnshowrefr_Click()
+  Endif
+
+End
+
+Public Sub btnOK_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnOK_Click()
+  Endif
+
+End
+
+Public Sub btnwebcam_Click()
+
+  Dim hForm As FmPersonImage
+
+  If txtpatno.Text Then
+    hForm = New FmPersonImage("Patient", Trim(txtpatno.Text), False)
+    hForm.ShowModal
+  Else
+    If Not $ImgPath Then
+      $ImgPath = modImage.GetWebCamValue(modDevice.WebCamDevice())
+    Endif
+  Endif
+
+End
+
+Public Sub btnshowrefr_Click()
+
+  btnwebcam.Enabled = False
+  If modBasic.$RegistAutoWebcam = "Yes" Then
+    If Not $ImgPath Then
+      $ImgPath = modImage.GetWebCamValue(modDevice.WebCamDevice())
+    Endif
+  Endif
+  btnshowrefr.Tag = ""
+  btnOK.Enabled = True
+  btnshowrefr.Picture = Picture["icon:/small/down"]
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim $hReport As CRegistLabel
+  Dim res As Result
+
+  If txtpatno.Text Then
+    If Not txtencounter.Text Then
+      If modBasic.$RegistClearPast = "Yes" Then
+        res = modDatabase.$myConn.Exec("select fldencounterval from tblencounter where fldpatientval=&1 and fldadmission=&2", Trim(txtpatno.Text), "Registered")
+        For Each res
+          If modNonMedical.GetFinanceClearance(res["fldencounterval"]) = True Then
+          Else
+            modPatientSub.EnterPatientImpDate(res["fldencounterval"], "Clearance", "")
+          Endif
+        Next
+      Endif
+    Endif
+  Endif
+  SaveRegistrationData()
+  If $ImgPath Then
+    modImage.InsertPatientImage("Patient", Trim(txtpatno.Text), $ImgPath)
+  Endif
+  Wait
+  If txtencounter.Text Then
+    OpenDemographics()
+
+    If modBasic.$RegistAutoBarcode = "Yes" Then
+      modDevice.PrintBarCodeEnc(txtencounter.Text)
+    Endif
+
+    If modBasic.$RegistAutoSticker = "Yes" Then
+      If modNonMedical.AllowRegistSlipWithInvoice(txtencounter.Text, cmbconsult.Text, modBasic.$RegistDefaultMode) = True Then
+        $hReport = New CRegistLabel(txtencounter.Text)
+        modControlSub.OpenHTMLPreview(txtencounter.Text, $hReport.RegistLabelPath(), "LabelSize")
+      Endif
+    Endif
+
+    If modBasic.$RegistAutoPrescription = "Yes" Then
+      modPatientSub.PrintRegistExtraReport(txtencounter.Text)
+    Endif
+  Endif
+
+End
+
+Private Sub SaveRegistrationData()
+
+  Dim res As Result
+  Dim idLock As Boolean
+
+  Dim xdisctype As String
+  Dim xbillmode As String
+
+  If modBasic.$RegistDefaultDisc Then
+    xdisctype = modBasic.$RegistDefaultDisc
+  Else
+    xdisctype = "General"
+  Endif
+  If modBasic.$RegistDefaultMode Then
+    xbillmode = modBasic.$RegistDefaultMode
+  Else
+    xbillmode = "General"
+  Endif
+
+  If txtnamefir.Text And If txtnamelast.Text And If cmbsex.Text Then
+    If AllowDataSave() = True Then
+      If xdisctype And If xbillmode Then
+
+        Inc Application.Busy
+        idLock = modBillLock.LockTableForID("Registration")
+        If idLock = True Then
+
+          modDatabase.$myConn.Begin
+          If lblstatus.Text = "NEW PATIENT" Then
+            RegisterFirstTime()
+          Endif
+
+          If txtpatno.Text Then
+            txtencounter.Text = modBillLock.EncounterIDValue()
+            If txtencounter.Text Then
+              res = modDatabase.$myConn.Create("tblencounter")
+              res["fldencounterval"] = txtencounter.Text
+              res["fldpatientval"] = Trim(txtpatno.Text)
+              res["fldadmitlocat"] = cmbconsult.Text
+              res["flddisctype"] = xdisctype
+              res["fldbillingmode"] = xbillmode
+              res["fldadmission"] = "Recorded"
+              res["fldregdate"] = Now()
+              res["fldcomp"] = modBasic.$compID
+              res["fldvisit"] = txtvisit.Text
+              res["fldfollow"] = "New"
+
+              res["fldcurrlocat"] = ""
+              res["flddoa"] = ""
+              res["flddod"] = ""
+              res["fldheight"] = ""
+              If modBasic.$RegConsultant = "CurrentUser" Then
+                res["flduserid"] = modBasic.$lbluser
+              Else
+                res["flduserid"] = ""
+              Endif
+              res["fldcashdeposit"] = 0
+              res["fldcashcredit"] = 0
+              res["fldcharity"] = 0
+              res["fldvalidity"] = DateAdd(Now(), gb.Year, 1)
+              res["fldfollowdate"] = ""
+              res["fldreferto"] = ""
+
+              res["fldregistid"] = modPatient.GetPatientHMISRegVal(Trim(txtpatno.Text))
+              res["fldadmitid"] = ""
+              res["xyz"] = False
+              res.Update()
+              modPatientSub.EnterPatientImpDate(txtencounter.Text, "Recorded", "")
+            Endif
+            modDatabase.$myConn.Commit
+            btnOK.Enabled = False
+            btnshowrefr.Enabled = False
+
+          Else
+            modDatabase.$myConn.Rollback
+            txtencounter.Text = ""
+            txtpatno.Text = ""
+          Endif ''checking pat no
+
+          modBillLock.ReleaseLockTable("Registration")
+        Endif
+        Dec Application.Busy
+
+      Else
+        Message.Warning("Default Scheme and Rate Plan not set", "OK")
+      Endif
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Registration")
+  Endif
+  Dec Application.Busy
+  txtencounter.Text = ""
+  txtpatno.Text = ""
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Sub RegisterFirstTime()
+
+  Dim res As Result
+  Dim $DOBirth As Date
+
+  If $selDate = True Then
+    $DOBirth = dtdobmain.Value
+  Else
+    If txtmonths.Value = 0 Then
+      If btnyear.Text = "Year" Then
+        $DOBirth = DateAdd(Now(), gb.Year, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(txtyears.Value))
+      Endif
+
+    Else
+      If btnyear.Text = "Year" And If btnmon.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(12 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Mon" And If btnmon.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(30 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Day" And If btnmon.Text = "Hour" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(24 * txtyears.Value + txtmonths.Value))
+      Endif
+
+    Endif
+  Endif
+
+  If chknull.Value = True Or If DateDiff($DOBirth, Now(), gb.Day) < 73000 Then
+
+    If txtpatno.Text Then
+    Else
+      txtpatno.Text = modBillLock.PatientNoValue()
+      txtpatno.ReadOnly = True
+    Endif
+
+    If txtpatno.Text Then
+      txtvisit.Text = modPatient.GetPatientHMISStattus(Trim(txtpatno.Text))
+      lblstatus.Text = "RECORDED PATIENT"
+      res = modDatabase.$myConn.Create("tblpatientinfo")
+      res["fldpatientval"] = Trim(txtpatno.Text)
+      res["fldptnamefir"] = modPassword.EncryptPatData(String.UCaseFirst(Trim(txtnamefir.text)))
+      res["fldptnamelast"] = modPassword.EncryptPatData(String.UCaseFirst(Trim(txtnamelast.text)))
+      res["fldethniccode"] = txtethcode.Text
+      res["fldptcontact"] = modPassword.EncryptPatData(Trim(txtcontact.Text))
+      res["fldemail"] = modPassword.EncryptPatData(Trim(txtemail.Text))
+      res["fldptaddvill"] = String.UCaseFirst(Trim(txtaddfir.Text))
+      res["fldptaddward"] = Trim(txtward.Text)
+      res["fldptadddist"] = String.UCaseFirst(Trim(cmbdistrict.Text))
+      res["fldptsex"] = String.UCaseFirst(cmbsex.text)
+      res["fldptguardian"] = ""
+      res["fldrelation"] = ""
+      If chknull.Value = False Then
+        res["fldptbirday"] = $DOBirth
+      Endif
+      res["fldptadmindate"] = Now()
+      res["fldptcode"] = Trim(txtpatcode.Text)
+      res["flddiscount"] = ""
+      res["fldptadmindate"] = Now()
+      res["fldadmitfile"] = ""
+      res["fldcomment"] = ""
+      res["fldencrypt"] = modBasic.$PatInfoEncrypt
+      res["fldpassword"] = ""
+
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldupuser"] = ""
+      res["flduptime"] = ""
+      res["xyz"] = False
+      res.Update()
+    Endif
+
+  Endif
+
+End
+
+Private Sub OpenDemographics()
+
+  Dim hForm1 As FmPatdemograph
+  Dim hForm As FmPatAccEdit
+
+  If modBasic.$RegistAutoDemograph Then
+    Select modBasic.$RegistAutoDemograph
+      Case "Acount", "Clinical"
+        hForm1 = New FmPatdemograph(txtencounter.Text, modBasic.$RegistAutoDemograph)
+        hForm1.ShowModal
+      Case "Essential"
+        hForm = New FmPatAccEdit(txtencounter.Text)
+        hForm.ShowModal
+    End Select
+  Endif
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+  Dim $DOBirth As Date
+
+  If $selDate = True Then
+    $DOBirth = dtdobmain.Value
+  Else
+    If txtmonths.Value = 0 Then
+      If btnyear.Text = "Year" Then
+        $DOBirth = DateAdd(Now(), gb.Year, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(txtyears.Value))
+      Endif
+
+    Else
+      If btnyear.Text = "Year" And If btnmon.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(12 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Mon" And If btnmon.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(30 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Day" And If btnmon.Text = "Hour" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(24 * txtyears.Value + txtmonths.Value))
+      Endif
+
+    Endif
+  Endif
+
+  If txtpatno.Text Then
+    If txtnamefir.Text And If txtnamelast.Text And If cmbsex.Text Then
+      res = modDatabase.$myConn.Edit("tblpatientinfo", "fldpatientval=&1 and fldadmitfile IS &2", Trim(txtpatno.Text), Null)
+      If res.Available Then
+        If res["fldencrypt"] = True Then
+          res["fldptnamefir"] = modPassword.EncryptPatSimple(String.UCaseFirst(Trim(txtnamefir.text)))
+          res["fldptnamelast"] = modPassword.EncryptPatSimple(String.UCaseFirst(Trim(txtnamelast.text)))
+          res["fldptcontact"] = modPassword.EncryptPatSimple(Trim(txtcontact.text))
+          res["fldemail"] = modPassword.EncryptPatSimple(Trim(txtemail.Text))
+        Else
+          res["fldptnamefir"] = String.UCaseFirst(Trim(txtnamefir.text))
+          res["fldptnamelast"] = String.UCaseFirst(Trim(txtnamelast.text))
+          res["fldptcontact"] = Trim(txtcontact.text)
+          res["fldemail"] = Trim(txtemail.Text)
+        Endif
+        res["fldethniccode"] = txtethcode.Text
+        res["fldptaddvill"] = String.UCaseFirst(Trim(txtaddfir.text))
+        res["fldptaddward"] = Trim(txtward.Text)
+        res["fldptadddist"] = String.UCaseFirst(Trim(cmbdistrict.text))
+        res["fldptsex"] = String.UCaseFirst(cmbsex.text)
+        res["fldptguardian"] = ""
+        res["fldrelation"] = ""
+        If chknull.Value = False Then
+          res["fldptbirday"] = $DOBirth
+        Endif
+        res["fldptcode"] = txtpatcode.Text
+        res["fldupuser"] = modBasic.$lbluser
+        res["flduptime"] = Now()
+        res["xyz"] = False
+        res.Update()
+        modPatientSub.RemovePatientCache(Trim(txtpatno.Text))
+        FillRegistrationGrid()
+        Balloon.Info(("Information updated"), btnChange)
+        Balloon.Delay = modBasic.$BalloonDelay
+      Endif
+    Endif
+  Else
+    Message.Warning(("Patient No is NULL"), ("OK"))
+  Endif
+
+End
+
+''------------------------------ form procedures ------------------------------------------------
+Public Sub cmbsex_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbsex)
+  modFillContainer.RestrictComboToContent(cmbsex)
+
+End
+
+Public Sub cmbsex_LostFocus()
+
+  modFillContainer.RestrictCombo(cmbsex)
+
+End
+
+Public Sub txtethcode_KeyRelease()
+
+  If Key.Code = Key.Down Then
+    GetEthncicityRegd()
+  Endif
+
+End
+
+Public Sub txtethcode_GotFocus()
+
+  If modBasic.$RegistEthnicityPopUp = "Yes" Then
+    GetEthncicityRegd()
+  Endif
+
+End
+
+Private Sub GetEthncicityRegd()
+
+  Dim xval As String
+  Dim sList As String[] = ["Dalit", "Janajati", "Madhesi", "Muslim", "Brahmin/Chettri", "Other"]
+
+  If Not txtethcode.Text Then
+    xval = GridViewNew("Select Ethnicity", sList, False, txtnamelast, Panel1.Height - Panel2.Height - txtnamelast.Top)
+    If xval Then
+      txtethcode.Text = modMisc.GetEthnicStringCode(xval)
+    Endif
+  Endif
+
+End
+
+Public Sub txtaddfir_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(txtaddfir)
+  If modBasic.$UnLockAddress = "Yes" Then
+  Else
+    modFillContainer.RestrictComboToContent(txtaddfir)
+  Endif
+
+End
+
+Public Sub cmbdistrict_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdistrict)
+  If modBasic.$UnLockDistrict = "Yes" Then
+  Else
+    modFillContainer.RestrictComboToContent(cmbdistrict)
+  Endif
+
+End
+
+Public Sub dtdobmain_Click()
+
+  If dtdobmain.Value Then
+    If dtdobmain.Value > modDate.EndSqlDate(Now()) Then
+      dtdobmain.Value = ""
+      Message.Warning("Incorrect Date and Time", ("OK"))
+    Else
+      $selDate = True
+      modDateSub.DateToYearandMonth(dtdobmain.Value, txtyears, txtmonths, btnyear, btnmon)
+    Endif
+  Endif
+
+End
+
+Public Sub btnnepdate_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtdobmain.Value))
+  If xx Then
+    dtdobmain.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+  If dtdobmain.Value Then
+    If dtdobmain.Value > modDate.EndSqlDate(Now()) Then
+      dtdobmain.Value = ""
+      Message.Warning("Incorrect Date and Time", ("OK"))
+    Else
+      $selDate = True
+      modDateSub.DateToYearandMonth(dtdobmain.Value, txtyears, txtmonths, btnyear, btnmon)
+    Endif
+  Endif
+
+End
+
+Public Sub btnyear_Click()
+
+  If btnyear.Text = "Year" Then
+    btnyear.Text = "Mon"
+    btnmon.Text = "Day"
+  Else If btnyear.Text = "Mon" Then
+    btnyear.Text = "Day"
+    btnmon.Text = "Hour"
+  Else If btnyear.Text = "Day" Then
+    btnyear.Text = "Year"
+    btnmon.Text = "Mon"
+  Endif
+
+End
+
+Private Sub ShowTearBox()
+
+  If txtyears.Value = 0 And If txtmonths.Value = 0 Then
+    chknull.Value = True
+  Else
+    chknull.Value = False
+  Endif
+
+  If txtmonths.Value > 12 And If btnmon.Text = "Mon" Then
+    txtmonths.Value = 0
+    Message.Warning(("Wrong Age value"), ("OK"))
+  Else If txtmonths.Value > 30 And If btnmon.Text = "Day" Then
+    txtmonths.Value = 0
+    Message.Warning(("Wrong Age value"), ("OK"))
+  Else If txtmonths.Value > 24 And If btnmon.Text = "Hour" Then
+    txtmonths.Value = 0
+    Message.Warning(("Wrong Age value"), ("OK"))
+  Else
+    $selDate = False
+  Endif
+
+End
+
+Public Sub txtyears_LostFocus()
+
+  ShowTearBox()
+
+End
+
+Public Sub txtmonths_LostFocus()
+
+  ShowTearBox()
+
+End
+
+''------------------------------ grid view -------------------------------
+Private Sub FillRegistrationGrid()
+
+  Dim sql As String
+
+  sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldadmitlocat,fldregdate,fldpatientval,fldencounterval from tblencounter where fldregdate>=&1 and fldregdate<=&2 and fldcomp=&3"                                              ''
+  $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(Now()), modDate.EndSqlDate(Now()), modBasic.$compID)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 1
+    .Columns[7].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Encounter"
+    .Columns[1].Text = "Name"
+    .Columns[2].Text = "Gender"
+    .Columns[3].Text = "Address"
+    .Columns[4].Text = "Department"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]])
+  Else If Column = 2 Then
+    GridView1.Data.Text = modPatient.GetPatientSex($rData[$aMyFields[Column]])
+  Else If Column = 3 Then
+    GridView1.Data.Text = modPatient.GetPatientAddressByEnc($rData[$aMyFields[Column]])
+  Else If Column = 7 Then
+    GridView1.Data.Picture = Picture["icon:/small/attach"]
+    GridView1.Data.Text = ""
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    If GridView1.Column = 7 Then
+      $sValue = GridView1[GridView1.Row, 0].Text
+      Me.Close(True)
+    Endif
+  Endif
+
+End
+
+Public Sub mnusearch_Click()
+
+  txtpatno.Text = PatSearch("PatientNo")
+
+End
+
+Public Sub mnugeneral_Click()
+
+  modPatientSub.RegistBlankPatient()
+  modPatientSub.RegistBlankEncounter()
+  FillRegistrationGrid()
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnulabel_Click()
+
+  Dim $hReport As CRegistLabel
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If modNonMedical.AllowRegistSlipWithInvoiceEncid(GridView1[GridView1.Row, 0].Text) = True Then
+      $hReport = New CRegistLabel(GridView1[GridView1.Row, 0].Text)
+      modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 0].Text, $hReport.RegistLabelPath(), "LabelSize")
+    Endif
+  Endif
+
+End
+
+Public Sub mnubarcode_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modDevice.PrintBarCodeEnc(GridView1[GridView1.Row, 0].Text)
+  Endif
+
+End
+
+Public Sub mnupic_Click()
+
+  Dim hForm As FmPersonImage
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hForm = New FmPersonImage("Patient", GridView1[GridView1.Row, 6].Text, False)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuptno_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Message.Info("Patient No: " & modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 0].Text), ("OK"))
+  Endif
+
+End
+
+Public Sub btnfindpatno_Click()
+
+  Dim xval As String
+
+  xval = InputBox(("Enter Patient's Encounter ID"), "Encounter ID", "")
+  If xval Then
+    txtpatno.Text = modPatient.GetPatientNoByEnc(xval)
+  Endif
+
+End
+
+Public Sub btnsmspat_Click()
+
+  If txtencounter.Text Then
+    modDevice.SendMessageToRegistPatient(Trim(txtencounter.Text))
+  Endif
+
+End
+
+Public Sub btnfullrep_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, "REGISTRATION REPORT", modReportVar.GetDateTimeReport(Now(), gb.MediumDate))
+
+End
+
+'
+''
+'''
+''--------------------------------------enable/disable textbox ------------------------------
+Private Sub TextBoxEnableSetting(chk As CheckBox, TxtBox As TextBox)
+
+  If chk.Value = True Then
+    TxtBox.Enabled = True
+  Else If chk.Value = False Then
+    TxtBox.Enabled = False
+  Endif
+
+End
+
+Private Sub ComboBoxEnableSetting(chk As CheckBox, CmboBox As ComboBox)
+
+  If chk.Value = True Then
+    CmboBox.Enabled = True
+  Else If chk.Value = False Then
+    CmboBox.Enabled = False
+  Endif
+
+End
+
+Public Sub chkaddfir_Click()
+
+  modSettings.EnterCheckSetting(chkaddfir, "RegistrationForm/Enable_Address")
+  ComboBoxEnableSetting(chkaddfir, txtaddfir)
+  TextBoxEnableSetting(chkaddfir, txtward)
+
+End
+
+Public Sub chkdistrict_Click()
+
+  modSettings.EnterCheckSetting(chkdistrict, "RegistrationForm/Enable_District")
+  ComboBoxEnableSetting(chkdistrict, cmbdistrict)
+
+End
+
+Public Sub chkcontact_Click()
+
+  modSettings.EnterCheckSetting(chkcontact, "RegistrationForm/Enable_Contact")
+  TextBoxEnableSetting(chkcontact, txtcontact)
+
+End
+
+Public Sub chkemail_Click()
+
+  modSettings.EnterCheckSetting(chkemail, "RegistrationForm/Enable_EMail")
+  TextBoxEnableSetting(chkemail, txtemail)
+
+End
+
+Public Sub chkptcode_Click()
+
+  modSettings.EnterCheckSetting(chkptcode, "RegistrationForm/Enable_ExtCode")
+  TextBoxEnableSetting(chkptcode, txtpatcode)
+
+End
+
+Private Sub DisplayTextBoxEnableSetting()
+
+  modSettings.ShowCheckBox(chkaddfir, "RegistrationForm/Enable_Address")
+  ComboBoxEnableSetting(chkaddfir, txtaddfir)
+  TextBoxEnableSetting(chkaddfir, txtward)
+
+  modSettings.ShowCheckBox(chkdistrict, "RegistrationForm/Enable_District")
+  ComboBoxEnableSetting(chkdistrict, cmbdistrict)
+
+  modSettings.ShowCheckBox(chkcontact, "RegistrationForm/Enable_Contact")
+  TextBoxEnableSetting(chkcontact, txtcontact)
+
+  modSettings.ShowCheckBox(chkemail, "RegistrationForm/Enable_EMail")
+  TextBoxEnableSetting(chkemail, txtemail)
+
+  modSettings.ShowCheckBox(chkptcode, "RegistrationForm/Enable_ExtCode")
+  TextBoxEnableSetting(chkptcode, txtpatcode)
+
+End
+
+Public Sub btnfindfile_Click()
+
+  Dim xval As String
+
+  xval = InputBox(("Enter Patient's File Number"), "File Number", "")
+  If xval Then
+    txtpatno.Text = modPatient.GetPatientNoByFileNo(xval)
+  Endif
+
+End
+
+Public Sub mnudemograp_Click()
+
+  Dim hForm1 As FmPatdemograph
+  Dim hForm As FmPatAccEdit
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If modBasic.$RegistAutoDemograph Then
+      Select modBasic.$RegistAutoDemograph
+        Case "Acount", "Clinical"
+          hForm1 = New FmPatdemograph(GridView1[GridView1.Row, 0].Text, modBasic.$RegistAutoDemograph)
+          hForm1.ShowModal
+        Case "Essential"
+          hForm = New FmPatAccEdit(GridView1[GridView1.Row, 0].Text)
+          hForm.ShowModal
+      End Select
+    Endif
+  Endif
+
+End
+
+Public Sub mnuprescr_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modPatientSub.PrintRegistExtraReport(GridView1[GridView1.Row, 0].Text)
+  Endif
+
+End
+
+Public Sub chknull_Click()
+
+  If chknull.Value = True Then
+    txtyears.Value = 0
+    txtmonths.Value = 0
+  Endif
+
+End
+
+Public Sub btnsurname_Click()
+
+  Dim hForm As FmAddVariableGrid
+
+  hForm = New FmAddVariableGrid("flditem", "tblsurname")
+  hForm.ShowModal
+  modBasic.FillSurnameList()
+
+End
+
+Public Sub btnadddist_Click()
+
+  ' Dim hForm As FmAddVarThree
+  '
+  ' hForm = New FmAddVarThree("fldpality", "fldprovince", "tblmunicipals", "flddistrict", "")
+  ' hForm.ShowModal
+  ' cmbdistrict.List = modMedicine.GetDistrictListFromMap()
+
+End
+
+Public Sub txtpatno_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtpatno.Text = txtpatno.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub txtpatno_KeyRelease()
+
+  If Not txtpatno.Text Then
+    If Key.Code = Key.Down Then
+      txtpatno.Text = PatSearch("PatientNo")
+      txtpatno.SetFocus
+    Endif
+  Endif
+
+End
+
+Public Sub mnuscan_Click()
+
+  Dim xVal As String
+  Dim xdate As Date
+  Dim xaddr As String[]
+  Dim xxx As Variant
+  Dim xcoll As JSONCollection
+
+  xVal = modDevice.ChooseBarCodeSource()
+  '   Exec ["zbarimg", "-q", "--raw", "/home/sish/Desktop/regist.png"] To xVal
+  If xVal Then
+    If IsNumber(xVal) Then
+    Else
+
+      Try xxx = JSON.Decode(xVal, True)
+      If xxx Is JSONCollection Then
+        xcoll = xxx
+        txtpatno.Text = xcoll["PATIENTNO"]
+        txtnamefir.Text = xcoll["NAME"]
+        txtnamelast.Text = xcoll["SURNAME"]
+        If xcoll["ADDRESS"] Then
+          xaddr = Split(xcoll["ADDRESS"], "-")
+          txtaddfir.Text = xaddr[0]
+          If xaddr.Count = 2 Then
+            txtward.Text = xaddr[1]
+          Endif
+        Endif
+        cmbdistrict.Text = xcoll["DISTRICT"]
+        cmbsex.Text = xcoll["GENDER"]
+        xdate = Val(xcoll["DOB"])
+        If xdate Then
+          dtdobmain.Value = xdate
+          modDateSub.DateToYearandMonth(xdate, txtyears, txtmonths, btnyear, btnmon)
+        Endif
+        txtcontact.Text = xcoll["CONTACT"]
+        txtemail.Text = xcoll["EMAIL"]
+        txtpatcode.Text = xcoll["CODE"]
+        If txtpatno.Text Then
+          GetPatientInfoAll()
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+''================= Grid view ===============
+Public Sub txtnamelast_KeyRelease()
+
+  If Key.Code = Key.Down Then
+    GetSurnameRegd()
+  Endif
+
+End
+
+Public Sub txtnamelast_GotFocus()
+
+  If modBasic.$RegistSurnamePopUp = "Yes" Then
+    GetSurnameRegd()
+    txtethcode.SetFocus
+  Endif
+
+End
+
+Private Sub GetSurnameRegd()
+
+  If Not txtnamelast.Text Then
+    If modBasic.$SurNameList Then
+      txtnamelast.Text = GridViewNew("Select SurName", modBasic.$SurNameList, False, txtnamelast, Panel1.Height - Panel2.Height - txtnamelast.Top)
+    Endif
+  Endif
+
+End
+
+Public Sub txtaddfir_GotFocus()
+
+  Dim xbool As Boolean
+
+  If modBasic.$UnLockAddress = "Yes" Then
+    xbool = True
+  Else
+    xbool = False
+  Endif
+
+  If Not txtaddfir.Text Then
+    If modBasic.$RegistGridFormat = "Yes" Then
+      txtaddfir.Text = GridViewNew("Select Address", txtaddfir.List, xbool, txtaddfir, Panel1.Height - Panel2.Height - txtaddfir.Top)
+    Endif
+  Endif
+
+End
+
+Public Sub cmbdistrict_Click()
+
+  txtaddfir.Clear()
+  If cmbdistrict.Text Then
+    txtaddfir.List = modDataRepo.GetMunicipalsByDistrict(cmbdistrict.Text)
+  Endif
+
+End
+
+Public Sub cmbsex_GotFocus()
+
+  If txtnamelast.Text Then
+    If Not txtethcode.Text Then
+      txtethcode.Text = modGeneral.GetEthnicCode(Trim(txtnamelast.Text))
+    Endif
+  Endif
+
+End
+
+Public Sub cmbdistrict_GotFocus()
+
+  Dim xbool As Boolean
+
+  If modBasic.$UnLockDistrict = "Yes" Then
+    xbool = True
+  Else
+    xbool = False
+  Endif
+
+  If Not cmbdistrict.Text Then
+    If modBasic.$DistrictList Then
+
+      If modBasic.$RegistGridFormat = "Yes" Then
+        cmbdistrict.Text = GridViewNew("Select District", modBasic.$DistrictList, xbool, cmbdistrict, Panel1.Height - Panel2.Height - cmbdistrict.Top)
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Private Sub SetRequiredVariables()
+
+  If modBasic.$RegistEssAddress = "Yes" Then
+    chkaddfir.Text = "*"
+    chkaddfir.Value = True
+  Endif
+
+  If modBasic.$RegistEssDistrict = "Yes" Then
+    chkdistrict.Text = "*"
+    chkdistrict.Value = True
+  Endif
+
+  If modBasic.$RegistEssAge = "Yes" Then
+    chknull.Value = False
+  Endif
+
+  If modBasic.$RegistEssContact = "Yes" Then
+    chkcontact.Text = "*"
+    chkcontact.Value = True
+  Endif
+
+  If modBasic.$RegistEssEMail = "Yes" Then
+    chkemail.Text = "*"
+    chkemail.Value = True
+  Endif
+
+  If modBasic.$RegistEssCode = "Yes" Then
+    chkptcode.Text = "*"
+    chkptcode.Value = True
+  Endif
+
+End
+
+Public Sub txtpatcode_LostFocus()
+
+  Dim xpatno As String
+
+  If txtpatcode.Text Then
+    xpatno = modPatient.GetPatientNoByHospCode(Trim(txtpatcode.Text))
+    If xpatno Then
+      If Message.Question("Code already used with " & xpatno & " . Do you want to continue?", ("NO"), ("YES")) = 1 Then
+        txtpatno.Text = xpatno
+        txtpatno.SetFocus
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub txtyears_GotFocus()
+
+  txtyears.SelectAll
+
+End
+
+Public Sub txtmonths_GotFocus()
+
+  txtmonths.SelectAll
+
+End

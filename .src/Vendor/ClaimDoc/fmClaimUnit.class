@@ -1,0 +1,173 @@
+' Gambas class file
+
+Private $encid As String
+Private $sClaim As String
+Private xFilePath As String
+
+Public Sub _new(encid As String, sClaim As String, sImage As String)
+
+  $encid = encid
+  $sClaim = sClaim
+  xFilePath = sImage
+
+End
+
+Public Sub Form_Open()
+
+  txtencid.Text = $encid
+  txtname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtclaimcode.Text = $sClaim
+  txttitle.Text = File.Name(xFilePath)
+  Wait
+  If Exist(xFilePath) Then
+    btnupload.Enabled = True
+  Endif
+
+End
+
+Public Sub btnupload_Click()
+
+  Dim aOutPath As String
+
+  If txtclaimcode.Text Then
+    Inc Application.Busy
+    If Exist(xFilePath) Then
+      aOutPath = UploadImagesFilesClaimServer(Trim(txtclaimcode.Text))
+    Endif
+    Dec Application.Busy
+  Endif
+
+End
+
+Private Function UploadImagesFilesClaimServer(xProvideClaimCode As String) As String
+
+  Dim xCheckData As JSONCollection
+  Dim xClaimStr As String
+  Dim checkColl As Collection
+  Dim xAccessCode As String
+
+  Dim xCreateData As JSONCollection
+  Dim xCheckStr As String
+  Dim crateColl As Collection
+  Dim xClaimID As Variant
+
+  Dim xUploadData As JSONCollection
+  Dim xUploadStr As String
+  Dim uploadColl As Collection
+  Dim imgData As String
+  Dim imgPath As String
+
+  Dim xcontent As String
+  Dim certPath As String
+  Dim aOutPath As String
+
+  Dim acmd As String
+  Dim bcmd As String
+  Dim ccmd As String
+  Dim xcmd As String[]
+
+  ProgressBar1.Value = 0
+  xcontent = "Content-Type: application/json"
+  certPath = modSettings.ShowSettingFromFIle("GeneralSettings/CurlCertificate")
+  If Not certPath Or If Not Exist(certPath) Then
+    certPath = modHelpVariable.$appetcFolder &/ "cacert.pem"
+  Endif
+
+  ''''generate access code
+  xCheckData = New JSONCollection
+  xCheckData.Add(modBasic.$ClaimUser, "username")
+  xCheckData.add(modBasic.$ClaimPass, "password")
+  acmd = "curl" & " -d '" & JSON.Encode(xCheckData) & "' -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimCheckURL
+  modBasic.DebugAPIString("Execute " & acmd)
+  Shell acmd To xClaimStr
+  modBasic.DebugAPIString("Response: " & xClaimStr)
+  ProgressBar1.Value = 0.25
+  Wait
+
+  If xClaimStr Then
+    Try checkColl = JSON.Decode(xClaimStr)
+    If checkColl["status"] = "success" Then
+      xAccessCode = Trim(checkColl["data"]["access_code"])
+
+      ''''save claim code provided above and get unique claim ID
+      If xAccessCode Then
+        xCreateData = New JSONCollection
+        xCreateData.Add(xProvideClaimCode, "claim_code")
+        xCreateData.Add(xAccessCode, "access_code")
+        bcmd = "curl" & " --cacert " & certPath & " -A " & xAccessCode & " -d '" & JSON.Encode(xCreateData) & "' -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimSaveURL
+        modBasic.DebugAPIString("Execute " & bcmd)
+        Shell bcmd To xCheckStr
+        modBasic.DebugAPIString("Response: " & xCheckStr)
+        ProgressBar1.Value = 0.5
+        Wait
+
+        If xCheckStr Then
+          Try crateColl = JSON.Decode(xCheckStr)
+          If crateColl["status"] = "success" Then
+            xClaimID = crateColl["data"]["id"]
+
+            '''''upload file with path provided
+            If xClaimID Then
+              If Exist(xFilePath) Then
+                xcmd = ["base64", "-w", "0", xFilePath]
+                modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+                Exec xcmd To imgData
+
+                xUploadData = New JSONCollection
+                xUploadData.Add(xClaimID, "claim_id")
+                xUploadData.Add(File.BaseName(xFilePath), "name")
+                xUploadData.Add(xAccessCode, "access_code")
+                xUploadData.Add(imgData, "file")
+                imgPath = Temp()
+                File.Save(imgPath, JSON.Encode(xUploadData))
+                ccmd = "curl" & " --cacert " & certPath & " -A " & xAccessCode & " -d @" & imgPath & " -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimLoadURL
+                modBasic.DebugAPIString("Execute " & ccmd)
+                Shell ccmd To xUploadStr
+                modBasic.DebugAPIString("Response: " & xUploadStr)
+                ProgressBar1.Value = 0.75
+                Wait
+
+                If xUploadStr Then
+                  Try uploadColl = JSON.Decode(xUploadStr)
+                  If uploadColl["status"] = "success" Then
+                    aOutPath = xFilePath
+                    ProgressBar1.Value = 1
+                    Wait
+                    Balloon.Info(("File Upload Completed"), btnupload)
+                    Balloon.Delay = modBasic.$BalloonDelay
+                    modBasic.DebugString(Trim(uploadColl["data"]["message"]))
+                  Else
+                    Message.Warning("Reached to server but unsuccessful to get upload status", ("OK"))
+                  Endif  ''if upload is succcessful
+                Else
+                  Message.Warning("File Upload status not returned by server", ("OK"))
+                Endif  ''if upload string is returned
+              Endif
+
+            Else
+              Message.Warning("Unique Claim ID is null", ("OK"))
+            Endif ''if unique id is present
+
+          Else
+            Message.Warning("Reached to server but unsuccessful to get Unique Claim ID" & "<br>" & xCheckStr, ("OK"))
+          Endif  ''if create is successful
+        Else
+          Message.Warning("Unique Claim ID not returned by server", ("OK"))
+        Endif ''if create string is returned
+
+      Else
+        Message.Warning("Access Code is null" & "<br>" & xAccessCode, ("OK"))
+      Endif  ''if access code is present
+
+    Else
+      Message.Warning("Reached to server but unsuccessful to get Access code" & "<br>" & xClaimStr, ("OK"))
+    Endif ''if check is successful
+
+  Else
+
+    Message.Warning("Access Code not returned by server", "OK")
+  Endif ''if claim string is returned
+
+  Return aOutPath
+
+End

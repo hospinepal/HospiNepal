@@ -1,0 +1,233 @@
+' Gambas class file
+
+Private $encid As String
+Private $sType As String
+Private $tot As Integer
+Private $totRecord As Integer
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private aObj1 As New Object[50]
+Private aObj2 As New Object[50]
+Private aObj3 As New Object[50]
+Private aObj4 As New Object[50]
+
+Public Sub _new(encid As String, sType As String)
+
+  $encid = encid
+  $sType = sType
+
+End
+
+Public Sub Form_Open()
+
+  Dim xstatus As String
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+
+  xstatus = modPatient.CurrentAdmissionStatus($encid)
+  txtlocation.Text = modPatient.GetLocationSetting($encid, xstatus)
+  ItemList()
+  $tot = 0
+  FillFrame()
+  FillEventGrid()
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  If Frame1.Height < $totRecord * 30 Then
+    Frame1.Height = $totRecord * 30
+  Endif
+
+End
+
+Private Sub ItemList()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select flditem as col from tblevents where fldtype=&1", $sType)
+  cmbitem.List = modControlSub.GetDirectFillresult(res)
+
+End
+
+Public Sub btnadditem_Click()
+
+  Dim hForm As FmAddVariable1
+
+  hform = New FmAddVariable1("flditem", "fldtype", $sType, "tblevents")
+  hform.ShowModal
+  ItemList()
+
+End
+
+Private Sub FillFrame()
+
+  Dim i As Integer
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select fldid,flditem,fldfirsttime from tblpatevents where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4", $encid, $sType, True, False)                                                                   ''
+  $totRecord = res.Count
+  If res.Available = True Then
+    i = 0
+    For Each res
+      FillObjectInFrame(i, res["flditem"], False, res["fldfirsttime"], "", res["fldid"])
+      i = i + 1
+    Next
+    $tot = i - 1
+  Endif
+
+End
+
+Public Sub btnadd_Click()
+
+  If cmbitem.Text Then
+    $tot = $tot + 1
+    FillObjectInFrame($tot, cmbitem.Text, True, "", "", 0)
+  Endif
+
+End
+
+Private Sub FillObjectInFrame(i As Integer, txtitem As String, optnew As Boolean, txt1 As Date, txt2 As Date, id As Long)
+
+  Dim AppFactor As Float
+
+  AppFactor = modBasic.$AppScaleFactor
+  aObj1[i] = New Label(Frame1) As "Labelgroup"
+  aObj2[i] = New ButtonBox(Frame1) As "StartButton"
+  aObj3[i] = New ButtonBox(Frame1) As "StopButton"
+  aObj4[i] = New ValueBox(Frame1) As "ValueGroup"
+
+  ' Frame1.Width = 800 * AppFactor
+  With aObj1[i]
+    .X = 5 * AppFactor
+    .Y = i * 30 * AppFactor
+    .Width = 300 * AppFactor
+    .Height = 25 * AppFactor
+    .Text = txtitem
+    .Tag = i
+    ' .Font.Bold = True
+    .Border = 2
+  End With
+
+  With aObj2[i]
+    .X = 325 * AppFactor
+    .Y = i * 30 * AppFactor
+    .Width = 200 * AppFactor
+    .Height = 25 * AppFactor
+    .Text = modReportVar.GetDateTimeReport(txt1, gb.GeneralDate)
+    .Picture = Picture["icon:/small/play"]
+    .Tag = i
+    If optnew = True Then
+      .Enabled = True
+    Else If optnew = False Then
+      .Enabled = False
+    Endif
+  End With
+
+  With aObj3[i]
+    .X = 550 * AppFactor
+    .Y = i * 30 * AppFactor
+    .Width = 200 * AppFactor
+    .Height = 25 * AppFactor
+    .Text = modReportVar.GetDateTimeReport(txt2, gb.GeneralDate)
+    .Picture = Picture["icon:/small/stop"]
+    .Tag = i
+    If optnew = True Then
+      .Enabled = False
+    Else If optnew = False Then
+      .Enabled = True
+    Endif
+  End With
+
+  With aObj4[i]
+    .X = 750 * AppFactor
+    .Y = i * 30 * AppFactor
+    .Width = 25 * AppFactor
+    .Height = 25 * AppFactor
+    .value = id
+    .Visible = False
+    .Tag = i
+  End With
+
+End
+
+Public Sub StartButton_Click()
+
+  Dim j As Integer
+  Dim xindex As Long
+
+  j = Last.Tag
+  aObj2[j].Text = modReportVar.GetDateTimeReport(Now(), gb.GeneralDate)
+  xindex = modPatientGeneral.AddPatientEventsFirstTime($encid, $sType, aObj1[j].Text, "", "")
+  aObj4[j].Value = xindex
+  aObj2[j].Enabled = False
+  aObj3[j].Enabled = True
+
+End
+
+Public Sub StopButton_Click()
+
+  Dim j As Integer
+
+  j = Last.Tag
+
+  If aObj4[j].Value > 0 Then
+    aObj3[j].Text = modReportVar.GetDateTimeReport(Now(), gb.GeneralDate)
+    modPatientGeneral.UpdatePatientEventSecondTime(aObj4[j].Value)
+    aObj3[j].Enabled = False
+    aObj2[j].Enabled = True
+
+    FillEventGrid()
+  Endif
+
+End
+
+''------------------ Grid------------------
+Private Sub FillEventGrid()
+
+  $rData = modDatabase.$myConn.Exec("select fldid,flditem,fldfirsttime,fldsecondtime,fldid from tblpatevents where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4", $encid, $sType, True, True)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Particulars"
+    .Columns[2].Text = "Start"
+    .Columns[3].Text = "Stop"
+    .Columns[4].Text = "Hours"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 2 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 3 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 4 Then
+    GridView1.Data.Text = modPatPatho.GetEventDuration($rData[$aMyFields[Column]])
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End

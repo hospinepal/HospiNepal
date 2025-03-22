@@ -1,0 +1,2554 @@
+' Gambas module file
+
+Private $ProgressBar1 As ProgressBar
+
+''=================== SERVICE SUMMARY =======================
+Public Function GetFieldServiceSummary(sFormat As String) As String
+  
+  Dim xval As String
+  
+  If sFormat = "Category" Then
+    xval = "flditemtype"
+  Else If sFormat = "RatePlan" Then
+    xval = "fldbillingmode"
+  Else If sFormat = "Package" Then
+    xval = "flddisctype"
+  Else If sFormat = "Payable" Then
+    xval = "fldpayto"
+  Else If sFormat = "Referral" Then
+    xval = "fldrefer"
+  Else If sFormat = "LedgerA/C" Then
+    xval = "fldacledger"
+  Else If sFormat = "TargetComp" Then
+    xval = "fldtarget"
+  Else If sFormat = "PatLocation" Then
+    xval = "fldcurrlocat"
+  Else If sFormat = "BillType" Then
+    xval = "fldbilltype"
+  Else If sFormat = "Hospital" Then
+    xval = "fldhospcode"
+  Endif
+  Return xval
+  
+End
+
+Private Function GetDepartQuery(sType As String) As String
+  
+  Dim yval As String
+  
+  If sType = "OPD" Then
+    yval = db.Subst("fldcurrlocat in(select flddept from tbldepartment where fldcateg=&1 or fldcateg=&2)", "Consultation", "OPD Visit")
+  Else If sType = "IPD" Then
+    yval = db.Subst("fldcurrlocat not in(select flddept from tbldepartment where fldcateg=&1 or fldcateg=&2)", "Consultation", "OPD Visit")
+  Endif
+  Return yval
+  
+End
+
+'NOTE: ---------------------------- Stock Reports ---------------------------------------
+Public Function ShowSpecStockReport($con As Connection, sType As String, dt As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim dt2 As Date
+  Dim xitem As String
+  Dim i As Integer
+  Dim xpast As Float
+  
+  Dim rs1 As Result
+  Dim rs2 As Result
+  Dim rs3 As Result
+  Dim rs4 As Result
+  Dim rs5 As Result
+  Dim rs6 As Result
+  Dim rs7 As Result
+  
+  Dim bulqty As Float
+  Dim purqty As Float
+  Dim salqty As Float
+  Dim sentqty As Float
+  Dim recvqty As Float
+  Dim adjqty As Float
+  Dim curqty As Float
+  Dim xval As Float
+  
+  Dim rex As Result
+  Dim rss3 As Result
+  Dim xcost As Float
+  Dim sumcost As Float
+  Dim sumsale As Float
+  Dim RepoStr As String
+  Dim xgo As Boolean
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  $BillingReport = New CReportHTML([("CODE"), ("PARTICULARS"), ("BATCH"), ("EXPIRY"), ("QTY"), ("PUR-RATE"), ("PUR-TOTAL"), ("SALE-RATE"), ("SALE-TOTAL")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  
+  i = 0
+  sumcost = 0
+  sumsale = 0
+  For Each xitem In sList
+    
+    res = $con.Exec("select fldstockno as col,fldstockid,fldsellpr,fldpast from tblentry where fldcategory=&1 and fldstockid=&2" & RepoStr, sType, xitem)
+    dt2 = Now()
+    For Each res
+      xcost = 0
+      xval = 0
+      xpast = 0
+      If res["fldpast"] Then
+        xpast = res["fldpast"]
+      Else
+        xpast = 0
+      Endif
+      
+      curqty = 0
+      rs6 = $con.Exec("select SUM(fldqty) as col from tblentry where fldstockno=&1 and fldstockid=&2 and fldcategory=&3 and fldcomp like &4" & RepoStr, res["col"], res["fldstockid"], sType, sComp)
+      If rs6.Available = True Then
+        If rs6["col"] Then
+          curqty = rs6["col"]
+        Endif
+      Endif
+      
+      purqty = 0
+      rs1 = $con.Exec("select SUM(fldtotalqty-fldreturnqty) as qty from tblpurchase where fldtime>&1 and fldtime<=&2 and fldstockno=&3 and fldstockid=&4 and fldcategory=&5 and fldcomp like &6 and fldsav=&7" & RepoStr, modDate.EndSqlDate(dt), dt2, res["col"], res["fldstockid"], sType, sComp, False)
+      If rs1.Available = True Then
+        If rs1["qty"] Then
+          purqty = rs1["qty"]
+        Endif
+      Endif
+      
+      bulqty = 0
+      rs2 = $con.Exec("select SUM(fldqtydisp-fldqtyret) as qty from tblbulksale where fldtime>&1 and fldtime<=&2 and fldstockno=&3 and fldstockid=&4 and fldcategory=&5 and fldsave=&6 and fldcomp like &7" & RepoStr, modDate.EndSqlDate(dt), dt2, res["col"], res["fldstockid"], sType, True, sComp)
+      If rs2.Available = True Then
+        If rs2["qty"] Then
+          bulqty = rs2["qty"]
+        Endif
+      Endif
+      
+      salqty = 0
+      rs3 = $con.Exec("select SUM(flditemqty) as qty from tblpatbilling where fldtime>&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.EndSqlDate(dt), dt2, res["col"], res["fldstockid"], sType, sComp, True)
+      If rs3.Available = True Then
+        If rs3["qty"] Then
+          salqty = rs3["qty"]
+        Endif
+      Endif
+      
+      rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+      If rex.Available Then
+        For Each rex
+          If rex["fldpatbilling"] = "tblpatbilling" Then
+          Else
+            rss3 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.EndSqlDate(dt), dt2, res["col"], res["fldstockid"], sType, sComp, True)
+            If rss3.Available = True Then
+              If rss3["qty"] Then
+                salqty = salqty + rss3["qty"]
+              Endif
+            Endif
+          Endif
+        Next
+      Endif
+      
+      sentqty = 0
+      rs4 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldoldstockno=&1 and fldstockid=&2 and fldtoentrytime>&3 and fldtoentrytime<=&4 and fldcategory=&5 and fldtosav=&6 and fldfromcomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.EndSqlDate(dt), dt2, sType, True, sComp)
+      If rs4.Available Then
+        If rs4["qty"] Then
+          sentqty = rs4["qty"]
+        Endif
+      Endif
+      
+      recvqty = 0
+      rs5 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldstockno=&1 and fldstockid=&2 and fldtoentrytime>&3 and fldtoentrytime<=&4 and fldcategory=&5 and fldtosav=&6 and fldtocomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.EndSqlDate(dt), dt2, sType, True, sComp)
+      If rs5.Available Then
+        If rs5["qty"] Then
+          recvqty = rs5["qty"]
+        Endif
+      Endif
+      
+      adjqty = 0
+      rs7 = $con.Exec("select sum(fldcompqty-fldcurrqty) as qty from tbladjustment where fldstockno=&1 and fldstockid=&2 and fldtime>&3 and fldtime<=&4 and fldcategory=&5 and fldsav=&6 and fldcomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.EndSqlDate(dt), dt2, sType, True, sComp)
+      If rs7.Available Then
+        If rs7["qty"] Then
+          adjqty = rs7["qty"]
+        Endif
+      Endif
+      
+      xval = curqty - (purqty + recvqty) + (xpast + salqty + bulqty + sentqty + adjqty)
+      If ShowNull = True Then
+        xgo = True
+      Else
+        If xval = 0 Then
+          xgo = False
+        Else
+          xgo = True
+        Endif
+      Endif
+      If xgo = True Then
+        xcost = modStock.GetAverageCostPriceByStockNo(res["col"])
+        sumcost = sumcost + xcost * xval
+        sumsale = sumsale + res["fldsellpr"] * xval
+        
+        With asx
+          .Add(res["col"])
+          .Add(res["fldstockid"])
+          .Add(modStock.GetBatchFromStockNo(res["col"]))
+          .Add(modReportVar.GetDateTimeReport(modStock.GetExpiryFromStockNo(res["col"]), gb.MediumDate))
+          .Add(modReportVar.GetLocaleNumberFormat(xval, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(xcost, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xcost * xval, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(res["fldsellpr"], gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(res["fldsellpr"] * xval, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+      
+    Next
+    
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / sList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+  
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("<b>GRAND TOTAL</b>")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sumcost, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sumsale, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+Public Function ShowTransectionReport($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim xitem As String
+  Dim i As Integer
+  Dim xpast As Float
+  
+  'for last stock calculation
+  Dim rsx1 As Result
+  Dim rsx2 As Result
+  Dim rsx3 As Result
+  Dim rsx4 As Result
+  Dim rsx5 As Result
+  Dim rsx6 As Result
+  Dim rsx7 As Result
+  
+  Dim bulqx As Float
+  Dim purqx As Float
+  Dim salqx As Float
+  Dim sentqx As Float
+  Dim recvqx As Float
+  Dim adjqtx As Float
+  Dim curqty As Float
+  Dim xvax As Float
+  
+  'for transection during interval
+  Dim rs1 As Result
+  Dim pur As Float
+  Dim rs2 As Result
+  Dim blk As Float
+  Dim rs3 As Result
+  Dim sale As Float
+  Dim rs4 As Result
+  Dim sent As Float
+  Dim rs5 As Result
+  Dim recv As Float
+  Dim rs7 As Result
+  Dim adj As Float
+  
+  Dim bulqty As Float
+  Dim bulamt As Float
+  Dim purqty As Float
+  Dim puramt As Float
+  Dim salqty As Float
+  Dim salamt As Float
+  Dim sentqty As Float
+  Dim sentamt As Float
+  Dim recvqty As Float
+  Dim recvamt As Float
+  Dim adjqty As Float
+  Dim adjamt As Float
+  
+  Dim openqty As Float
+  Dim dtx As Date
+  Dim RepoStr As String
+  
+  Dim rex As Result
+  Dim rxx3 As Result
+  Dim rss3 As Result
+  Dim xgo As Boolean
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  $BillingReport = New CReportHTML([("CODE"), ("PARTICULARS"), ("BATCH"), ("OPEN(QTY)"), ("PUR(QTY)"), ("PUR(AMT)"), ("RECV(QTY)"), ("RECV(AMT)"), ("SALE(QTY)"), ("SALE(AMT)"), ("USE(QTY)"), ("USE(AMT)"), ("SENT(QTY)"), ("SENT(AMT)"), ("ADJ(QTY)"), ("ADJ(AMT)"), ("END(QTY)"), ("EST-Cost")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  
+  pur = 0
+  sale = 0
+  blk = 0
+  sent = 0
+  recv = 0
+  adj = 0
+  dtx = Now()
+  i = 0
+  For Each xitem In sList
+    res = $con.Exec("select fldstockno as col,fldstockid,fldbatch,fldpast from tblentry where fldcategory=&1 and fldstockid=&2" & RepoStr, sType, xitem)
+    
+    For Each res
+      xvax = 0
+      xpast = 0
+      If res["fldpast"] Then
+        xpast = res["fldpast"]
+      Else
+        xpast = 0
+      Endif
+      
+      'calculate current stock ---------------------------------------
+      curqty = 0
+      rsx6 = $con.Exec("select SUM(fldqty) as col from tblentry where fldstockno=&1 and fldstockid=&2 and fldcategory=&3 and fldcomp like &4" & RepoStr, res["col"], res["fldstockid"], sType, sComp)
+      If rsx6.Available = True Then
+        If rsx6["col"] Then
+          curqty = rsx6["col"]
+        Endif
+      Endif
+      
+      ''for last stock calculation -------------------------
+      purqx = 0
+      rsx1 = $con.Exec("select SUM(fldtotalqty-fldreturnqty) as qty from tblpurchase where fldtime>&1 and fldtime<=&2 and fldstockno=&3 and fldstockid=&4 and fldcategory=&5 and fldcomp like &6 and fldsav=&7" & RepoStr, modDate.EndSqlDate(dt2), dtx, res["col"], res["fldstockid"], sType, sComp, False)
+      If rsx1.Available = True Then
+        If rsx1["qty"] Then
+          purqx = rsx1["qty"]
+        Endif
+      Endif
+      
+      bulqx = 0
+      rsx2 = $con.Exec("select SUM(fldqtydisp-fldqtyret) as qty from tblbulksale where fldtime>&1 and fldtime<=&2 and fldstockno=&3 and fldstockid=&4 and fldcategory=&5 and fldsave=&6 and fldcomp like &7" & RepoStr, modDate.EndSqlDate(dt2), dtx, res["col"], res["fldstockid"], sType, True, sComp)
+      If rsx2.Available = True Then
+        If rsx2["qty"] Then
+          bulqx = rsx2["qty"]
+        Endif
+      Endif
+      
+      salqx = 0
+      rsx3 = $con.Exec("select SUM(flditemqty) as qty from tblpatbilling where fldtime>&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.EndSqlDate(dt2), dtx, res["col"], res["fldstockid"], sType, sComp, True)
+      If rsx3.Available = True Then
+        If rsx3["qty"] Then
+          salqx = rsx3["qty"]
+        Endif
+      Endif
+      
+      rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+      If rex.Available Then
+        For Each rex
+          If rex["fldpatbilling"] = "tblpatbilling" Then
+          Else
+            rxx3 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.EndSqlDate(dt2), dtx, res["col"], res["fldstockid"], sType, sComp, True)
+            If rxx3.Available = True Then
+              If rxx3["qty"] Then
+                salqx = salqx + rxx3["qty"]
+              Endif
+            Endif
+          Endif
+        Next
+      Endif
+      
+      sentqx = 0
+      rsx4 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldoldstockno=&1 and fldstockid=&2 and fldtoentrytime>&3 and fldtoentrytime<=&4 and fldcategory=&5 and fldtosav=&6 and fldfromcomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.EndSqlDate(dt2), dtx, sType, True, sComp)
+      If rsx4.Available Then
+        If rsx4["qty"] Then
+          sentqx = rsx4["qty"]
+        Endif
+      Endif
+      
+      recvqx = 0
+      rsx5 = $con.Exec("select SUM(fldqty) as qty from tbltransfer where fldstockno=&1 and fldstockid=&2 and fldtoentrytime>&3 and fldtoentrytime<=&4 and fldcategory=&5 and fldtosav=&6 and fldtocomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.EndSqlDate(dt2), dtx, sType, True, sComp)
+      If rsx5.Available Then
+        If rsx5["qty"] Then
+          recvqx = rsx5["qty"]
+        Endif
+      Endif
+      
+      adjqtx = 0
+      rsx7 = $con.Exec("select sum(fldcompqty-fldcurrqty) as qty from tbladjustment where fldstockno=&1 and fldstockid=&2 and fldtime>&3 and fldtime<=&4 and fldcategory=&5 and fldsav=&6 and fldcomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.EndSqlDate(dt2), dtx, sType, True, sComp)
+      If rsx7.Available Then
+        If rsx7["qty"] Then
+          adjqtx = rsx7["qty"]
+        Endif
+      Endif
+      
+      'for transection during interval ------------------------------------------
+      purqty = 0
+      puramt = 0
+      rs1 = $con.Exec("select SUM(fldtotalqty-fldreturnqty) as qty,SUM(fldnetcost*(fldtotalqty-fldreturnqty)) as col from tblpurchase where fldtime>=&1 and fldtime<=&2 and fldstockno=&3 and fldstockid=&4 and fldcategory=&5 and fldcomp like &6 and fldsav=&7" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["col"], res["fldstockid"], sType, sComp, False)
+      If rs1.Available = True Then
+        If rs1["qty"] Then
+          purqty = rs1["qty"]
+        Endif
+        If rs1["col"] Then
+          puramt = rs1["col"]
+        Endif
+      Endif
+      
+      bulqty = 0
+      bulamt = 0
+      rs2 = $con.Exec("select SUM(fldqtydisp-fldqtyret) as qty,SUM(fldnetcost*(fldqtydisp-fldqtyret)) as col from tblbulksale where fldtime>=&1 and fldtime<=&2 and fldstockno=&3 and fldstockid=&4 and fldcategory=&5 and fldsave=&6 and fldcomp like &7" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["col"], res["fldstockid"], sType, True, sComp)
+      If rs2.Available = True Then
+        If rs2["qty"] Then
+          bulqty = rs2["qty"]
+        Endif
+        If rs2["col"] Then
+          bulamt = rs2["col"]
+        Endif
+      Endif
+      
+      salqty = 0
+      salamt = 0
+      rs3 = $con.Exec("select SUM(flditemqty) as qty,SUM(fldditemamt) as col from tblpatbilling where fldtime>=&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["col"], res["fldstockid"], sType, sComp, True)
+      If rs3.Available = True Then
+        If rs3["qty"] Then
+          salqty = rs3["qty"]
+        Endif
+        If rs3["col"] Then
+          salamt = rs3["col"]
+        Endif
+      Endif
+      
+      rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+      If rex.Available Then
+        For Each rex
+          If rex["fldpatbilling"] = "tblpatbilling" Then
+          Else
+            rss3 = $con.Exec("select SUM(flditemqty) as qty,SUM(fldditemamt) as col from " & rex["fldpatbilling"] & " where fldtime>=&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res["col"], res["fldstockid"], sType, sComp, True)
+            If rss3.Available = True Then
+              If rss3["qty"] Then
+                salqty = salqty + rss3["qty"]
+              Endif
+              If rss3["col"] Then
+                salamt = salamt + rss3["col"]
+              Endif
+            Endif
+          Endif
+        Next
+      Endif
+      
+      sentqty = 0
+      sentamt = 0
+      rs4 = $con.Exec("select SUM(fldqty) as qty,SUM(fldqty*fldnetcost) as totl from tbltransfer where fldoldstockno=&1 and fldstockid=&2 and fldtoentrytime>=&3 and fldtoentrytime<=&4 and fldcategory=&5 and fldtosav=&6 and fldfromcomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+      If rs4.Available Then
+        If rs4["qty"] Then
+          sentqty = rs4["qty"]
+        Endif
+        If rs4["totl"] Then
+          sentamt = rs4["totl"]
+        Endif
+      Endif
+      
+      recvqty = 0
+      recvamt = 0
+      rs5 = $con.Exec("select SUM(fldqty) as qty,SUM(fldqty*fldnetcost) as totl from tbltransfer where fldstockno=&1 and fldstockid=&2 and fldtoentrytime>=&3 and fldtoentrytime<=&4 and fldcategory=&5 and fldtosav=&6 and fldtocomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+      If rs5.Available Then
+        If rs5["qty"] Then
+          recvqty = rs5["qty"]
+        Endif
+        If rs5["totl"] Then
+          recvamt = rs5["totl"]
+        Endif
+      Endif
+      
+      adjqty = 0
+      adjamt = 0
+      rs7 = $con.Exec("select sum(fldcompqty-fldcurrqty) as qty,SUM((fldcompqty-fldcurrqty)*fldnetcost) as totl from tbladjustment where fldstockno=&1 and fldstockid=&2 and fldtime>=&3 and fldtime<=&4 and fldcategory=&5 and fldsav=&6 and fldcomp like &7" & RepoStr, res["col"], res["fldstockid"], modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+      If rs7.Available Then
+        If rs7["qty"] Then
+          adjqty = rs7["qty"]
+        Endif
+        If rs7["totl"] Then
+          adjamt = rs7["totl"]
+        Endif
+      Endif
+      
+      xvax = curqty - (purqx + recvqx) + (xpast + salqx + bulqx + sentqx + adjqtx)
+      openqty = xvax - (purqty + recvqty) + (xpast + salqty + bulqty + sentqty + adjqty)
+      
+      pur = pur + puramt
+      sale = sale + salamt
+      blk = blk + bulamt
+      sent = sent + sentamt
+      recv = recv + recvamt
+      adj = adj + adjamt
+      
+      If ShowNull = True Then
+        xgo = True
+      Else
+        If purqty = 0 And If salqty = 0 And If bulqty = 0 And If sentqty = 0 And If recvqty = 0 And If adjqty = 0 And If openqty = 0 And If xvax = 0 Then
+          xgo = False
+        Else
+          xgo = True
+        Endif
+      Endif
+      If xgo = True Then
+        With asx
+          .Add(res["col"])
+          .Add(res["fldstockid"])
+          .Add(res["fldbatch"])
+          .Add(modReportVar.GetLocaleNumberFormat(openqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(purqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(puramt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(recvqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(recvamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(salqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(salamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(bulqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(bulamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(sentqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(sentamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(adjqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(adjamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xvax, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(xvax * modStock.GetAverageCostPriceByStockNo(res["col"]), gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
+    
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / sList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+  
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  
+  With asx
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(pur, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(recv, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sale, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(blk, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sent, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(adj, gb.Currency))
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+''item summary
+Public Function ShowSpecStockReportItemwise($con As Connection, sType As String, dt As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xcost As Float
+  
+  Dim xval As Float
+  Dim sItem As String
+  Dim xtot As Float
+  Dim p As Integer
+  Dim xgo As Boolean
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  ' $BillingReport = New CReportHTML([("SNO"), ("PARTICULARS"),  ("QTY"), ("PUR-RATE"),("CUR-VALUE")], "", "")
+  $BillingReport = New CReportHTML([("SNO"), ("PARTICULARS"), ("QTY")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+  
+  i = 1
+  p = 1
+  xtot = 0
+  For Each sItem In sList
+    xcost = 0
+    xval = 0
+    xval = modInventory.ShowSpecStockReportItemQTY($con, sType, dt, sComp, sItem, sLocaType, sLocation)
+    ' xcost = modStock.GetAverageCostPriceByStockName(sItem)
+    ' xtot = xtot + xcost * xval
+    If ShowNull = True Then
+      xgo = True
+    Else
+      If xval = 0 Then
+        xgo = False
+      Else
+        xgo = True
+      Endif
+    Endif
+    If xgo = True Then
+      With asx
+        .Add(modReportVar.GetLocaleNumberFormat(i, 0))
+        .Add(sItem)
+        .Add(modReportVar.GetLocaleNumberFormat(xval, -2))
+        ' .Add(modReportVar.GetLocaleNumberFormat(xcost, gb.Currency))
+        ' .Add(modReportVar.GetLocaleNumberFormat(xcost * xval, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Endif
+    
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = p / sList.Count
+      Wait
+    Endif
+    p = p + 1
+  Next
+  
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    ' .Add("")
+    ' .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("<b>GRAND TOTAL</b>")
+    .Add("")
+    ' .Add("")
+    ' .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  
+  ' $BillingReport.AddSummary("Note: Purchase Rate is AVERAGE of available Stock. It may be zero if stock is not available.")
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+Public Function ShowTransectionReportItemwise($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xvax As Float
+  
+  Dim pur As Float
+  Dim blk As Float
+  Dim sale As Float
+  Dim sent As Float
+  Dim recv As Float
+  Dim adj As Float
+  
+  Dim bulqty As Float
+  Dim purqty As Float
+  Dim salqty As Float
+  Dim sentqty As Float
+  Dim recvqty As Float
+  Dim adjqty As Float
+  
+  Dim openqty As Float
+  Dim dtx As Date
+  Dim i As Integer
+  
+  Dim sItem As String
+  Dim p As Integer
+  Dim xgo As Boolean
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  $BillingReport = New CReportHTML([("SNO"), ("PARTICULARS"), ("OPENING"), ("PURCHASE"), ("RECEIVED"), ("SALES"), ("CONSUMED"), ("SENT"), ("ADJUST"), ("ENDING")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+  
+  pur = 0
+  sale = 0
+  blk = 0
+  sent = 0
+  recv = 0
+  adj = 0
+  i = 1
+  p = 1
+  dtx = Now()
+  For Each sItem In sList
+    xvax = 0
+    xvax = modInventory.ShowSpecStockReportItemQTY($con, sType, dt2, sComp, sItem, sLocaType, sLocation)
+    purqty = modInventory.GetTransactionPurchase($con, sType, dt1, dt2, sComp, sItem, sLocaType, sLocation)
+    bulqty = modInventory.GetTransactionBulkSale($con, sType, dt1, dt2, sComp, sItem, sLocaType, sLocation)
+    salqty = modInventory.GetTransactionBilling($con, sType, dt1, dt2, sComp, sItem, sLocaType, sLocation)
+    sentqty = modInventory.GetTransactionTransferFrom($con, sType, dt1, dt2, sComp, sItem, sLocaType, sLocation)
+    recvqty = modInventory.GetTransactionTransferTo($con, sType, dt1, dt2, sComp, sItem, sLocaType, sLocation)
+    adjqty = modInventory.GetTransactionAdjustment($con, sType, dt1, dt2, sComp, sItem, sLocaType, sLocation)
+    
+    openqty = xvax - (purqty + recvqty) + (salqty + bulqty + sentqty + adjqty)
+    If ShowNull = True Then
+      xgo = True
+    Else
+      If openqty = 0 And If purqty = 0 And If recvqty = 0 And If salqty = 0 And bulqty = 0 And sentqty = 0 And adjqty = 0 And xvax = 0 Then
+        xgo = False
+      Else
+        xgo = True
+      Endif
+    Endif
+    If xgo = True Then
+      With asx
+        .Add(modReportVar.GetLocaleNumberFormat(i, 0))
+        .Add(sItem)
+        .Add(modReportVar.GetLocaleNumberFormat(openqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(purqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(recvqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(salqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(bulqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(sentqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(adjqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(xvax, -2))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Endif
+    
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = p / sList.Count
+      Wait
+    Endif
+    p = p + 1
+  Next
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+Public Function ShowProfitReport($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res2 As Result
+  Dim rs3 As Result
+  
+  Dim sale As Float
+  Dim cost As Float
+  Dim prof As Float
+  
+  Dim salqty As Float
+  Dim salcost As Float
+  Dim salamt As Float
+  
+  Dim RepoStr As String
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  $BillingReport = New CReportHTML([("PARTICULARS"), ("SALE QTY"), ("COST AMT"), ("SALE AMT"), ("PROFIT")], "", "")
+  $BillingReport.UserData.Add("PROFIT ESTIMATION: " & sType, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  
+  sale = 0
+  cost = 0
+  prof = 0
+  
+  res2 = $con.Exec("select distinct(flditemname) as col from tblpatbilling where fldtime>=&1 and fldtime<=&2 and flditemtype=&3 and fldcomp like &4" & RepoStr & " ORDER BY flditemname ASC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, sComp)                                                  ''
+  For Each res2
+    rs3 = $con.Exec("select flditemno,flditemqty,flditemrate,flddiscper,fldtaxper from tblpatbilling where fldtime>=&1 and fldtime<=&2 and flditemname=&3 and flditemtype=&4 and fldcomp like &5" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res2["col"], sType, sComp)
+    salqty = 0
+    salcost = 0
+    salamt = 0
+    For Each rs3
+      salqty = salqty + rs3["flditemqty"]
+      salcost = salcost + modStock.GetAverageCostPriceByStockNo(rs3["flditemno"]) * rs3["flditemqty"]
+      salamt = salamt + rs3["flditemrate"] * rs3["flditemqty"] * (1 - rs3["flddiscper"] / 100) * (1 + rs3["fldtaxper"] / 100)
+    Next
+    
+    sale = sale + salamt
+    cost = cost + salcost
+    prof = sale - cost
+    
+    With asx
+      .Add(res2["col"])
+      .Add(modReportVar.GetLocaleNumberFormat(salqty, -2))
+      .Add(modReportVar.GetLocaleNumberFormat(salcost, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(salamt, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(salamt - salcost, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (res2.Index + 1) / res2.Count
+      Wait
+    Endif
+  Next
+  
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("<b>GRAND TOTAL</b>")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(cost, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(sale, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(prof, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+Public Function ShowProfitReportMapped($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res2 As Result
+  Dim rs3 As Result
+  
+  Dim sale As Float
+  Dim cost As Float
+  Dim prof As Float
+  
+  Dim salqty As Float
+  Dim salcost As Float
+  Dim salamt As Float
+  
+  Dim RepoStr As String
+  
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+  
+  $BillingReport = New CReportHTML([("PARTICULARS"), ("SALE QTY"), ("COST AMT"), ("SALE AMT"), ("PROFIT")], "", "")
+  $BillingReport.UserData.Add("PROFIT ESTIMATION: " & sType, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  
+  sale = 0
+  cost = 0
+  prof = 0
+  
+  res2 = $con.Exec("select distinct(flditemname) as col from tblpatbilling where fldtime>=&1 and fldtime<=&2 and flditemtype=&3 and fldcomp like &4 and flditemname in(select flditemname from tblstockrate)" & RepoStr & " ORDER BY flditemname ASC", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, sComp)                                                  ''
+  For Each res2
+    rs3 = $con.Exec("select flditemno,flditemqty,flditemrate,flddiscper,fldtaxper from tblpatbilling where fldtime>=&1 and fldtime<=&2 and flditemname=&3 and flditemtype=&4 and fldcomp like &5" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), res2["col"], sType, sComp)
+    salqty = 0
+    salcost = 0
+    salamt = 0
+    For Each rs3
+      salqty = salqty + rs3["flditemqty"]
+      salcost = salcost + modStock.GetAverageCostPriceByStockNo(rs3["flditemno"]) * rs3["flditemqty"]
+      salamt = salamt + rs3["flditemrate"] * rs3["flditemqty"] * (1 - rs3["flddiscper"] / 100) * (1 + rs3["fldtaxper"] / 100)
+    Next
+    
+    sale = sale + salamt
+    cost = cost + salcost
+    prof = sale - cost
+    
+    With asx
+      .Add(res2["col"])
+      .Add(modReportVar.GetLocaleNumberFormat(salqty, -2))
+      .Add(modReportVar.GetLocaleNumberFormat(salcost, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(salamt, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(salamt - salcost, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (res2.Index + 1) / res2.Count
+      Wait
+    Endif
+  Next
+  
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("<b>GRAND TOTAL</b>")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(cost, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(sale, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(prof, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+''======================== cross tab ============================
+Public Function SummaryAccountCrossTab(conn As Connection, dt1 As Date, dt2 As Date, sRow As String, sColumn As String, sItemType As String, sVariable As String, sInvoiced As Boolean, sLocaType As String, sLocation As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim sql1 As String
+  Dim asx As New String[0]
+  Dim res1 As Result
+  Dim xval As String
+  Dim yval As String
+  Dim xcol As String[]
+  Dim valtotal As Float
+  Dim coltot As Float
+  Dim categList As String[]
+  Dim xcateg As String
+  
+  Dim res2 As Result
+  Dim dtlst As Date[]
+  Dim dt As Date
+  Dim i As Integer
+  Dim xtot As Float
+  Dim aTot As Integer
+  
+  Dim res As Result
+  Dim sql As String
+  Dim xstr As String
+  
+  Dim chapdate As String
+  Dim xfirdate As Date
+  Dim xlasdate As Date
+  Dim xdateform As String
+  
+  xstr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  Select sRow
+    Case "Gender", "Surname", "District", "Municipality", "Service Rank", "Service Unit", "Service Category", "Last Status", "Visit Type", "Visit Mode"
+      xval = modMedReports.GetColumnEncounter(sRow)
+    Case Else
+      xval = modRHTMLSummary.GetFieldServiceSummary(sRow)
+  End Select
+  
+  yval = modRHTMLSummary.GetFieldServiceSummary(sColumn)
+  sql = Subst("select distinct(&1) as fld from tblpatbilling", yval)
+  If sInvoiced = True Then
+    res = conn.Exec(sql & " where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4" & xstr & " ORDER BY " & yval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+  Else
+    res = conn.Exec(sql & " where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4" & xstr & " ORDER BY " & yval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+  Endif
+  
+  xcol = New String[]
+  If res.Available Then
+    xcol.Add(UCase(sRow))
+    For Each res
+      If res["fld"] Then
+        xcol.Add(res["fld"])
+      Endif
+    Next
+    xcol.Add("TOTAL")
+  Endif
+  
+  $BillingReport = New CReportHTML(xcol, "", "")
+  $BillingReport.UserData.Add("Category: " & sItemType & "  Value: " & sVariable, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  
+  If sRow = "Year" Or If sRow = "Month" Or If sRow = "Date" Then
+    xdateform = modSettings.ShowSettingFromFIle("HealthReport/RowDateFormat")
+    
+    If sRow = "Year" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Year, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Year, dt1, dt2)
+      Endif
+    Else If sRow = "Month" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Month, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Month, dt1, dt2)
+      Endif
+    Else
+      dtlst = modDate.GetDateArrayBetween(dt1, dt2)
+    Endif
+    coltot = 0
+    For Each dt In dtlst
+      If sRow = "Year" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearOnly")
+          xfirdate = modDate.StartSqlYearBS(dt)
+          xlasdate = modDate.EndSqlYearBS(dt)
+        Else
+          chapdate = Format(dt, "yyyy")
+          xfirdate = modDate.StartSqlYear(dt)
+          xlasdate = modDate.EndSqlYear(dt)
+        Endif
+      Else If sRow = "Month" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearMonth")
+          xfirdate = modDate.StartSqlMonthBS(dt)
+          xlasdate = modDate.EndSqlMonthBS(dt)
+        Else
+          chapdate = Format(dt, "mmm yyyy")
+          xfirdate = modDate.StartSqlMonth(dt)
+          xlasdate = modDate.EndSqlMonth(dt)
+        Endif
+      Else
+        If xdateform = "Disable" Then
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate)
+        Else
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate) & " [" & modDate.GetWeekDay(dt) & "]"
+        Endif
+        xfirdate = modDate.StartSqlDate(dt)
+        xlasdate = modDate.EndSqlDate(dt)
+      Endif
+      
+      With asx
+        .Add(chapdate)
+        xtot = 0
+        For i = 1 To xcol.Count - 2
+          valtotal = 0
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & yval & " like &5" & xstr, True, xfirdate, xlasdate, sItemType, xcol[i])
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & yval & " like &5" & xstr, True, xfirdate, xlasdate, sItemType, xcol[i])
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            xtot = xtot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        coltot = coltot + xtot
+        .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+    
+    With asx
+      .Add("GRAND TOTAL")
+      For i = 1 To xcol.Count - 2
+        .Add("")
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+    With asx
+      .Add("TOTAL(Actual)")
+      aTot = 0
+      For i = 1 To xcol.Count - 2
+        valtotal = 0
+        If sInvoiced = True Then
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcol[i])
+        Else
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcol[i])
+        Endif
+        If sVariable = "GrossTotal" Then
+          If res2["duemt"] Then
+            valtotal = res2["duemt"]
+          Endif
+        Else If sVariable = "Discount" Then
+          If res2["disctot"] Then
+            valtotal = res2["disctot"]
+          Endif
+        Else If sVariable = "TotalTax" Then
+          If res2["taxtot"] Then
+            valtotal = res2["taxtot"]
+          Endif
+        Else If sVariable = "CashTotal" Then
+          If res2["xcash"] Then
+            valtotal = res2["xcash"]
+          Endif
+        Else If sVariable = "CreditTotal" Then
+          If res2["xcredit"] Then
+            valtotal = res2["xcredit"]
+          Endif
+        Else
+          If res2["netamt"] Then
+            valtotal = res2["netamt"]
+          Endif
+        Endif
+        If valtotal Then
+          aTot = aTot + valtotal
+          .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+        Else
+          .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+        Endif
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+  Else
+    If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+      sql1 = Subst("select distinct(&1) as col from tblencounter", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Else
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Endif
+    Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+      sql1 = Subst("select distinct(&1) as col from tblpatientinfo", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Else
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Endif
+    Else
+      sql1 = Subst("select distinct(&1) as col from tblpatbilling", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Else
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Endif
+    Endif
+    If res1.Available Then
+      categList = modControlSub.GetDirectFillresultNoNull(res1)
+      coltot = 0
+      For Each xcateg In categList
+        With asx
+          .Add(xcateg)
+          xtot = 0
+          For i = 1 To xcol.Count - 2
+            valtotal = 0
+            If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg, xcol[i])
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg, xcol[i])
+              Endif
+            Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg, xcol[i])
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg, xcol[i])
+              Endif
+            Else
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & xval & " like &5 and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg, xcol[i])
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & xval & " like &5 and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg, xcol[i])
+              Endif
+            Endif
+            If sVariable = "GrossTotal" Then
+              If res2["duemt"] Then
+                valtotal = res2["duemt"]
+              Endif
+            Else If sVariable = "Discount" Then
+              If res2["disctot"] Then
+                valtotal = res2["disctot"]
+              Endif
+            Else If sVariable = "TotalTax" Then
+              If res2["taxtot"] Then
+                valtotal = res2["taxtot"]
+              Endif
+            Else If sVariable = "CashTotal" Then
+              If res2["xcash"] Then
+                valtotal = res2["xcash"]
+              Endif
+            Else If sVariable = "CreditTotal" Then
+              If res2["xcredit"] Then
+                valtotal = res2["xcredit"]
+              Endif
+            Else
+              If res2["netamt"] Then
+                valtotal = res2["netamt"]
+              Endif
+            Endif
+            If valtotal Then
+              xtot = xtot + valtotal
+              .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+            Else
+              .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+            Endif
+          Next
+          coltot = coltot + xtot
+          .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+      
+      With asx
+        .Add("GRAND TOTAL")
+        For i = 1 To xcol.Count - 2
+          .Add("")
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      
+      With asx
+        .Add("TOTAL(Actual)")
+        aTot = 0
+        For i = 1 To xcol.Count - 2
+          valtotal = 0
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcol[i])
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcol[i])
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            aTot = aTot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+    
+  Endif
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+Public Function SummaryAccountOPIPCrossTab(conn As Connection, dt1 As Date, dt2 As Date, sRow As String, sItemType As String, sVariable As String, sInvoiced As Boolean, sLocaType As String, sLocation As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim sql1 As String
+  Dim asx As New String[0]
+  Dim res1 As Result
+  Dim xval As String
+  Dim yval As String
+  Dim xcol As String[] = ["OPD", "IPD"]
+  Dim xdept As String
+  Dim valtotal As Float
+  Dim coltot As Float
+  Dim categList As String[]
+  Dim xcateg As String
+  
+  Dim res2 As Result
+  Dim dtlst As Date[]
+  Dim dt As Date
+  
+  Dim xtot As Float
+  Dim aTot As Integer
+  Dim xstr As String
+  
+  Dim chapdate As String
+  Dim xfirdate As Date
+  Dim xlasdate As Date
+  Dim xdateform As String
+  
+  xstr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  Select sRow
+    Case "Gender", "Surname", "District", "Municipality", "Service Rank", "Service Unit", "Service Category", "Last Status", "Visit Type", "Visit Mode"
+      xval = modMedReports.GetColumnEncounter(sRow)
+    Case Else
+      xval = modRHTMLSummary.GetFieldServiceSummary(sRow)
+  End Select
+  
+  $BillingReport = New CReportHTML([UCase(sRow), "OPD", "IPD", "TOTAL"], "", "")
+  $BillingReport.UserData.Add("Category: " & sItemType & "  Value: " & sVariable, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  
+  If sRow = "Year" Or If sRow = "Month" Or If sRow = "Date" Then
+    xdateform = modSettings.ShowSettingFromFIle("HealthReport/RowDateFormat")
+    
+    If sRow = "Year" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Year, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Year, dt1, dt2)
+      Endif
+    Else If sRow = "Month" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Month, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Month, dt1, dt2)
+      Endif
+    Else
+      dtlst = modDate.GetDateArrayBetween(dt1, dt2)
+    Endif
+    coltot = 0
+    For Each dt In dtlst
+      If sRow = "Year" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearOnly")
+          xfirdate = modDate.StartSqlYearBS(dt)
+          xlasdate = modDate.EndSqlYearBS(dt)
+        Else
+          chapdate = Format(dt, "yyyy")
+          xfirdate = modDate.StartSqlYear(dt)
+          xlasdate = modDate.EndSqlYear(dt)
+        Endif
+      Else If sRow = "Month" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearMonth")
+          xfirdate = modDate.StartSqlMonthBS(dt)
+          xlasdate = modDate.EndSqlMonthBS(dt)
+        Else
+          chapdate = Format(dt, "mmm yyyy")
+          xfirdate = modDate.StartSqlMonth(dt)
+          xlasdate = modDate.EndSqlMonth(dt)
+        Endif
+      Else
+        If xdateform = "Disable" Then
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate)
+        Else
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate) & " [" & modDate.GetWeekDay(dt) & "]"
+        Endif
+        xfirdate = modDate.StartSqlDate(dt)
+        xlasdate = modDate.EndSqlDate(dt)
+      Endif
+      
+      With asx
+        .Add(chapdate)
+        xtot = 0
+        For Each xdept In xcol
+          valtotal = 0
+          yval = GetDepartQuery(xdept)
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & yval & xstr, True, xfirdate, xlasdate, sItemType)
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & yval & xstr, True, xfirdate, xlasdate, sItemType)
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            xtot = xtot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        coltot = coltot + xtot
+        .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+    
+    With asx
+      .Add("GRAND TOTAL")
+      For Each xdept In xcol
+        .Add("")
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+    With asx
+      .Add("TOTAL(Actual)")
+      aTot = 0
+      For Each xdept In xcol
+        valtotal = 0
+        yval = GetDepartQuery(xdept)
+        If sInvoiced = True Then
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+        Else
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+        Endif
+        If sVariable = "GrossTotal" Then
+          If res2["duemt"] Then
+            valtotal = res2["duemt"]
+          Endif
+        Else If sVariable = "Discount" Then
+          If res2["disctot"] Then
+            valtotal = res2["disctot"]
+          Endif
+        Else If sVariable = "TotalTax" Then
+          If res2["taxtot"] Then
+            valtotal = res2["taxtot"]
+          Endif
+        Else If sVariable = "CashTotal" Then
+          If res2["xcash"] Then
+            valtotal = res2["xcash"]
+          Endif
+        Else If sVariable = "CreditTotal" Then
+          If res2["xcredit"] Then
+            valtotal = res2["xcredit"]
+          Endif
+        Else
+          If res2["netamt"] Then
+            valtotal = res2["netamt"]
+          Endif
+        Endif
+        If valtotal Then
+          aTot = aTot + valtotal
+          .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+        Else
+          .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+        Endif
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+  Else
+    If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+      sql1 = Subst("select distinct(&1) as col from tblencounter", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Else
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Endif
+    Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+      sql1 = Subst("select distinct(&1) as col from tblpatientinfo", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Else
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Endif
+    Else
+      sql1 = Subst("select distinct(&1) as col from tblpatbilling", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Else
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+      Endif
+    Endif
+    If res1.Available Then
+      categList = modControlSub.GetDirectFillresultNoNull(res1)
+      coltot = 0
+      For Each xcateg In categList
+        With asx
+          .Add(xcateg)
+          xtot = 0
+          For Each xdept In xcol
+            valtotal = 0
+            yval = GetDepartQuery(xdept)
+            If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg)
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg)
+              Endif
+            Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg)
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg)
+              Endif
+            Else
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & xval & " like &5 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg)
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & xval & " like &5 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType, xcateg)
+              Endif
+            Endif
+            If sVariable = "GrossTotal" Then
+              If res2["duemt"] Then
+                valtotal = res2["duemt"]
+              Endif
+            Else If sVariable = "Discount" Then
+              If res2["disctot"] Then
+                valtotal = res2["disctot"]
+              Endif
+            Else If sVariable = "TotalTax" Then
+              If res2["taxtot"] Then
+                valtotal = res2["taxtot"]
+              Endif
+            Else If sVariable = "CashTotal" Then
+              If res2["xcash"] Then
+                valtotal = res2["xcash"]
+              Endif
+            Else If sVariable = "CreditTotal" Then
+              If res2["xcredit"] Then
+                valtotal = res2["xcredit"]
+              Endif
+            Else
+              If res2["netamt"] Then
+                valtotal = res2["netamt"]
+              Endif
+            Endif
+            If valtotal Then
+              xtot = xtot + valtotal
+              .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+            Else
+              .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+            Endif
+          Next
+          coltot = coltot + xtot
+          .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+      
+      With asx
+        .Add("GRAND TOTAL")
+        For Each xdept In xcol
+          .Add("")
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      
+      With asx
+        .Add("TOTAL(Actual)")
+        aTot = 0
+        For Each xdept In xcol
+          valtotal = 0
+          yval = GetDepartQuery(xdept)
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemtype like &4 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemtype like &4 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItemType)
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            aTot = aTot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+    
+  Endif
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+''=================== Group cross tabs ==========================
+Public Function SummaryGroupAccCrossTab(conn As Connection, dt1 As Date, dt2 As Date, sRow As String, sColumn As String, sGroup As String, sVariable As String, sInvoiced As Boolean, sLocaType As String, sLocation As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim sql1 As String
+  Dim asx As New String[0]
+  Dim res1 As Result
+  Dim xval As String
+  Dim yval As String
+  Dim xcol As String[]
+  Dim valtotal As Float
+  Dim coltot As Float
+  Dim categList As String[]
+  Dim xcateg As String
+  
+  Dim res2 As Result
+  Dim dtlst As Date[]
+  Dim dt As Date
+  Dim i As Integer
+  Dim xtot As Float
+  Dim aTot As Integer
+  
+  Dim res As Result
+  Dim sql As String
+  Dim xstr As String
+  
+  Dim chapdate As String
+  Dim xfirdate As Date
+  Dim xlasdate As Date
+  Dim xdateform As String
+  
+  xstr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  Select sRow
+    Case "Gender", "Surname", "District", "Municipality", "Service Rank", "Service Unit", "Service Category", "Last Status", "Visit Type", "Visit Mode"
+      xval = modMedReports.GetColumnEncounter(sRow)
+    Case Else
+      xval = modRHTMLSummary.GetFieldServiceSummary(sRow)
+  End Select
+  
+  yval = modRHTMLSummary.GetFieldServiceSummary(sColumn)
+  sql = Subst("select distinct(&1) as fld from tblpatbilling", yval)
+  If sInvoiced = True Then
+    res = conn.Exec(sql & " where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)" & xstr & " ORDER BY " & yval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+  Else
+    res = conn.Exec(sql & " where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)" & xstr & " ORDER BY " & yval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+  Endif
+  
+  xcol = New String[]
+  If res.Available Then
+    xcol.Add(UCase(sRow))
+    For Each res
+      If res["fld"] Then
+        xcol.Add(res["fld"])
+      Endif
+    Next
+    xcol.Add("TOTAL")
+  Endif
+  
+  $BillingReport = New CReportHTML(xcol, "", "")
+  $BillingReport.UserData.Add("Group: " & sGroup & "  Value: " & sVariable, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  
+  If sRow = "Year" Or If sRow = "Month" Or If sRow = "Date" Then
+    xdateform = modSettings.ShowSettingFromFIle("HealthReport/RowDateFormat")
+    
+    If sRow = "Year" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Year, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Year, dt1, dt2)
+      Endif
+    Else If sRow = "Month" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Month, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Month, dt1, dt2)
+      Endif
+    Else
+      dtlst = modDate.GetDateArrayBetween(dt1, dt2)
+    Endif
+    coltot = 0
+    For Each dt In dtlst
+      If sRow = "Year" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearOnly")
+          xfirdate = modDate.StartSqlYearBS(dt)
+          xlasdate = modDate.EndSqlYearBS(dt)
+        Else
+          chapdate = Format(dt, "yyyy")
+          xfirdate = modDate.StartSqlYear(dt)
+          xlasdate = modDate.EndSqlYear(dt)
+        Endif
+      Else If sRow = "Month" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearMonth")
+          xfirdate = modDate.StartSqlMonthBS(dt)
+          xlasdate = modDate.EndSqlMonthBS(dt)
+        Else
+          chapdate = Format(dt, "mmm yyyy")
+          xfirdate = modDate.StartSqlMonth(dt)
+          xlasdate = modDate.EndSqlMonth(dt)
+        Endif
+      Else
+        If xdateform = "Disable" Then
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate)
+        Else
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate) & " [" & modDate.GetWeekDay(dt) & "]"
+        Endif
+        xfirdate = modDate.StartSqlDate(dt)
+        xlasdate = modDate.EndSqlDate(dt)
+      Endif
+      
+      With asx
+        .Add(chapdate)
+        xtot = 0
+        For i = 1 To xcol.Count - 2
+          valtotal = 0
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & " like &5" & xstr, True, xfirdate, xlasdate, sGroup, xcol[i])
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & " like &5" & xstr, True, xfirdate, xlasdate, sGroup, xcol[i])
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            xtot = xtot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        coltot = coltot + xtot
+        .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+    
+    With asx
+      .Add("GRAND TOTAL")
+      For i = 1 To xcol.Count - 2
+        .Add("")
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+    With asx
+      .Add("TOTAL(Actual)")
+      aTot = 0
+      For i = 1 To xcol.Count - 2
+        valtotal = 0
+        If sInvoiced = True Then
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+        Else
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+        Endif
+        If sVariable = "GrossTotal" Then
+          If res2["duemt"] Then
+            valtotal = res2["duemt"]
+          Endif
+        Else If sVariable = "Discount" Then
+          If res2["disctot"] Then
+            valtotal = res2["disctot"]
+          Endif
+        Else If sVariable = "TotalTax" Then
+          If res2["taxtot"] Then
+            valtotal = res2["taxtot"]
+          Endif
+        Else If sVariable = "CashTotal" Then
+          If res2["xcash"] Then
+            valtotal = res2["xcash"]
+          Endif
+        Else If sVariable = "CreditTotal" Then
+          If res2["xcredit"] Then
+            valtotal = res2["xcredit"]
+          Endif
+        Else
+          If res2["netamt"] Then
+            valtotal = res2["netamt"]
+          Endif
+        Endif
+        If valtotal Then
+          aTot = aTot + valtotal
+          .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+        Else
+          .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+        Endif
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+  Else
+    If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+      sql1 = Subst("select distinct(&1) as col from tblencounter", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Else
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Endif
+    Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+      sql1 = Subst("select distinct(&1) as col from tblpatientinfo", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Else
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Endif
+    Else
+      sql1 = Subst("select distinct(&1) as col from tblpatbilling", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Else
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Endif
+    Endif
+    If res1.Available Then
+      categList = modControlSub.GetDirectFillresultNoNull(res1)
+      coltot = 0
+      For Each xcateg In categList
+        With asx
+          .Add(xcateg)
+          xtot = 0
+          For i = 1 To xcol.Count - 2
+            valtotal = 0
+            If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg, xcol[i])
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg, xcol[i])
+              Endif
+            Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg, xcol[i])
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg, xcol[i])
+              Endif
+            Else
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & xval & " like &5 and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg, xcol[i])
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & xval & " like &5 and " & yval & " like &6" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg, xcol[i])
+              Endif
+            Endif
+            If sVariable = "GrossTotal" Then
+              If res2["duemt"] Then
+                valtotal = res2["duemt"]
+              Endif
+            Else If sVariable = "Discount" Then
+              If res2["disctot"] Then
+                valtotal = res2["disctot"]
+              Endif
+            Else If sVariable = "TotalTax" Then
+              If res2["taxtot"] Then
+                valtotal = res2["taxtot"]
+              Endif
+            Else If sVariable = "CashTotal" Then
+              If res2["xcash"] Then
+                valtotal = res2["xcash"]
+              Endif
+            Else If sVariable = "CreditTotal" Then
+              If res2["xcredit"] Then
+                valtotal = res2["xcredit"]
+              Endif
+            Else
+              If res2["netamt"] Then
+                valtotal = res2["netamt"]
+              Endif
+            Endif
+            If valtotal Then
+              xtot = xtot + valtotal
+              .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+            Else
+              .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+            Endif
+          Next
+          coltot = coltot + xtot
+          .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+      
+      With asx
+        .Add("GRAND TOTAL")
+        For i = 1 To xcol.Count - 2
+          .Add("")
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      
+      With asx
+        .Add("TOTAL(Actual)")
+        aTot = 0
+        For i = 1 To xcol.Count - 2
+          valtotal = 0
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            aTot = aTot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+    
+  Endif
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+Public Function SummaryGroupOPIPAccCrossTab(conn As Connection, dt1 As Date, dt2 As Date, sRow As String, sGroup As String, sVariable As String, sInvoiced As Boolean, sLocaType As String, sLocation As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim sql1 As String
+  Dim asx As New String[0]
+  Dim res1 As Result
+  Dim xval As String
+  Dim yval As String
+  Dim xcol As String[] = ["OPD", "IPD"]
+  Dim xdept As String
+  Dim valtotal As Float
+  Dim coltot As Float
+  Dim categList As String[]
+  Dim xcateg As String
+  
+  Dim res2 As Result
+  Dim dtlst As Date[]
+  Dim dt As Date
+  
+  Dim xtot As Float
+  Dim aTot As Integer
+  Dim xstr As String
+  
+  Dim chapdate As String
+  Dim xfirdate As Date
+  Dim xlasdate As Date
+  Dim xdateform As String
+  
+  xstr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  Select sRow
+    Case "Gender", "Surname", "District", "Municipality", "Service Rank", "Service Unit", "Service Category", "Last Status", "Visit Type", "Visit Mode"
+      xval = modMedReports.GetColumnEncounter(sRow)
+    Case Else
+      xval = modRHTMLSummary.GetFieldServiceSummary(sRow)
+  End Select
+  
+  $BillingReport = New CReportHTML(["Variable", "OPD", "IPD", "TOTAL"], "", "")
+  $BillingReport.UserData.Add("Group: " & sGroup & "  Value: " & sVariable, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  
+  If sRow = "Year" Or If sRow = "Month" Or If sRow = "Date" Then
+    xdateform = modSettings.ShowSettingFromFIle("HealthReport/RowDateFormat")
+    
+    If sRow = "Year" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Year, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Year, dt1, dt2)
+      Endif
+    Else If sRow = "Month" Then
+      If modBasic.$DateFormat = "BS Date" Then
+        dtlst = modDate.GetSelectDateBSArrayBetween(gb.Month, dt1, dt2)
+      Else
+        dtlst = modDate.GetSelectDateArrayBetween(gb.Month, dt1, dt2)
+      Endif
+    Else
+      dtlst = modDate.GetDateArrayBetween(dt1, dt2)
+    Endif
+    coltot = 0
+    For Each dt In dtlst
+      If sRow = "Year" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearOnly")
+          xfirdate = modDate.StartSqlYearBS(dt)
+          xlasdate = modDate.EndSqlYearBS(dt)
+        Else
+          chapdate = Format(dt, "yyyy")
+          xfirdate = modDate.StartSqlYear(dt)
+          xlasdate = modDate.EndSqlYear(dt)
+        Endif
+      Else If sRow = "Month" Then
+        If modBasic.$DateFormat = "BS Date" Then
+          chapdate = modDate.DateFormatViewBS(dt, "YearMonth")
+          xfirdate = modDate.StartSqlMonthBS(dt)
+          xlasdate = modDate.EndSqlMonthBS(dt)
+        Else
+          chapdate = Format(dt, "mmm yyyy")
+          xfirdate = modDate.StartSqlMonth(dt)
+          xlasdate = modDate.EndSqlMonth(dt)
+        Endif
+      Else
+        If xdateform = "Disable" Then
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate)
+        Else
+          chapdate = modReportVar.GetDateTimeReport(dt, gb.MediumDate) & " [" & modDate.GetWeekDay(dt) & "]"
+        Endif
+        xfirdate = modDate.StartSqlDate(dt)
+        xlasdate = modDate.EndSqlDate(dt)
+      Endif
+      
+      With asx
+        .Add(chapdate)
+        xtot = 0
+        For Each xdept In xcol
+          valtotal = 0
+          yval = GetDepartQuery(xdept)
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & xstr, True, xfirdate, xlasdate, sGroup)
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & xstr, True, xfirdate, xlasdate, sGroup)
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            xtot = xtot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        coltot = coltot + xtot
+        .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+    
+    With asx
+      .Add("GRAND TOTAL")
+      For Each xdept In xcol
+        .Add("")
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+    With asx
+      .Add("TOTAL(Actual)")
+      aTot = 0
+      For Each xdept In xcol
+        valtotal = 0
+        yval = GetDepartQuery(xdept)
+        If sInvoiced = True Then
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+        Else
+          res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+        Endif
+        If sVariable = "GrossTotal" Then
+          If res2["duemt"] Then
+            valtotal = res2["duemt"]
+          Endif
+        Else If sVariable = "Discount" Then
+          If res2["disctot"] Then
+            valtotal = res2["disctot"]
+          Endif
+        Else If sVariable = "TotalTax" Then
+          If res2["taxtot"] Then
+            valtotal = res2["taxtot"]
+          Endif
+        Else If sVariable = "CashTotal" Then
+          If res2["xcash"] Then
+            valtotal = res2["xcash"]
+          Endif
+        Else If sVariable = "CreditTotal" Then
+          If res2["xcredit"] Then
+            valtotal = res2["xcredit"]
+          Endif
+        Else
+          If res2["netamt"] Then
+            valtotal = res2["netamt"]
+          Endif
+        Endif
+        If valtotal Then
+          aTot = aTot + valtotal
+          .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+        Else
+          .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+        Endif
+      Next
+      .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+  Else
+    If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+      sql1 = Subst("select distinct(&1) as col from tblencounter", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Else
+        res1 = conn.Exec(sql1 & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Endif
+    Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+      sql1 = Subst("select distinct(&1) as col from tblpatientinfo", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Else
+        res1 = conn.Exec(sql1 & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Endif
+    Else
+      sql1 = Subst("select distinct(&1) as col from tblpatbilling", xval)
+      If sInvoiced = True Then
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Else
+        res1 = conn.Exec(sql1 & " where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+      Endif
+    Endif
+    If res1.Available Then
+      categList = modControlSub.GetDirectFillresultNoNull(res1)
+      coltot = 0
+      For Each xcateg In categList
+        With asx
+          .Add(xcateg)
+          xtot = 0
+          For Each xdept In xcol
+            valtotal = 0
+            yval = GetDepartQuery(xdept)
+            Print yval
+            If sRow = "Last Status" Or If sRow = "Visit Type" Or If sRow = "Visit Mode" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg)
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg)
+              Endif
+            Else If sRow = "Gender" Or If sRow = "Surname" Or If sRow = "District" Or If sRow = "Municipality" Or If sRow = "Service Rank" Or If sRow = "Service Unit" Or If sRow = "Service Category" Then
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg)
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5)) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg)
+              Endif
+            Else
+              If sInvoiced = True Then
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & xval & " like &5 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg)
+              Else
+                res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & xval & " like &5 and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcateg)
+              Endif
+            Endif
+            If sVariable = "GrossTotal" Then
+              If res2["duemt"] Then
+                valtotal = res2["duemt"]
+              Endif
+            Else If sVariable = "Discount" Then
+              If res2["disctot"] Then
+                valtotal = res2["disctot"]
+              Endif
+            Else If sVariable = "TotalTax" Then
+              If res2["taxtot"] Then
+                valtotal = res2["taxtot"]
+              Endif
+            Else If sVariable = "CashTotal" Then
+              If res2["xcash"] Then
+                valtotal = res2["xcash"]
+              Endif
+            Else If sVariable = "CreditTotal" Then
+              If res2["xcredit"] Then
+                valtotal = res2["xcredit"]
+              Endif
+            Else
+              If res2["netamt"] Then
+                valtotal = res2["netamt"]
+              Endif
+            Endif
+            If valtotal Then
+              xtot = xtot + valtotal
+              .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+            Else
+              .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+            Endif
+          Next
+          coltot = coltot + xtot
+          .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+      
+      With asx
+        .Add("GRAND TOTAL")
+        For Each xdept In xcol
+          .Add("")
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(coltot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      
+      With asx
+        .Add("TOTAL(Actual)")
+        aTot = 0
+        For Each xdept In xcol
+          valtotal = 0
+          yval = GetDepartQuery(xdept)
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & yval & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup)
+          Endif
+          If sVariable = "GrossTotal" Then
+            If res2["duemt"] Then
+              valtotal = res2["duemt"]
+            Endif
+          Else If sVariable = "Discount" Then
+            If res2["disctot"] Then
+              valtotal = res2["disctot"]
+            Endif
+          Else If sVariable = "TotalTax" Then
+            If res2["taxtot"] Then
+              valtotal = res2["taxtot"]
+            Endif
+          Else If sVariable = "CashTotal" Then
+            If res2["xcash"] Then
+              valtotal = res2["xcash"]
+            Endif
+          Else If sVariable = "CreditTotal" Then
+            If res2["xcredit"] Then
+              valtotal = res2["xcredit"]
+            Endif
+          Else
+            If res2["netamt"] Then
+              valtotal = res2["netamt"]
+            Endif
+          Endif
+          If valtotal Then
+            aTot = aTot + valtotal
+            .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+          Endif
+        Next
+        .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+    
+  Endif
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+''====================================== Group =======================
+Public Function SummaryGroupAccTabular(conn As Connection, dt1 As Date, dt2 As Date, sColumn As String, sVariable As String, sInvoiced As Boolean, sLocaType As String, sLocation As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim grpList As String[]
+  Dim sGroup As String
+  
+  Dim xval As String
+  Dim xcol As String[]
+  Dim valtotal As Float
+  
+  Dim i As Integer
+  Dim res2 As Result
+  Dim aTot As Float
+  Dim xgrtot As Float
+  Dim res As Result
+  Dim xstr As String
+  
+  xstr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  Select sColumn
+    Case "Gender", "Surname", "District", "Municipality", "Service Rank", "Service Unit", "Service Category"
+      xval = modMedReports.GetColumnEncounter(sColumn)
+      If sInvoiced = True Then
+        res = conn.Exec(Subst("select distinct(&1) as fld from tblpatientinfo", xval) & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3)))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Else
+        res = conn.Exec(Subst("select distinct(&1) as fld from tblpatientinfo", xval) & " where fldpatientval in(select fldpatientval from tblencounter where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Endif
+      
+    Case "Last Status", "Visit Type", "Visit Mode"
+      xval = modMedReports.GetColumnEncounter(sColumn)
+      If sInvoiced = True Then
+        res = conn.Exec(Subst("select distinct(&1) as fld from tblencounter", xval) & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3))" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Else
+        res = conn.Exec(Subst("select distinct(&1) as fld from tblencounter", xval) & " where fldencounterval in(select fldencounterval from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Endif
+      
+    Case Else
+      xval = modRHTMLSummary.GetFieldServiceSummary(sColumn)
+      If sInvoiced = True Then
+        res = conn.Exec(Subst("select distinct(&1) as fld from tblpatbilling", xval) & " where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3)" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Else
+        res = conn.Exec(Subst("select distinct(&1) as fld from tblpatbilling", xval) & " where fldsave=&1 and fldtime>=&2 and fldtime<=&3" & xstr & " ORDER BY " & xval & " ASC", True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+      Endif
+      
+  End Select
+  
+  xcol = New String[]
+  If res.Available Then
+    xcol.Add(UCase(sColumn))
+    For Each res
+      If res["fld"] Then
+        xcol.Add(res["fld"])
+      Endif
+    Next
+    xcol.Add("TOTAL")
+  Endif
+  
+  $BillingReport = New CReportHTML(xcol, "", "")
+  $BillingReport.UserData.Add("Value: " & sVariable, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+  grpList = modNonMedical.GetGroupNameAccount()
+  
+  xgrtot = 0
+  For Each sGroup In grpList
+    
+    With asx
+      .Add(sGroup)
+      aTot = 0
+      For i = 1 To xcol.Count - 2
+        valtotal = 0
+        If sColumn = "Last Status" Or If sColumn = "Visit Type" Or If sColumn = "Visit Mode" Then
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5)" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where " & xval & " like &5)" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Endif
+        Else If sColumn = "Gender" Or If sColumn = "Surname" Or If sColumn = "District" Or If sColumn = "Municipality" Or If sColumn = "Service Rank" Or If sColumn = "Service Unit" Or If sColumn = "Service Category" Then
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5))" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where " & xval & " like &5))" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Endif
+        Else
+          If sInvoiced = True Then
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldbillno in(select fldbillno from tblpatbilldetail where fldtime>=&2 and fldtime<=&3) and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & xval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Else
+            res2 = conn.Exec("select " & modNonMedical.CashCreditBillSQL() & " from tblpatbilling where fldsave=&1 and fldtime>=&2 and fldtime<=&3 and flditemname in(select flditemname from tblreportgroup where fldgroup like &4) and " & xval & " like &5" & xstr, True, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sGroup, xcol[i])
+          Endif
+        Endif
+        If sVariable = "GrossTotal" Then
+          If res2["duemt"] Then
+            valtotal = res2["duemt"]
+          Endif
+        Else If sVariable = "Discount" Then
+          If res2["disctot"] Then
+            valtotal = res2["disctot"]
+          Endif
+        Else If sVariable = "TotalTax" Then
+          If res2["taxtot"] Then
+            valtotal = res2["taxtot"]
+          Endif
+        Else If sVariable = "CashTotal" Then
+          If res2["xcash"] Then
+            valtotal = res2["xcash"]
+          Endif
+        Else If sVariable = "CreditTotal" Then
+          If res2["xcredit"] Then
+            valtotal = res2["xcredit"]
+          Endif
+        Else
+          If res2["netamt"] Then
+            valtotal = res2["netamt"]
+          Endif
+        Endif
+        If valtotal Then
+          aTot = aTot + valtotal
+          .Add(modReportVar.GetLocaleNumberFormat(valtotal, gb.Currency))
+        Else
+          .Add(modReportVar.GetLocaleNumberFormat(0, 0))
+        Endif
+      Next
+      xgrtot = xgrtot + aTot
+      .Add(modReportVar.GetLocaleNumberFormat(aTot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    
+  Next
+  
+  With asx
+    .Add("<b>GRAND TOTAL</b>")
+    For i = 1 To xcol.Count - 2
+      .Add("")
+    Next
+    .Add(modReportVar.GetLocaleNumberFormat(xgrtot, gb.Currency))
+  End With
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End

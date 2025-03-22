@@ -1,0 +1,2241 @@
+' Gambas module file
+
+''-----------------------------------------PATIENT WISE CLINICAL --------------------------------------------------------------------------
+Public Function PatientMedicationForReturn(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim res1 As Result
+
+  Dim regimen As String
+  Dim xdose As Float
+  Dim xpck As Float
+  Dim i As Integer
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("Regimen"), ("Status"), ("DispQTY"), ("AdminQTY"), ("UnusedQTY")], "PatientReport", encid)
+  $BillingReport.UserData.Add("UNUSED MEDICATION", "Report")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM1")
+
+  res = modDatabase.$syConn.Exec("select fldid,fldroute,flditem,flddose,fldfreq,flddays,fldqtydisp,fldqtyret,fldcurval from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and flditemtype=&3 ORDER BY flditem", encid, True, "Medicines")
+  If res.Available Then
+    i = 1
+    For Each res
+      Select res["fldroute"]
+        Case "fluid", "resp", "topical", "eye/ear", "anal/vaginal"
+          regimen = res["fldroute"] & Space(2) & res["flddose"] & Space(1) & modPharmLabel.GetPackVolUnit(res["flditem"]) & " X " & res["fldfreq"] & " X " & res["flddays"]
+        Case Else
+          regimen = res["fldroute"] & Space(2) & res["flddose"] & Space(1) & "mg" & " X " & res["fldfreq"] & " X " & res["flddays"]
+      End Select
+      res1 = modDatabase.$syConn.Exec("select SUM(fldvalue) as col from tblnurdosing where fldencounterval=&1 and flddoseno=&2", encid, res["fldid"])
+      xdose = 0
+      If res1.Available Then
+        xpck = modPharmLabel.GetPackVolValue(res["flditem"])
+        If res1["col"] And If xpck Then
+          xdose = Round(res1["col"] / xpck, -2)
+        Endif
+      Endif
+      With asx
+        .Add(CStr(i))
+        .Add(res["flditem"])
+        .Add(regimen)
+        .Add(res["fldcurval"])
+        .Add((res["fldqtydisp"] - res["fldqtyret"]))
+        .Add(xdose)
+        .Add((res["fldqtydisp"] - res["fldqtyret"] - xdose))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function NursingCheckReport(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res1 As Result
+  Dim i As Integer
+
+  Dim res2 As Result
+  Dim j As Integer
+
+  Dim res3 As Result
+  Dim k As Integer
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("Regimen"), ("Today")], "", "")
+  $BillingReport.UserData.Add("NURSING CHECK REPORT", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  res1 = modDatabase.$syConn.Exec("select flditem,fldevery,fldunit from tblmonitor where fldencounterval=&1 and fldstatus=&2 and fldcategory=&3", encid, "Continue", "Exam")
+  If res1.Available Then
+    $BillingReport.AddSection("Monitoring", True)
+    i = 1
+
+    For Each res1
+      With asx
+        .Add(CStr(i))
+        .Add(res1["flditem"])
+        .Add(res1["fldevery"] & " " & res1["fldunit"])
+        .Add(modClinic.GetALLReportExamSelString(encid, res1["flditem"], Now()).Join(gb.NewLine))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next
+    With asx
+      .Add("")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+  Endif
+
+  res2 = modDatabase.$syConn.Exec("select fldid,fldroute,flditem,flddose,fldfreq,flddays from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldstarttime<=&3 and fldendtime>=&4 and flditemtype=&5 and fldcurval=&6", encid, True, Now(), DateAdd(Now(), gb.Hour, -3), "Medicines", "Continue")
+  If res2.Available Then
+    $BillingReport.AddSection("Medication", True)
+    j = 1
+
+    For Each res2
+      With asx
+        .Add(CStr(j))
+        .Add(res2["flditem"])
+        .Add(res2["fldroute"] & Space(2) & res2["flddose"] & " X " & res2["fldfreq"])
+        .Add(modPharmacy.GetALLReportDrugSelString(encid, res2["fldid"], Now()).Join(gb.NewLine))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      j = j + 1
+    Next
+    With asx
+      .Add("")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+  Endif
+
+  res3 = modDatabase.$syConn.Exec("select fldid,fldcategory,flditem,flddose,fldfreq from tblextradosing where fldencounterval=&1 and fldstatus=&2 and fldsave=&3", encid, "Continue", True)
+  If res3.Available Then
+    $BillingReport.AddSection("PO Intake", True)
+    k = 1
+
+    For Each res3
+      With asx
+        .Add(CStr(k))
+        .Add(res3["flditem"])
+        If res3["fldcategory"] = "Mixture" Then
+          .Add(res3["flddose"] & " Units " & res3["fldfreq"])
+        Else
+          .Add(res3["flddose"] & " Grams " & res3["fldfreq"])
+        Endif
+        .Add(modPatPatho.GetALLReportFoodSelString(encid, res3["flditem"], Now()).Join(gb.NewLine))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      k = k + 1
+    Next
+    With asx
+      .Add("")
+      .Add("****")
+      .Add("****")
+      .Add("****")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowBedTransitionReport(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  $BillingReport = New CReportHTML([("Department"), ("BedNo"), ("InDate"), ("InBY"), ("OutDate"), ("OutBY"), ("Duration")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("BED TRANSITION", "PARAM1")
+
+  res = modDatabase.$syConn.Exec("select fldid,flditem,fldsecondreport,fldfirsttime,fldfirstuserid,fldsecondtime,fldseconduserid,fldcomment from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstreport=&3 and fldsecondsave=&4", encid, "General Services", "Bed", True)
+  If res.Available Then
+    For Each res
+      With asx
+        .Add(res["flditem"])
+        .Add(res["fldsecondreport"])
+        .Add(modReportVar.GetDateTimeReport(res["fldfirsttime"], gb.GeneralDate))
+        .Add(res["fldfirstuserid"])
+        .Add(modReportVar.GetDateTimeReport(res["fldsecondtime"], gb.GeneralDate))
+        .Add(res["fldseconduserid"])
+        .Add(modPatPatho.GetBedTransitionInterval(res["fldid"]))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientInputPlan(encid As String, sDate As Date, sType As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim fl As Float
+  Dim cal As Float
+  Dim prot As Float
+  Dim sugr As Float
+  Dim lipd As Float
+  Dim mineral As Float
+  Dim fiber As Float
+  Dim calcium As Float
+  Dim phospho As Float
+  Dim iron As Float
+  Dim carotene As Float
+  Dim thiam As Float
+  Dim ribofla As Float
+  Dim niacin As Float
+  Dim pyridox As Float
+  Dim freefoli As Float
+  Dim totfoli As Float
+  Dim vitc As Float
+
+  Dim xfluid As Float
+  Dim xenergy As Float
+  Dim xprot As Float
+  Dim xsugar As Float
+  Dim xfat As Float
+  Dim xmineral As Float
+  Dim xfiber As Float
+  Dim xcalcium As Float
+  Dim xphospho As Float
+  Dim xiron As Float
+  Dim xcarotene As Float
+  Dim xthiam As Float
+  Dim xribofla As Float
+  Dim xniacin As Float
+  Dim xpyridox As Float
+  Dim xfreefoli As Float
+  Dim xtotfoli As Float
+  Dim xvitc As Float
+
+  Dim xfreq As Float
+  Dim sql As String
+
+  $BillingReport = New CReportHTML([("Particulars"), ("Input<br>(gm)"), ("Fluid<br>(gm)"), ("Energy<br>(kCal)"), ("Protein<br>(gm)"), ("Carbohydrate<br>(gm)"), ("Lipid<br>(gm)"), ("Minerals<br>(gm)"), ("Fiber<br>(gm)"), ("Calcium<br>(mg)"), ("Phosphorus<br>(mg)"), ("Iron<br>(mg)"), ("Carotene<br>(mcg)"), ("Thiamine<br>(mg)"), ("Riboflavin<br>(mg)"), ("Niacin<br>(mg)"), ("Pyridoxine<br>(mg)"), ("Free Folic<br>(mcg)"), ("Total Folic<br>(mcg)"), ("Vitamin C<br>(mg)")], "PatientReport", encid)
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Date(), gb.MediumDate), "PARAM1")
+  $BillingReport.UserData.Add("INPUT FOOD", "Report")
+
+  sql = "select fldcategory,flditem,flddose,fldfreq from tblextradosing where fldencounterval=&1 and fldstatus=&2 and flddosetime>=&3 and flddosetime<=&4 and fldsave=&5"
+  If sType = "Planned" Then
+    res = modDatabase.$syConn.Exec(sql, encid, "Planned", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), False)                                                                                        ''
+  Else If sType = "Pending" Then
+    res = modDatabase.$syConn.Exec(sql, encid, "Continue", modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), True)                                                                                        ''
+  Endif
+  fl = 0
+  cal = 0
+  prot = 0
+  sugr = 0
+  lipd = 0
+  mineral = 0
+  fiber = 0
+  calcium = 0
+  phospho = 0
+  iron = 0
+  carotene = 0
+  thiam = 0
+  ribofla = 0
+  niacin = 0
+  pyridox = 0
+  freefoli = 0
+  totfoli = 0
+  vitc = 0
+  For Each res
+    xfreq = res["flddose"]
+    xfluid = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldfluid", xfreq)
+    xenergy = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldenergy", xfreq)
+    xprot = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldprotein", xfreq)
+    xsugar = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldsugar", xfreq)
+    xfat = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldlipid", xfreq)
+    xmineral = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldmineral", xfreq)
+    xfiber = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldfibre", xfreq)
+    xcalcium = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldcalcium", xfreq)
+    xphospho = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldphosphorous", xfreq)
+    xiron = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldiron", xfreq)
+    xcarotene = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldcarotene", xfreq)
+    xthiam = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldthiamine", xfreq)
+    xribofla = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldriboflavin", xfreq)
+    xniacin = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldniacin", xfreq)
+    xpyridox = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldpyridoxine", xfreq)
+    xfreefoli = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldfreefolic", xfreq)
+    xtotfoli = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldtotalfolic", xfreq)
+    xvitc = modFixPatho.GetPOCoponentFood(res["flditem"], res["fldcategory"], "fldvitaminc", xfreq)
+
+    fl = fl + xfluid
+    cal = cal + xenergy
+    prot = prot + xprot
+    sugr = sugr + xsugar
+    lipd = lipd + xfat
+    mineral = mineral + xmineral
+    fiber = fiber + xfiber
+    calcium = calcium + xcalcium
+    phospho = phospho + xphospho
+    iron = iron + xiron
+    carotene = carotene + xcarotene
+    thiam = thiam + xthiam
+    ribofla = ribofla + xribofla
+    niacin = niacin + xniacin
+    pyridox = pyridox + xpyridox
+    freefoli = freefoli + xfreefoli
+    totfoli = totfoli + xtotfoli
+    vitc = vitc + xvitc
+
+    With asx
+      .Add(res["flditem"])
+      .Add(Round(xfreq, -3))
+      .Add(xfluid)
+      .Add(xenergy)
+      .Add(xprot)
+      .Add(xsugar)
+      .Add(xfat)
+      .Add(xmineral)
+      .Add(xfiber)
+      .Add(xcalcium)
+      .Add(xphospho)
+      .Add(xiron)
+      .Add(xcarotene)
+      .Add(xthiam)
+      .Add(xribofla)
+      .Add(xniacin)
+      .Add(xpyridox)
+      .Add(xfreefoli)
+      .Add(xtotfoli)
+      .Add(xvitc)
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  With asx
+    .Add("..")
+    .Add("..")
+    .Add(fl)
+    .Add(cal)
+    .Add(prot)
+    .Add(sugr)
+    .Add(lipd)
+    .Add(mineral)
+    .Add(fiber)
+    .Add(calcium)
+    .Add(phospho)
+    .Add(iron)
+    .Add(carotene)
+    .Add(thiam)
+    .Add(ribofla)
+    .Add(niacin)
+    .Add(pyridox)
+    .Add(freefoli)
+    .Add(totfoli)
+    .Add(vitc)
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientInputReport(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim fl As Float
+  Dim cal As Float
+  Dim prot As Float
+  Dim sugr As Float
+  Dim lipd As Float
+  Dim mineral As Float
+  Dim fiber As Float
+  Dim calcium As Float
+  Dim phospho As Float
+  Dim iron As Float
+  Dim carotene As Float
+  Dim thiam As Float
+  Dim ribofla As Float
+  Dim niacin As Float
+  Dim pyridox As Float
+  Dim freefoli As Float
+  Dim totfoli As Float
+  Dim vitc As Float
+
+  Dim xfluid As Float
+  Dim xenergy As Float
+  Dim xprot As Float
+  Dim xsugar As Float
+  Dim xfat As Float
+  Dim xmineral As Float
+  Dim xfiber As Float
+  Dim xcalcium As Float
+  Dim xphospho As Float
+  Dim xiron As Float
+  Dim xcarotene As Float
+  Dim xthiam As Float
+  Dim xribofla As Float
+  Dim xniacin As Float
+  Dim xpyridox As Float
+  Dim xfreefoli As Float
+  Dim xtotfoli As Float
+  Dim xvitc As Float
+
+  Dim red1 As Result
+  Dim xdt As Date
+
+  $BillingReport = New CReportHTML([("Time"), ("Particulars"), ("Input<br>(gm)"), ("Fluid<br>(gm)"), ("Energy<br>(kCal)"), ("Protein<br>(gm)"), ("Carbohydrate<br>(gm)"), ("Lipid<br>(gm)"), ("Minerals<br>(gm)"), ("Fiber<br>(gm)"), ("Calcium<br>(mg)"), ("Phosphorus<br>(mg)"), ("Iron<br>(mg)"), ("Carotene<br>(mcg)"), ("Thiamine<br>(mg)"), ("Riboflavin<br>(mg)"), ("Niacin<br>(mg)"), ("Pyridoxine<br>(mg)"), ("Free Folic<br>(mcg)"), ("Total Folic<br>(mcg)"), ("Vitamin C<br>(mg)")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("INPUT FOOD", "PARAM1")
+
+  red1 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 ORDER BY fldtime", encid, "Input Food/Fluid")
+  For Each red1
+    xdt = red1["fldtime"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    res = modDatabase.$syConn.Exec("select fldid,fldencounterval,fldtype,flditem,fldreportquali,fldreportquanti,fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldtime>=&3 and fldtime<=&4", encid, "Input Food/Fluid", modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt))                                                                                        ''
+    fl = 0
+    cal = 0
+    prot = 0
+    sugr = 0
+    lipd = 0
+    mineral = 0
+    fiber = 0
+    calcium = 0
+    phospho = 0
+    iron = 0
+    carotene = 0
+    thiam = 0
+    ribofla = 0
+    niacin = 0
+    pyridox = 0
+    freefoli = 0
+    totfoli = 0
+    vitc = 0
+    For Each res
+      xfluid = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldfluid")
+      xenergy = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldenergy")
+      xprot = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldprotein")
+      xsugar = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldsugar")
+      xfat = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldlipid")
+      xmineral = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldmineral")
+      xfiber = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldfibre")
+      xcalcium = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldcalcium")
+      xphospho = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldphosphorous")
+      xiron = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldiron")
+      xcarotene = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldcarotene")
+      xthiam = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldthiamine")
+      xribofla = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldriboflavin")
+      xniacin = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldniacin")
+      xpyridox = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldpyridoxine")
+      xfreefoli = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldfreefolic")
+      xtotfoli = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldtotalfolic")
+      xvitc = modPatPatho.GetTotalCoponentFood(res["fldid"], "fldvitaminc")
+
+      fl = fl + xfluid
+      cal = cal + xenergy
+      prot = prot + xprot
+      sugr = sugr + xsugar
+      lipd = lipd + xfat
+      mineral = mineral + xmineral
+      fiber = fiber + xfiber
+      calcium = calcium + xcalcium
+      phospho = phospho + xphospho
+      iron = iron + xiron
+      carotene = carotene + xcarotene
+      thiam = thiam + xthiam
+      ribofla = ribofla + xribofla
+      niacin = niacin + xniacin
+      pyridox = pyridox + xpyridox
+      freefoli = freefoli + xfreefoli
+      totfoli = totfoli + xtotfoli
+      vitc = vitc + xvitc
+
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+        .Add(res["flditem"])
+        .Add(res["fldreportquanti"])
+        .Add(xfluid)
+        .Add(xenergy)
+        .Add(xprot)
+        .Add(xsugar)
+        .Add(xfat)
+        .Add(xmineral)
+        .Add(xfiber)
+        .Add(xcalcium)
+        .Add(xphospho)
+        .Add(xiron)
+        .Add(xcarotene)
+        .Add(xthiam)
+        .Add(xribofla)
+        .Add(xniacin)
+        .Add(xpyridox)
+        .Add(xfreefoli)
+        .Add(xtotfoli)
+        .Add(xvitc)
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      .Add(modReportVar.GetDateTimeReport(xdt, gb.MediumDate))
+      .Add("..")
+      .Add("..")
+      .Add(fl)
+      .Add(cal)
+      .Add(prot)
+      .Add(sugr)
+      .Add(lipd)
+      .Add(mineral)
+      .Add(fiber)
+      .Add(calcium)
+      .Add(phospho)
+      .Add(iron)
+      .Add(carotene)
+      .Add(thiam)
+      .Add(ribofla)
+      .Add(niacin)
+      .Add(pyridox)
+      .Add(freefoli)
+      .Add(totfoli)
+      .Add(vitc)
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientPlanningReport(encid As String, sType As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  Dim red1 As Result
+  Dim xdt As Date
+
+  If sType = "Clinician Plan" Then
+    $BillingReport = New CReportHTML([("Time"), ("Problem"), ("Subjective"), ("Objective"), ("Assessment"), ("Clinician Plan")], "PatientReport", encid)
+  Else If sType = "IP Monitoring" Then
+    $BillingReport = New CReportHTML([("Time"), ("Problem"), ("On Examination"), ("Treatment"), ("I/O Assessment"), ("Impression"), ("Nursing Plan")], "PatientReport", encid)
+  Endif
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(sType, "PARAM1")
+
+  red1 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblpatplanning where fldencounterval=&1 and fldplancategory=&2 ORDER BY fldtime", encid, sType)
+  For Each red1
+    xdt = red1["fldtime"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    res = modDatabase.$syConn.Exec("select fldid,fldtime,fldproblem,fldsubjective,fldobjective,fldassess,fldplan from tblpatplanning where fldencounterval=&1 and fldplancategory=&2 and fldtime>=&3 and fldtime<=&4", encid, sType, modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt))
+    For Each res
+      With asx
+        If sType = "Clinician Plan" Then
+          .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+          .Add(res["fldproblem"])
+          .Add(res["fldsubjective"])
+          .Add(res["fldobjective"])
+          .Add(res["fldassess"])
+          .Add(res["fldplan"])
+        Else If sType = "IP Monitoring" Then
+          .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+          .Add(res["fldsubjective"])
+          .Add(modPatReports.UniProcedureExamination(encid, res["fldid"], "IP Monitoring").Join("<br>"))
+          .Add(res["fldobjective"])
+          .Add(res["fldassess"])
+          .Add(res["fldproblem"])
+          .Add(res["fldplan"])
+        Endif
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientNoteReport(encid As String, sFormat As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  Dim red1 As Result
+  Dim xdt As Date
+  Dim xnote As String
+
+  $BillingReport = New CReportHTML([("Category"), ("Observation")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(sFormat, "PARAM1")
+
+  If sFormat = "Inpatient Notes" Then
+    red1 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and (flditem=&3 or flditem=&4 or flditem=&5 or flditem=&6) ORDER BY fldtime", encid, "Notes", "Progress Note", "Clinicians Note", "Nurses Note", "Transfer Note")
+  Else If sFormat = "Discharge Notes" Then
+    red1 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and flditem in(select flditem from tbldischarge) ORDER BY fldtime", encid, "Notes")
+  Endif
+  For Each red1
+    xdt = red1["fldtime"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    If sFormat = "Inpatient Notes" Then
+      res = modDatabase.$syConn.Exec("select fldtime,flditem,fldreportquali,flddetail,fldcomp,flduserid from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldtime>=&3 and fldtime<=&4 and (flditem=&5 or flditem=&6 or flditem=&7 or flditem=&8)", encid, "Notes", modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt), "Progress Note", "Clinicians Note", "Nurses Note", "Transfer Note")
+    Else If sFormat = "Discharge Notes" Then
+      res = modDatabase.$syConn.Exec("select fldtime,flditem,fldreportquali,flddetail,fldcomp,flduserid from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldtime>=&3 and fldtime<=&4 and flditem in(select flditem as col from tbldischarge)", encid, "Notes", modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt))
+    Endif
+    For Each res
+      xnote = ""
+      If res["flddetail"] Then
+        xnote = xnote & "<p>" & "Description:" & "<br>" & res["flddetail"] & "</p>" & gb.NewLine
+      Endif
+      If res["fldreportquali"] Then
+        xnote = xnote & "<p>" & "Impression:" & "<br>" & res["fldreportquali"] & "</p>" & gb.NewLine
+      Endif
+      With asx
+        .Add("<b>" & res["flditem"] & "</b><br>" & modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime) & "<br>" & res["flduserid"] & "@" & res["fldcomp"])
+        .Add(xnote)
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientHistoryReport(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  Dim red1 As Result
+  Dim xdt As Date
+
+  $BillingReport = New CReportHTML([("Category"), ("Observation")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("PATIENT HISTORY", "PARAM1")
+
+  red1 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 ORDER BY fldtime", encid, "History")
+  For Each red1
+    xdt = red1["fldtime"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    res = modDatabase.$syConn.Exec("select fldtime,flditem,fldreportquali,flddetail,fldcomp,flduserid from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldtime>=&3 and fldtime<=&4", encid, "History", modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt))
+    For Each res
+      With asx
+        .Add("<b>" & res["flditem"] & "</b><br>" & modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime) & "<br>" & res["flduserid"] & "@" & res["fldcomp"])
+        .Add(res["flddetail"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowRecomExaminationpatient(encid As String, sCategory As String, subCategory As String, sDepart As String, sref As String, Optional sFormat As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res1 As Result
+  Dim res As Result
+  Dim res2 As Result
+  Dim asx As New String[0]
+  Dim xType As String
+  Dim xFormat As String
+  Dim sPath As String
+
+  If sFormat Then
+    xFormat = sFormat
+  Else
+    xFormat = subCategory
+  Endif
+
+  $BillingReport = New CReportHTML([("DATE"), ("EXAMINATION"), ("OBSERVATION")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(subCategory, "PARAM1")
+
+  res1 = modDatabase.$syConn.Exec("select distinct(flditem) from tblstructexam where fldclass=&1 and fldsubclass=&2 and fldcategory=&3 and fldreferencee=&4 ORDER BY flditemid", sDepart, sCategory, subCategory, sref)
+  For Each res1
+
+    res = modDatabase.$syConn.Exec("select distinct(fldhead) as col from tblpatientexam where fldinput=&1 and fldencounterval=&2 and fldsave=&3 and fldserialval in(select fldheadcode from tblstructexam where fldsubclass=&4 and fldcategory=&5 and fldreferencee=&6 and flditem=&7 and fldclass=&8)", xFormat, encid, True, sCategory, subCategory, sref, res1["flditem"], sDepart)
+    If res.Available Then
+      $BillingReport.AddChapter(res1["flditem"])
+      For Each res
+
+        res2 = modDatabase.$syConn.Exec("select fldid,fldtime,fldhead,fldabnormal,fldrepquali,fldrepquanti,fldoption,fldfilepath from tblpatientexam where fldinput=&1 and fldencounterval=&2 and fldsave=&3 and fldhead=&4 and fldserialval in(select fldheadcode from tblstructexam where fldsubclass=&5 and fldcategory=&6 and fldreferencee=&7 and flditem=&8 and fldclass=&9)", xFormat, encid, True, res["col"], sCategory, subCategory, sref, res1["flditem"], sDepart)
+        If res2.Available Then
+          res2.MoveLast
+          xType = res2["fldoption"]
+          With asx
+            .Add(modString.HTMLBlankSpace(5) & modReportVar.GetDateTimeReport(res2["fldtime"], gb.GeneralDate))
+            .Add(res["col"])
+            If xType = "Clinical Scale" Then
+              If modBasic.$ShowScaleMedFormat = "GroupWise" Then
+                .Add(modString.GetJSONToDualHTMLTable(res2["fldrepquali"]))
+              Else
+                .Add(CStr(res2["fldrepquanti"]))
+              Endif
+            Else If xType = "Left and Right" Then
+              .Add(modString.GetJSONToDualHTMLTable(res2["fldrepquali"]))
+            Else If xType = "ImageValue" Then
+              sPath = modImage.GetPatScreenImageHash(encid, res2["fldfilepath"])
+              If sPath Then
+                .Add(modString.GetImageForHTML(sPath))
+              Else
+                .Add("")
+              Endif
+            Else
+              .Add(Trim(res2["fldrepquali"]))
+            Endif
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+
+      Next
+    Endif
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowRecomExamCompletePatient(encid As String, sCategory As String, subCategList As String[], sDepart As String, sReference As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim Columns As String[]
+  Dim subCategory As String
+  Dim res1 As Result
+  Dim res As Result
+  Dim res2 As Result
+  Dim xType As String
+  Dim sPath As String
+  Dim xObsVal As String
+
+  If modBasic.$MedRepoBody = "Paragraph" Then
+    Columns = ["DESCRIPTION"]
+  Else
+    Columns = [("EXAMINATION"), ("OBSERVATION")]
+  Endif
+  $BillingReport = New CReportHTML(Columns, "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(subCategory, "PARAM1")
+
+  For Each subCategory In subCategList
+    $BillingReport.AddSection(subCategory, True)
+
+    res1 = modDatabase.$syConn.Exec("select distinct(flditem) from tblstructexam where fldclass=&1 and fldsubclass=&2 and fldcategory=&3 and fldreferencee=&4 ORDER BY flditemid", sDepart, sCategory, subCategory, sReference)
+    For Each res1
+      $BillingReport.AddChapter(res1["flditem"])
+
+      res = modDatabase.$syConn.Exec("select fldhead from tblstructexam where fldsubclass=&1 and fldcategory=&2 and fldreferencee=&3 and flditem=&4 and fldclass=&5 ORDER BY fldheadid", sCategory, subCategory, sReference, res1["flditem"], sDepart)
+      If res.Available Then
+        For Each res
+
+          res2 = modDatabase.$syConn.Exec("select fldid,fldtime,fldhead,fldabnormal,fldrepquali,fldrepquanti,fldoption,fldfilepath from tblpatientexam where fldencounterval=&1 and fldsave=&2 and fldhead=&3 and fldserialval in(select fldheadcode from tblstructexam where fldsubclass=&4 and fldcategory=&5 and fldreferencee=&6 and flditem=&7 and fldclass=&8)", encid, True, res["fldhead"], sCategory, subCategory, sReference, res1["flditem"], sDepart)
+          If res2.Available Then
+            res2.MoveLast
+            xType = res2["fldoption"]
+            With asx
+              xObsVal = ""
+              If xType = "Clinical Scale" Then
+                If modBasic.$ShowScaleMedFormat = "GroupWise" Then
+                  xObsVal = modString.GetJSONToDualHTMLTable(res2["fldrepquali"])
+                Else
+                  xObsVal = CStr(res2["fldrepquanti"])
+                Endif
+              Else If xType = "Left and Right" Then
+                xObsVal = modString.GetJSONToDualHTMLTable(res2["fldrepquali"])
+              Else If xType = "ImageValue" Then
+                sPath = modImage.GetPatScreenImageHash(encid, res2["fldfilepath"])
+                If sPath Then
+                  xObsVal = modString.GetImageForHTML(sPath)
+                Else
+                  xObsVal = ""
+                Endif
+              Else
+                xObsVal = Trim(res2["fldrepquali"])
+              Endif
+
+              If modBasic.$MedRepoBody = "Paragraph" Then
+                .Add("<p><b>" & res["fldhead"] & "</b><br>" & xObsVal & "</p>")
+              Else
+                .Add(res["fldhead"])
+                .Add(xObsVal)
+              Endif
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+
+          Else
+            With asx
+              If modBasic.$MedRepoBody = "Paragraph" Then
+                .Add("<p><b>" & res["fldhead"] & "</b><br>" & "</p>")
+              Else
+                .Add(res["fldhead"])
+                .Add("")
+              Endif
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+        Next
+      Endif
+
+      With asx
+        If modBasic.$MedRepoBody = "Paragraph" Then
+          .Add("")
+        Else
+          .Add("")
+          .Add("")
+        Endif
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      If modBasic.$MedRepoBody = "Paragraph" Then
+        .Add("")
+      Else
+        .Add("")
+        .Add("")
+      Endif
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientAllExaminationReport(encounter As String, sType As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim res1 As Result
+  Dim encList As String[]
+  Dim encid As String
+
+  Dim red2 As Result
+  Dim xdt As Date
+  Dim xstr As String
+
+  $BillingReport = New CReportHTML([("Time"), ("Examination"), ("Observation")], "PatientReport", encounter)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("EXAMINATION", "PARAM1")
+
+  encList = modPatient.GetEncListFromEncSetting(encounter, modDatabase.$syConn)
+  For Each encid In encList
+    $BillingReport.AddSection(encid & " (" & modReportVar.GetDateTimeReport(modPatient.GetRecordDate(encid), gb.MediumDate) & ")", True)
+
+    red2 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblpatientexam where fldencounterval=&1 and fldsave=&2 ORDER BY fldtime", encid, True)
+    For Each red2
+      xdt = red2["fldtime"]
+      $BillingReport.AddChapter(modReportVar.GetDateTimeReport(xdt, gb.MediumDate))
+
+      res = modDatabase.$syConn.Exec("select fldid,fldtype,fldtime from tblpatientexam where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3 and fldsave=&4 and fldinput like &5", encid, modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt), True, sType)
+      For Each res
+        With asx
+          .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+          .Add(modClinic.GetExamNameFromExamID(res["fldid"]))
+          If res["fldtype"] = "Quantitative" Then
+            xstr = modClinic.GetExamLimitSrtings(res["fldid"])
+            If xstr Then
+              .Add(modClinic.GetExamValueString(encid, res["fldid"], True) & " [" & xstr & "]")
+            Else
+              .Add(modClinic.GetExamValueString(encid, res["fldid"], True))
+            Endif
+          Else
+            xstr = modClinic.GetExamLimitSrtings(res["fldid"])
+            If xstr Then
+              .Add(modClinic.GetExamValueString(encid, res["fldid"], True) & " [" & xstr & "]")
+            Else
+              .Add(modClinic.GetExamValueString(encid, res["fldid"], True))
+            Endif
+          Endif
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+
+        If res["fldtype"] = "Qualitative" Then
+          res1 = modDatabase.$syConn.Exec("select fldsubtexam,fldreport,fldid from tblpatientsubexam where fldheadid=&1 and fldsave=&2", res["fldid"], True)
+          If res1.Available Then
+            For Each res1
+              With asx
+                .Add("")
+                .Add(modString.HTMLBlankSpace(3) & res1["fldsubtexam"])
+                .Add(res1["fldreport"])
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+            Next
+          Endif
+        Endif
+
+      Next
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientExaminationReportAll(encid As String, sType As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim red2 As Result
+
+  $BillingReport = New CReportHTML([("Time"), ("Examination"), ("Observation")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(sType, "PARAM1")
+
+  red2 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblpatientexam where fldencounterval=&1 and fldsave=&2 and fldinput like &3 ORDER BY fldtime", encid, True, sType)
+  If red2.Available Then
+    For Each red2
+      $BillingReport.AddSection(modReportVar.GetDateTimeReport(red2["fldtime"], gb.MediumDate), True)
+
+      res = modDatabase.$syConn.Exec("select fldid,fldtype,fldtime from tblpatientexam where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3 and fldsave=&4 and fldinput like &5", encid, modDate.StartSqlDate(red2["fldtime"]), modDate.EndSqlDate(red2["fldtime"]), True, sType)
+      If res.Available Then
+        For Each res
+          With asx
+            .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+            .Add(modClinic.GetExamNameFromExamID(res["fldid"]))
+            .Add(modClinic.GetExamValueSubString(res["fldid"], encid))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+      Endif
+
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientExaminationgReport(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  Dim red2 As Result
+  Dim xdt As Date
+  Dim xtabval As String
+
+  $BillingReport = New CReportHTML([("Time"), ("Category"), ("Examination"), ("Observation"), ("Comment"), ("User")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("EXAMINATION", "PARAM1")
+
+  red2 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblpatientexam where fldencounterval=&1 and fldsave=&2 ORDER BY fldtime", encid, True)
+  For Each red2
+    xdt = red2["fldtime"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    res = modDatabase.$syConn.Exec("select fldid,fldtype,fldtime,fldinput,fldhead,fldoption,fldcomp,fldmethod,flduserid from tblpatientexam where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3 and fldsave=&4", encid, modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt), True)
+    For Each res
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+        .Add(modMisc.GetStringWithoutIndex(res["fldinput"]))
+        If res["fldmethod"] = "Regular" Then
+          .Add(res["fldhead"])
+        Else
+          .Add(res["fldhead"] & "<br>" & "<small>[" & res["fldmethod"] & "]</small>")
+        Endif
+        If res["fldtype"] = "Quantitative" Then
+          .Add(modClinic.GetExamValueString(encid, res["fldid"], True))
+        Else If res["fldtype"] = "Qualitative" Then
+          xtabval = modClinic.GetSubExamQualiList(encid, res["fldoption"], res["fldid"])
+          If xtabval Then
+            .Add(modString.TextToHTML(modClinic.GetExamValueString(encid, res["fldid"], True) & xtabval))
+          Else
+            .Add(modClinic.GetExamValueString(encid, res["fldid"], True))
+          Endif
+        Endif
+        If MMain.$RepoReportMode = True Then
+          .Add("")
+        Else
+          .Add(modClinic.ExamReportCommentPatient(res["fldid"], res["fldtype"]))
+        Endif
+        .Add(res["flduserid"] & "@" & res["fldcomp"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatRadioReportbyEncID(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim xx As String
+  Dim xtabval As String
+  Dim xcaption As String
+
+  $BillingReport = New CReportHTML([("Date"), ("Examination"), ("Format"), ("Observation"), ("Reference"), ("Comment")], "PatientReport", encid)
+  $BillingReport.UserData.Add("EncounterID", "Report")
+  $BillingReport.UserData.Add(encid, "PARAM1")
+
+  res1 = modDatabase.$syConn.Exec("select distinct(fldcategory) from tblradio where fldexamid in(select fldtestid from tblpatradiotest where fldsave_report=&1 and fldencounterval=&2 and flvisible=&3)", True, encid, "Visible")
+  For Each res1
+    $BillingReport.AddSection(res1["fldcategory"], True)
+    res2 = modDatabase.$syConn.Exec("select fldid,fldtest_type,fldtestid,fldtime_report,fldabnormal,fldstatus,fldmethod,fldsampletype,fldcomment from tblpatradiotest where fldsave_report=&1 and fldencounterval=&2 and flvisible=&3 and fldtestid in(select fldexamid from tblradio where fldcategory=&4)", True, encid, "Visible", res1["fldcategory"])
+    For Each res2
+      xcaption = modFixRadio.GetRadiotestCaption(res2["fldtestid"])
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res2["fldtime_report"], gb.GeneralDate))
+        .Add(res2["fldtestid"])
+        .Add(res2["fldsampletype"])
+
+        If modBasic.$SuperUser = False And If xcaption = "$Encryption" Then
+          .Add("****")
+        Else
+          If res2["fldtest_type"] = "Quantitative" Then
+            .Add(modRadioTest.GetRadioTestValueString(res2["fldid"], True, encid))
+          Else If res2["fldtest_type"] = "Qualitative" Then
+            xx = modRadioTest.GetRadioTestValueString(res2["fldid"], True, encid)
+            xtabval = modRadioTest.GetRadioSubTestQuali(encid, res2["fldtestid"], res2["fldid"])
+            If xtabval Then
+              .Add(modString.TextToHTML(xx & xtabval))
+            Else
+              .Add(modString.TextToHTML(xx))
+            Endif
+          Endif
+        Endif
+
+        If MMain.$RepoReportMode = True Then
+          .Add("")
+        Else
+          .Add(modRadioTest.GetRadioTestLimitSrting(res2["fldid"]))
+        Endif
+        .Add(res2["fldcomment"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatRadioReportAllEnc(encounter As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim encid As String
+  Dim encList As String[]
+
+  Dim res2 As Result
+  Dim xx As String
+  Dim xtable As String
+  Dim xcaption As String
+
+  $BillingReport = New CReportHTML([("Date"), ("Examination"), ("Format"), ("Observation"), ("Reference"), ("Comment")], "PatientReport", encounter)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("RADIOLOGY", "PARAM1")
+
+  encList = modPatient.GetEncListFromEncSetting(encounter, modDatabase.$syConn)
+  For Each encid In encList
+    $BillingReport.AddSection(encid & " (" & modReportVar.GetDateTimeReport(modPatient.GetRecordDate(encid), gb.MediumDate) & ")", True)
+
+    res2 = modDatabase.$syConn.Exec("select fldid,fldtest_type,fldtestid,fldtime_report,fldabnormal,fldstatus,fldmethod,fldsampletype,fldcomment from tblpatradiotest where fldsave_report=&1 and fldencounterval=&2 and flvisible=&3", True, encid, "Visible")
+    For Each res2
+      xcaption = modFixRadio.GetRadiotestCaption(res2["fldtestid"])
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res2["fldtime_report"], gb.GeneralDate))
+        If res2["fldmethod"] Then
+          .Add(res2["fldtestid"] & "<br>" & "[" & res2["fldmethod"] & "]")
+        Else
+          .Add(res2["fldtestid"])
+        Endif
+        .Add(res2["fldsampletype"])
+
+        If modBasic.$SuperUser = False And If xcaption = "$Encryption" Then
+          .Add("****")
+        Else
+          If res2["fldtest_type"] = "Quantitative" Then
+            .Add(modRadioTest.GetRadioTestValueString(res2["fldid"], True, encid))
+          Else If res2["fldtest_type"] = "Qualitative" Then
+            xx = modRadioTest.GetRadioTestValueString(res2["fldid"], True, encid)
+            xtable = modRadioTest.GetRadioSubTestQuali(encid, res2["fldtestid"], res2["fldid"])
+            If xtable Then
+              .Add(modString.TextToHTML(xx & xtable))
+            Else
+              .Add(modString.TextToHTML(xx))
+            Endif
+          Endif
+        Endif
+
+        .Add(modRadioTest.GetRadioTestLimitSrting(res2["fldid"]))
+        .Add(res2["fldcomment"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatLabReportbySampleID(encid As String, sampleid As String, unt As String, Optional sYear As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res2 As Result
+  Dim xtabval As String
+  Dim xcaption As String
+
+  Dim rYear As Result
+  Dim sTableMain As String
+  Dim sTableSub As String
+
+  $BillingReport = New CReportHTML([("Examination"), ("Observation"), ("Comment")], "PatientReport", encid)
+  $BillingReport.UserData.Add("SampleID", "Report")
+  $BillingReport.UserData.Add(sampleid, "PARAM1")
+
+  If sYear Then
+    rYear = modDatabase.$syConn.Exec("select fldpatlabtest,fldpatlabsubtest from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", sYear, "Active")
+    If rYear.Available Then
+      If rYear["fldpatlabtest"] Then
+        sTableMain = rYear["fldpatlabtest"]
+      Else
+        sTableMain = "tblpatlabtest"
+      Endif
+      If rYear["fldpatlabsubtest"] Then
+        sTableSub = rYear["fldpatlabsubtest"]
+      Else
+        sTableSub = "tblpatlabsubtest"
+      Endif
+    Else
+      sTableMain = "tblpatlabtest"
+      sTableSub = "tblpatlabsubtest"
+    Endif
+  Else
+    sTableMain = "tblpatlabtest"
+    sTableSub = "tblpatlabsubtest"
+  Endif
+
+  res2 = modDatabase.$syConn.Exec("select fldid,fldtest_type,fldtestid,fldsampleid,fldtime_sample,fldabnormal,fldstatus from " & sTableMain & " where fldsave_report=&1 and fldsampleid=&2 and fldencounterval=&3 and flvisible=&4", True, sampleid, encid, "Visible")
+  For Each res2
+    xcaption = modFixLab.GetLabTestCaption(res2["fldtestid"])
+    With asx
+      .Add(res2["fldtestid"])
+
+      If modBasic.$SuperUser = False And If xcaption = "$Encryption" Then
+        .Add("****")
+      Else
+        If res2["fldtest_type"] = "Quantitative" Then
+          .Add(modLabTest.GetLabTestValueString(res2["fldid"], unt, True, encid, sTableMain))
+        Else
+          xtabval = modLabTest.GetLabSubTestQuali(encid, res2["fldtestid"], res2["fldid"], sTableSub)
+          If xtabval Then
+            .Add(modLabTest.GetLabTestValueString(res2["fldid"], unt, True, encid, sTableMain) & xtabval)
+          Else
+            .Add(modLabTest.GetLabTestValueString(res2["fldid"], unt, True, encid, sTableMain))
+          Endif
+        Endif
+      Endif
+
+      If MMain.$RepoReportMode = True Then
+        .Add("")
+      Else
+        .Add(modLabTest.LabReportCommentPatient(res2["fldid"], unt, res2["fldtest_type"], sTableMain))
+      Endif
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientAllLaboratoryReport(encounter As String, unt As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim encList As String[]
+  Dim encid As String
+
+  Dim xx As String
+  Dim xtabval As String
+  Dim xcaption As String
+  Dim rex As Result
+
+  $BillingReport = New CReportHTML([("DateTime"), ("Specimen"), ("Examination"), ("Observation"), ("Reference"), ("Comment")], "PatientReport", encounter)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("INVESTIGATIONS", "PARAM1")
+
+  encList = modPatient.GetEncListFromEncSetting(encounter, modDatabase.$syConn)
+  For Each encid In encList
+    $BillingReport.AddSection(encid & " (" & modReportVar.GetDateTimeReport(modPatient.GetRecordDate(encid), gb.MediumDate) & ")", True)
+
+    rex = modDatabase.$syConn.Exec("select fldpatlabtest,fldpatlabsubtest from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+    If rex.Available Then
+      For Each rex
+
+        ''table from tblfisclosing
+        If rex["fldpatlabtest"] = "tblpatlabtest" Then
+        Else
+          res = modDatabase.$syConn.Exec("select fldid,fldsampletype,fldsampleid,fldtest_type,fldtime_sample,fldmethod,fldtestid,fldcomment from " & rex["fldpatlabtest"] & " where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and flvisible=&4", encid, "Reported", "Verified", "Visible")
+          If res.Available Then
+            For Each res
+              xcaption = modFixLab.GetLabTestCaption(res["fldtestid"])
+              With asx
+                .Add(modReportVar.GetDateTimeReport(res["fldtime_sample"], gb.GeneralDate))
+                .Add(res["fldsampletype"] & "<br>" & res["fldsampleid"])
+                .Add(res["fldtestid"] & "<br>" & "[" & res["fldmethod"] & "]")
+
+                If modBasic.$SuperUser = False And If xcaption = "$Encryption" Then
+                  .Add("****")
+                Else
+                  If res["fldtest_type"] = "Quantitative" Then
+                    .Add(modLabTest.GetLabTestValueString(res["fldid"], unt, True, encid, rex["fldpatlabtest"]))
+                  Else If res["fldtest_type"] = "Qualitative" Then
+                    xx = modLabTest.GetLabTestValueString(res["fldid"], unt, True, encid, rex["fldpatlabtest"])
+                    xtabval = modLabTest.GetLabSubTestQuali(encid, res["fldtestid"], res["fldid"], rex["fldpatlabsubtest"])
+                    If xtabval Then
+                      .Add(modString.TextToHTML(xx & xtabval))
+                    Else
+                      .Add(modString.TextToHTML(xx))
+                    Endif
+                  Endif
+                Endif
+
+                .Add(modLabTest.LabReportCommentPatient(res["fldid"], unt, res["fldtest_type"], rex["fldpatlabtest"]))
+                .Add(res["fldcomment"])
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+            Next
+          Endif
+        Endif
+
+      Next
+    Endif
+
+    ''for tblpatlabtest
+    res = modDatabase.$syConn.Exec("select fldid,fldsampletype,fldsampleid,fldtest_type,fldtime_sample,fldmethod,fldtestid,fldcomment from tblpatlabtest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and flvisible=&4", encid, "Reported", "Verified", "Visible")
+    If res.Available Then
+      For Each res
+        xcaption = modFixLab.GetLabTestCaption(res["fldtestid"])
+        With asx
+          .Add(modReportVar.GetDateTimeReport(res["fldtime_sample"], gb.GeneralDate))
+          .Add(res["fldsampletype"] & "<br>" & res["fldsampleid"])
+          .Add(res["fldtestid"] & "<br>" & "[" & res["fldmethod"] & "]")
+
+          If modBasic.$SuperUser = False And If xcaption = "$Encryption" Then
+            .Add("****")
+          Else
+            If res["fldtest_type"] = "Quantitative" Then
+              .Add(modLabTest.GetLabTestValueString(res["fldid"], unt, True, encid, "tblpatlabtest"))
+            Else If res["fldtest_type"] = "Qualitative" Then
+              xx = modLabTest.GetLabTestValueString(res["fldid"], unt, True, encid, "tblpatlabtest")
+              xtabval = modLabTest.GetLabSubTestQuali(encid, res["fldtestid"], res["fldid"], "tblpatlabsubtest")
+              If xtabval Then
+                .Add(modString.TextToHTML(xx & xtabval))
+              Else
+                .Add(modString.TextToHTML(xx))
+              Endif
+            Endif
+          Endif
+
+          .Add(modLabTest.LabReportCommentPatient(res["fldid"], unt, res["fldtest_type"], "tblpatlabtest"))
+          .Add(res["fldcomment"])
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+    Endif
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientLaboratoryReport(encid As String, unt As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  Dim red3 As Result
+  Dim xdt As Date
+  Dim xx As String
+  Dim xtabval As String
+  Dim xcaption As String
+
+  $BillingReport = New CReportHTML([("Time"), ("Specimen"), ("Examination"), ("Observation"), ("Reference"), ("Comment")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("INVESTIGATIONS", "PARAM1")
+
+  red3 = modDatabase.$syConn.Exec("select  DISTINCT DATE(fldtime_sample) as fldtime_sample from tblpatlabtest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and flvisible=&4 ORDER BY fldtime_sample", encid, "Reported", "Verified", "Visible")
+  For Each red3
+    xdt = red3["fldtime_sample"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    res = modDatabase.$syConn.Exec("select fldid,fldsampletype,fldtest_type,fldtime_sample,fldmethod,fldtestid,fldcomment from tblpatlabtest where fldencounterval=&1 and fldtime_sample>=&2 and fldtime_sample<=&3 and (fldstatus=&4 or fldstatus=&5) and flvisible=&6", encid, modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt), "Reported", "Verified", "Visible")
+    For Each res
+      xcaption = modFixLab.GetLabTestCaption(res["fldtestid"])
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res["fldtime_sample"], gb.MediumTime))
+        .Add(res["fldsampletype"])
+        .Add(res["fldtestid"] & "<br>" & "<small>[" & res["fldmethod"] & "]</small>")
+
+        If modBasic.$SuperUser = False And If xcaption = "$Encryption" Then
+          .Add("****")
+        Else
+          If res["fldtest_type"] = "Quantitative" Then
+            .Add(modLabTest.GetLabTestValueString(res["fldid"], unt, True, encid))
+          Else If res["fldtest_type"] = "Qualitative" Then
+            xx = modLabTest.GetLabTestValueString(res["fldid"], unt, True, encid)
+            xtabval = modLabTest.GetLabSubTestQuali(encid, res["fldtestid"], res["fldid"])
+            If xtabval Then
+              .Add(modString.TextToHTML(xx & xtabval))
+            Else
+              .Add(modString.TextToHTML(xx))
+            Endif
+          Endif
+        Endif
+
+        .Add(modLabTest.LabReportCommentPatient(res["fldid"], unt, res["fldtest_type"]))
+        .Add(res["fldcomment"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientLaboratoryImage(fldid As Long, encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  $BillingReport = New CReportHTML([("Time"), ("Particulars"), ("Description"), ("Image")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(modLabTest.GetTestnameFromTestID(fldid), "PARAM1")
+
+  res = modDatabase.$syConn.Exec("select fldtime,fldpic,fldtitle,flddetail,fldlink from tblpatserialimage where fldtestid=&1 and fldencounterval=&2 and fldcateg=&3 and fldmode=&4", fldid, encid, "IMAGE", "Laboratory")
+  For Each res
+    tempFile = Temp() & ".jpg"
+    If res["fldlink"] Then
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      If Exist(aFile) Then
+        Copy aFile To tempFile
+      Endif
+    Else
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+
+    With asx
+      .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.GeneralDate))
+      .Add(res["fldtitle"])
+      .Add(res["flddetail"])
+      .Add(modString.GetImageForHTML(tempFile))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowPatientSymptomReport(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  Dim red1 As Result
+  Dim xdt As Date
+
+  $BillingReport = New CReportHTML([("Time"), ("Symptom"), ("Description"), ("Comment")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("CLINICAL SYMPTOMS", "PARAM1")
+
+  red1 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldsave=&3 ORDER BY fldtime", encid, "Patient Symptoms", True)
+  For Each red1
+    xdt = red1["fldtime"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    res = modDatabase.$syConn.Exec("select fldid,flditem,fldreportquali,flddetail,fldtime from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldsave=&3 and fldtime>=&4 and fldtime<=&5", encid, "Patient Symptoms", True, modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt))
+    For Each res
+      With asx
+        .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+        .Add(res["flditem"] & "(" & res["fldreportquali"] & ")")
+        .Add(res["flddetail"])
+        .Add(modPatPatho.GetPatientDrugSymptom(res["fldid"]) & "<br>" & modPatPatho.GetPatientDiseaseSymptom(res["fldid"]))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowNursingDosing(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim rs As Result
+  Dim asx As New String[0]
+
+  Dim red1 As Result
+  Dim xdt As Date
+
+  $BillingReport = New CReportHTML([("Time"), ("Medicine"), ("Regimen"), ("Dose")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("Dosing Report", "PARAM1")
+
+  red1 = modDatabase.$syConn.Exec("select DISTINCT DATE(fldtime) as fldtime from tblnurdosing where fldencounterval=&1 ORDER BY fldtime", encid)
+  For Each red1
+    xdt = red1["fldtime"]
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(xdt, gb.MediumDate), True)
+
+    res = modDatabase.$syConn.Exec("select fldtime,flddoseno,fldvalue,fldunit from tblnurdosing where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3", encid, modDate.StartSqlDate(xdt), modDate.EndSqlDate(xdt))
+    For Each res
+      rs = modDatabase.$syConn.Exec("select fldid,fldroute,flditem,flddose,fldfreq,flddays,flditemtype from tblpatdosing where fldid=&1", res["flddoseno"])
+      If rs["flditemtype"] = "Medicines" Then
+        With asx
+          .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumTime))
+          .Add(modPharmacy.GetMedFormatForMedReport(rs["flditem"], rs["fldroute"]))
+          .Add(modPharmacy.GetDoseRegimenString(rs["fldid"], True))
+          .Add(res["fldvalue"] & Space(1) & res["fldunit"])
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ExportQuantiClinToHTML(encid As String, strType As String, strItem As String[], unt As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim sPath As String
+  Dim asx As New String[0]
+  Dim xx As String
+
+  $BillingReport = New CReportHTML([("Parameters"), ("Chart View")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(strType, "PARAM1")
+
+  For Each xx In strItem
+    If strType = "Exam" Then
+      sPath = modClinSub.FillQuantiExamChart(250 * modBasic.$AppScaleFactor, encid, xx)
+    Else If strType = "Test" Then
+      sPath = modLabSub.FillQuantiTestChart(250 * modBasic.$AppScaleFactor, encid, xx, unt)
+    Else If strType = "SetA" Then
+      sPath = modClinSub.DrawClinicalCharts_SetA(250 * modBasic.$AppScaleFactor, encid, xx)
+    Endif
+
+    With asx
+      .Add(xx)
+      .Add(modString.GetClinChartForHTML(sPath))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ExportMultiExamTestToHTML(encid As String, examColl As Collection, labColl As Collection) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim sPath As String
+  Dim asx As New String[0]
+  Dim xexam As String
+  Dim xlab As String
+
+  $BillingReport = New CReportHTML([("Parameters"), ("Chart View")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("ChartView", "PARAM1")
+
+  For Each sPath In examColl
+    xexam = examColl.Key
+    If modFixClinic.GetExaminationType(xexam) = "Quantitative" Then
+      With asx
+        .Add(xexam)
+        .Add(modString.GetClinChartForHTML(sPath))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+    Else
+      With asx
+        .Add(xexam)
+        .Add(modClinic.UniExamValueList(encid, xexam).Join("<br>"))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+    Endif
+  Next
+
+  For Each sPath In labColl
+    xlab = labColl.Key
+    If modFixLab.GetLabTestType(xlab) = "Quantitative" Then
+      With asx
+        .Add(xlab)
+        .Add(modString.GetClinChartForHTML(sPath))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+    Else
+      With asx
+        .Add(xlab)
+        .Add(modLabTest.UniLabValueList(encid, xlab).Join("<br>"))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+    Endif
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''----------------------
+Public Function GetProvisionalDiagnosis(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+
+  Dim rs1 As Result
+  Dim rs2 As Result
+  Dim rs3 As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+
+  Dim xx As Integer
+  Dim yy As String
+
+  Dim zzz As Date[]
+  Dim xdtdsc As Date
+  Dim strDate As Date
+
+  $BillingReport = New CReportHTML([("Basis"), ("Disease"), ("Probablity"), ("Components")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("PROVISIONAL DIAGNOSIS", "PARAM1")
+
+  xdtdsc = modPatient.GetDischargeDate(encid)
+  If xdtdsc Then
+    zzz = modDate.GetDateArrayBetween(modPatient.GetRecordDate(encid), xdtdsc)
+  Else
+    zzz = modDate.GetDateArrayBetween(modPatient.GetRecordDate(encid), Now())
+  Endif
+
+  For Each strDate In zzz
+    $BillingReport.AddSection(modReportVar.GetDateTimeReport(strDate, gb.MediumDate), True)
+
+    'for symptom
+    rs1 = modDatabase.$syConn.Exec("select distinct(fldparent) from tblpathosymp where fldchild in(select flditem from tblexamgeneral where (fldinput=&1 or fldinput=&2) and fldsave=&3 and fldencounterval=&4 and fldtime<=&5)", "Patient Symptoms", "Presenting Symptoms", True, encid, modDate.EndSqlDate(strDate))
+    For Each rs1
+      res1 = modDatabase.$syConn.Exec("select fldchild from tblpathosymp where fldchild in(select flditem from tblexamgeneral where (fldinput=&1 or fldinput=&2) and fldsave=&3 and fldencounterval=&4 and fldtime<=&5) and fldparent=&6", "Patient Symptoms", "Presenting Symptoms", True, encid, modDate.EndSqlDate(strDate), rs1["fldparent"])
+      If res1.Available = True Then
+        yy = ""
+        For Each res1
+          yy = yy & res1["fldchild"] & "; "
+        Next
+        With asx
+          .Add("Symptoms")
+          .Add(rs1["fldparent"])
+          .Add(CStr(res1.Count) & "/" & CStr(modFixPatho.GetTotSympNo(rs1["fldparent"])))
+          .Add(yy)
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
+
+    'exam
+    rs3 = modDatabase.$syConn.Exec("select distinct(fldparent) from tblpathoexam where fldexamid in(select fldhead from tblpatientexam where fldencounterval=&1 and fldtime<=&2 and fldsave=&3)", encid, modDate.EndSqlDate(strDate), True)
+    For Each rs3
+      res3 = modDatabase.$syConn.Exec("select tblpathoexam.fldexamid as fldexamid,tblpathoexam.fldrelation as fldrelation,tblpathoexam.fldvalquanti as fldvalquanti,tblpatientexam.fldrepquanti as fldreportquanti from tblpatientexam inner join tblpathoexam on tblpatientexam.fldhead=tblpathoexam.fldexamid where tblpatientexam.fldencounterval=&1 and tblpatientexam.fldtime<=&2 and tblpatientexam.fldsave=&3 and tblpathoexam.fldparent=&4", encid, modDate.EndSqlDate(strDate), True, rs3["fldparent"])                                                                                                 ''
+      If res3.Available = True Then
+        yy = ""
+        For Each res3
+          yy = yy & res3["fldexamid"] & "(" & res3["fldreportquanti"] & ")" & gb.NewLine
+        Next
+        xx = 0
+        For Each res3
+          If res3["fldrelation"] = "=" And If res3["fldreportquanti"] = res3["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res3["fldrelation"] = "<=" And If res3["fldreportquanti"] <= res3["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res3["fldrelation"] = ">=" And If res3["fldreportquanti"] >= res3["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res3["fldrelation"] = "<" And If res3["fldreportquanti"] < res3["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res3["fldrelation"] = ">" And If res3["fldreportquanti"] > res3["fldvalquanti"] Then
+            xx = xx + 1
+          Endif
+        Next
+        If xx > 0 Then
+          With asx
+            .Add("Examinations")
+            .Add(rs3["fldparent"])
+            .Add(CStr(xx) & "/" & CStr(modFixPatho.GetTotExamNo(rs3["fldparent"])))
+            .Add(yy)
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+      Endif
+    Next
+
+    'test
+    rs2 = modDatabase.$syConn.Exec("select distinct(fldparent) from tblpathotest where fldtestid in(select fldtestid from tblpatlabtest where fldencounterval=&1 and fldtime_sample<=&2)", encid, modDate.EndSqlDate(strDate))
+    For Each rs2
+      res2 = modDatabase.$syConn.Exec("select tblpathotest.fldtestid as fldtestid,tblpathotest.fldrelation as fldrelation,tblpathotest.fldvalquanti as fldvalquanti,tblpatlabtest.fldreportquanti as fldreportquanti from tblpatlabtest inner join tblpathotest on tblpatlabtest.fldtestid=tblpathotest.fldtestid where tblpatlabtest.fldencounterval=&1 and tblpatlabtest.fldtime_sample<=&2 and tblpathotest.fldparent=&3", encid, modDate.EndSqlDate(strDate), rs2["fldparent"])                                                                                                 ''
+      If res2.Available Then
+        yy = ""
+        For Each res2
+          yy = yy & res2["fldtestid"] & "(" & res2["fldreportquanti"] & ")" & gb.NewLine
+        Next
+        xx = 0
+        For Each res2
+          If res2["fldrelation"] = "=" And If res2["fldreportquanti"] = res2["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res2["fldrelation"] = "<=" And If res2["fldreportquanti"] <= res2["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res2["fldrelation"] = ">=" And If res2["fldreportquanti"] >= res2["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res2["fldrelation"] = "<" And If res2["fldreportquanti"] < res2["fldvalquanti"] Then
+            xx = xx + 1
+          Else If res2["fldrelation"] = ">" And If res2["fldreportquanti"] > res2["fldvalquanti"] Then
+            xx = xx + 1
+          Endif
+        Next
+        If xx > 0 Then
+          With asx
+            .Add("Investigations")
+            .Add(rs2["fldparent"])
+            .Add(CStr(xx) & "/" & CStr(modFixPatho.GetTotTestNo(rs2["fldparent"])))
+            .Add(yy)
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+      Endif
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''--------------------------------- Medication order -----------------------------------------------------------------------------
+Public Function ShowMedicationOrder(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+
+  $BillingReport = New CReportHTML([("SNo"), ("StartDate"), ("Particulars"), ("Route"), ("Regimen")], "LaboratoryReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("PENDING PHARMACY ORDER", "PARAM1")
+
+  res = modDatabase.$syConn.Exec("select fldid,fldstarttime,fldroute,flditem,flddose,fldfreq,flddays from tblpatdosing where fldencounterval=&1 and fldsave_order=&2", encid, False)
+  For Each res
+    With asx
+      .Add(CStr(res.Index + 1))
+      .Add(modReportVar.GetDateTimeReport(res["fldstarttime"], gb.MediumDate))
+      .Add(modPharmacy.GetMedFormatForMedReport(res["flditem"], res["fldroute"]))
+      .Add(res["fldroute"])
+      .Add(modPharmacy.GetDoseRegimenString(res["fldid"], False, True))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''----------------------------------------------------- medication review --------------------------------------------------
+Public Function ShowMedicationReviewReportHTML(encid As String, $categ As String[], $drug As String[], $condi As String[], $warn As String[]) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim newcateg As String[]
+  Dim xx As String
+
+  $BillingReport = New CReportHTML([("Medicine"), ("Observation"), ("Recommendation")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("MEDICATION REVIEW", "PARAM1")
+
+  newcateg = modString.BinaryDistinctStringArray($categ)
+  For Each xx In newcateg
+    $BillingReport.AddSection(xx, True)
+
+    For i = 0 To $categ.Count - 1
+      If $categ[i] = xx Then
+        With asx
+          .Add($drug[i])
+          .Add($condi[i])
+          .Add($warn[i])
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
+
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowMedicationLabelReport(encid As String, dosid As Long[], LabelMode As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim xx As Long
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim hCls As CLabelFreq
+  Dim xinfo As String
+  Dim xlabel As String
+
+  $BillingReport = New CReportHTML([("Start"), ("Route"), ("Medicine"), ("Regimen"), ("Advice"), ("Direction")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("Medication Labels", "PARAM1")
+
+  For Each xx In dosid
+    res = modDatabase.$syConn.Exec("select fldid,fldstarttime,fldroute,flditem,flddose,fldfreq,flddays,flditemtype,flddirection from tblpatdosing where fldencounterval=&1 and fldid=&2 and (fldstatus=&3 or fldstatus=&4)", encid, xx, "Registered", "Admitted") '"Ordered"
+    For Each res
+      xinfo = ""
+      xlabel = ""
+      If res["flditemtype"] = "Medicines" Then
+        hCls = New CLabelFreq(res["fldfreq"], LabelMode)
+        xinfo = modPharmLabel.GetDirectionForLabel(res["fldroute"], res["flditem"], LabelMode)
+        If xinfo Then
+          xlabel = modPharmLabel.GetQuantityLabel(res["flddose"], res["flditem"], LabelMode) & Space(1) & modPharmLabel.GetDosageFormForLabel(res["flditem"], LabelMode) & Space(1) & modPharmLabel.GetLabelWordsFromDB("Every", LabelMode) & Space(1) & hCls.HourValue() & Space(1) & hCls.HourLabelText() & Space(1) & modPharmLabel.GetLabelWordsFromDB("Difference", LabelMode) & Space(1) & res["flddays"] & Space(1) & modPharmLabel.GetLabelWordsFromDB("Day", LabelMode) & gb.NewLine & xinfo & gb.NewLine & hCls.PrecaytionText()
+        Else
+          xlabel = modPharmLabel.GetQuantityLabel(res["flddose"], res["flditem"], LabelMode) & Space(1) & modPharmLabel.GetDosageFormForLabel(res["flditem"], LabelMode) & Space(1) & modPharmLabel.GetLabelWordsFromDB("Every", LabelMode) & Space(1) & hCls.HourValue() & Space(1) & hCls.HourLabelText() & Space(1) & modPharmLabel.GetLabelWordsFromDB("Difference", LabelMode) & Space(1) & res["flddays"] & Space(1) & modPharmLabel.GetLabelWordsFromDB("Day", LabelMode) & gb.NewLine & hCls.PrecaytionText()
+        Endif
+
+        With asx
+          .Add(modReportVar.GetDateTimeReport(res["fldstarttime"], gb.GeneralDate))
+          .Add(res["fldroute"])
+          .Add(res["flditem"])
+          .Add(modString.TextToHTML(modPharmacy.GetDoseRegimenString(res["fldid"], False)))
+          .Add(res["flddirection"])
+          .Add(modString.TextToHTML(xlabel))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+
+      Endif
+    Next
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowCounselingReport(encid As String, doslst As Long[]) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim did As Long
+
+  $BillingReport = New CReportHTML([("Medicine"), ("Regimen"), ("Comment")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("COUNSELING", "PARAM1")
+
+  For Each did In doslst
+    With asx
+      .Add(modPharmacy.GetMedFormatForMedReport(modPharmacy.GetStockIDFromDosing(did), modPharmacy.GetRouteFromDosing(did)))
+      .Add(modPharmacy.GetDoseRegimenString(did, True, True))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    $BillingReport.AddSummary(modPharmLabel.GetCounselingInfo(modPharmacy.GetRouteFromDosing(did), modPharmacy.GetStockIDFromDosing(did)))
+
+    With asx
+      .Add("***")
+      .Add("***")
+      .Add("***")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowSingleCounselingReport(dosid As Long) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+
+  $BillingReport = New CReportHTML([("Drug Information")], "", "")
+  $BillingReport.UserData.Add(modPharmacy.GetMedFormatForMedReport(modPharmacy.GetStockIDFromDosing(dosid), modPharmacy.GetRouteFromDosing(dosid)), "PARAM1")
+  $BillingReport.UserData.Add(modPharmacy.GetDoseRegimenString(dosid, True), "PARAM2")
+
+  With asx
+    .Add(modPharmLabel.GetCounselingInfo(modPharmacy.GetRouteFromDosing(dosid), modPharmacy.GetStockIDFromDosing(dosid)))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''------------------------------------------------- procedure ---------------------------------------
+Public Function ShowUniProcedureReport(itemid As Long, encid As String, xxx As String[]) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+
+  res = modDatabase.$syConn.Exec("select fldencounterval,fldinput,flditem,fldreportquali,flddetail,fldnewdate from tblpatgeneral where fldid=&1 and fldencounterval=&2", itemid, encid)
+  $BillingReport = New CReportHTML([("Category"), ("Observation")], "PatientReport", encid)
+  $BillingReport.UserData.Add("PROCEDURE NAME:  ", "Report")
+  $BillingReport.UserData.Add(res["flditem"], "PARAM1")
+
+  'General
+  $BillingReport.AddSection("General", True)
+  If xxx.Exist("General:Status") Then
+    With asx
+      .Add("Status")
+      .Add(modReportVar.GetDateTimeReport(res["fldnewdate"], gb.GeneralDate) & " : " & res["fldreportquali"])
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("General:Personnel") Then
+    With asx
+      .Add("Personnel")
+      .Add(modPatPatho.GetUserAllUniProcedure(res["fldencounterval"], itemid))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("General:Summary") Then
+    With asx
+      .Add("Summary")
+      .Add(res["flddetail"])
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  'preoperative
+  $BillingReport.AddSection("Pre-Operative", True)
+  If xxx.Exist("Pre-Operative:Indication") Then
+    With asx
+      .Add("Indication")
+      .Add(modPatPatho.GetProcedureItemValue(res["fldencounterval"], itemid, "Pre-Operative Indication"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Pre-Operative:Discussion") Then
+    With asx
+      .Add("Discussion")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Pre-Operative Discussion"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Pre-Operative:Discussion Panel") Then
+    With asx
+      .Add("Discussion Panel")
+      .Add(modPatPatho.GetDiscusPanels(res["fldencounterval"], itemid).Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Pre-Operative:Examination") Then
+    With asx
+      .Add("Examination")
+      .Add(modPatReports.UniProcedureExamination(res["fldencounterval"], itemid, "Pre-Operative Exam").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Pre-Operative:Medications") Then
+    With asx
+      .Add("Medications")
+      .Add(modPharmacy.UniProcedureMedString(res["fldencounterval"], itemid, "Pre-Operative").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Pre-Operative:Note") Then
+    With asx
+      .Add("Note")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Pre-Operative Note"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  'procedure
+  $BillingReport.AddSection("Procedure", True)
+  If xxx.Exist("Procedure:Components") Then
+    With asx
+      .Add("Components")
+      .Add(modPatPatho.GetComponentProcedure(res["fldencounterval"], itemid).Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Procedure:Parameters") Then
+    With asx
+      .Add("Parameters")
+      .Add(modPatReports.UniProcedureExamination(res["fldencounterval"], itemid, "Operative Exam").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Procedure:Medications") Then
+    With asx
+      .Add("Medications")
+      .Add(modPharmacy.UniProcedureMedString(res["fldencounterval"], itemid, "Procedure").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Procedure:Incision") Then
+    With asx
+      .Add("Incision")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Incision"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Procedure:Findings") Then
+    With asx
+      .Add("Findings")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Findings"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Procedure:Proedures") Then
+    With asx
+      .Add("Proedures")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Proedures"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Procedure:Closure") Then
+    With asx
+      .Add("Closure")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Closure"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Procedure:Note") Then
+    With asx
+      .Add("Note")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Operation Note"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  'anesthesia
+  $BillingReport.AddSection("Anaesthesia", True)
+  If xxx.Exist("Anaesthesia:Technique") Then
+    With asx
+      .Add("Technique")
+      .Add(modPatPatho.GetProcedureItemValue(res["fldencounterval"], itemid, "Anaesthesia Technique"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Anaesthesia:Parameters") Then
+    With asx
+      .Add("Parameters")
+      .Add(modPatReports.UniProcedureExamination(res["fldencounterval"], itemid, "Anaesthesia").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Anaesthesia:Medications") Then
+    With asx
+      .Add("Medications")
+      .Add(modPharmacy.UniProcedureMedString(res["fldencounterval"], itemid, "Anaesthesia").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Anaesthesia:Note") Then
+    With asx
+      .Add("Note")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Anaesthesia Note"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  'post operative
+  $BillingReport.AddSection("Post-Operative", True)
+  If xxx.Exist("Post-Operative:Indication") Then
+    With asx
+      .Add("Indication")
+      .Add(modPatPatho.GetProcedureItemValue(res["fldencounterval"], itemid, "Post-Operative Indication"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Post-Operative:Examination") Then
+    With asx
+      .Add("Examination")
+      .Add(modPatReports.UniProcedureExamination(res["fldencounterval"], itemid, "Post-Operative Exam").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Post-Operative:Medications") Then
+    With asx
+      .Add("Medications")
+      .Add(modPharmacy.UniProcedureMedString(res["fldencounterval"], itemid, "Post-Operative").Join(gb.NewLine))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  If xxx.Exist("Post-Operative:Note") Then
+    With asx
+      .Add("Note")
+      .Add(modPatPatho.GetUniProcedureDetail(res["fldencounterval"], itemid, "Post-Operative Note"))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''------------------------------- Extra Procedure ----------------------------
+Public Function GetExtProcedureExamReport(xid As Long, encid As String, sProcName As String, sSummary As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+
+  $BillingReport = New CReportHTML([("Examination"), ("Pre-Procedure"), ("On-Procedure"), ("Post-Procedure")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add(sProcName, "PARAM1")
+
+  res = modDatabase.$syConn.Exec("select distinct(fldhead) as col from tblpatientexam where fldencounterval=&1 and fldinput like &2 and fldsave=&3", encid, "%:" & sProcName & ":" & CStr(xid), True)
+  If res.Available Then
+    For Each res
+      With asx
+        .Add(res["col"])
+        .Add(modClinic.GetExamValueSubString(modPatPatho.GetExtProcId(encid, "Pre:" & sProcName & ":" & CStr(xid), res["col"]), encid))
+        .Add(modClinic.GetExamValueSubString(modPatPatho.GetExtProcId(encid, "On:" & sProcName & ":" & CStr(xid), res["col"]), encid))
+        .Add(modClinic.GetExamValueSubString(modPatPatho.GetExtProcId(encid, "Post:" & sProcName & ":" & CStr(xid), res["col"]), encid))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+    $BillingReport.AddSummary(sSummary)
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''------------------ Delivery -----------------------------
+Public Function ShowDeliveryReportFull(encid As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res4 As Result
+
+  $BillingReport = New CReportHTML([("Time"), ("Examination"), ("Observation")], "PatientReport", encid)
+  $BillingReport.UserData.Add("REPORT", "Report")
+  $BillingReport.UserData.Add("Delivery", "PARAM1")
+
+  $BillingReport.AddSection("PRE DELIVERY", True)
+  res1 = modDatabase.$syConn.Exec("select fldid,fldhead,fldtime from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldsave=&3", encid, "Pre Delivery Exam", True)
+  For Each res1
+    With asx
+      .Add(modString.HTMLBlankSpace(5) & modReportVar.GetDateTimeReport(res1["fldtime"], gb.GeneralDate))
+      .Add(res1["fldhead"])
+      .Add(modClinic.GetExamValueString(encid, res1["fldid"], True))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  $BillingReport.AddSection("ON DELIVERY", True)
+  res2 = modDatabase.$syConn.Exec("select fldid,fldhead,fldtime from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldsave=&3", encid, "On Delivery Exam", True)
+  For Each res2
+    With asx
+      .Add(modString.HTMLBlankSpace(5) & modReportVar.GetDateTimeReport(res2["fldtime"], gb.GeneralDate))
+      .Add(res2["fldhead"])
+      .Add(modClinic.GetExamValueString(encid, res2["fldid"], True))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  $BillingReport.AddSection("POST DELIVERY", True)
+  res3 = modDatabase.$syConn.Exec("select fldid,fldhead,fldtime from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldsave=&3", encid, "Post Delivery Exam", True)
+  For Each res3
+    With asx
+      .Add(modString.HTMLBlankSpace(5) & modReportVar.GetDateTimeReport(res3["fldtime"], gb.GeneralDate))
+      .Add(res3["fldhead"])
+      .Add(modClinic.GetExamValueString(encid, res3["fldid"], True))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  $BillingReport.AddSection("DELIVERY RESULT", True)
+  res4 = modDatabase.$syConn.Exec("select fldid,flddelresult,flddeltype,fldbabypatno,flddeltime,flddelwt,fldcomment from tblconfinement where fldencounterval=&1", encid)
+  For Each res4
+    With asx
+      .Add(modString.HTMLBlankSpace(5) & modReportVar.GetDateTimeReport(res4["flddeltime"], gb.GeneralDate))
+      .Add(res4["flddelresult"] & "<br>" & "Mode: " & res4["flddeltype"])
+      If res4["fldbabypatno"] Then
+        .Add("Patient No: " & res4["fldbabypatno"] & " <br> " & " Gender: " & modPatient.PatientGenderByPatNo(res4["fldbabypatno"]) & "<br>" & "Birth Weight: " & res4["flddelwt"] & " grams")
+      Else
+        .Add("Birth Weight: " & res4["flddelwt"] & " grams")
+      Endif
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    $BillingReport.AddSummary(res4["fldcomment"])
+
+    With asx
+      .Add("***")
+      .Add("***")
+      .Add("***")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End

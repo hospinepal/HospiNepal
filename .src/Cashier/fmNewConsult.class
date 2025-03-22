@@ -1,0 +1,191 @@
+' Gambas class file
+
+Private $discType As String
+Private $billMode As String
+
+Public Sub _new(encid As String)
+
+  txtencid.Text = encid
+
+End
+
+Public Sub Form_Open()
+
+  Dim i As Integer
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  cmbdept.List = modGeneral.GetDepartForConsultOnly()
+  dtconsultdate.Value = Now()
+  dtconsultime.Value = Now()
+  If modHelpVariable.$LogInCategory = "Cashier" Then
+    btnbill.Visible = True
+  Else
+    btnbill.Visible = False
+  Endif
+  If modBasic.$FixedDepartment Then
+    For i = 0 To cmbdept.Count - 1
+      If cmbdept[i].Text = modBasic.$FixedDepartment Then
+        cmbdept.Index = i
+      Endif
+    Next
+  Endif
+  If txtencid.Text Then
+    btnshow_Click()
+  Else
+    txtencid.SetFocus
+  Endif
+
+End
+
+Public Sub btnshow_Click()
+
+  Dim res As Result
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
+  res = modDatabase.$myConn.Exec("select fldpatientval,flddisctype,fldbillingmode from tblencounter where fldencounterval=&1", Trim(txtencid.Text))
+  If res.Available Then
+    txtpatno.Text = res["fldpatientval"]
+    $discType = res["flddisctype"]
+    $billMode = res["fldbillingmode"]
+  Endif
+
+End
+
+Public Sub dtnepcal_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtconsultdate.Value))
+  If xx Then
+    dtconsultdate.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim sDate As Date
+
+  sDate = Date(Year(dtconsultdate.Value), Month(dtconsultdate.Value), Day(dtconsultdate.Value), Hour(dtconsultime.Value), Minute(dtconsultime.Value), Second(dtconsultime.Value))                                                                   ''
+  If sDate And If cmbdept.Text And If $billMode Then
+    modPatientSub.AddConsultData(Trim(txtencid.Text), cmbdept.Text, sDate, $billMode, "OP Consultation", btnconsult.Tag)
+    Balloon.Info(("Consultation Planned"), btnadd)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub btnbill_Click()
+
+  Dim autobil As Boolean
+  Dim lstdat As Date
+  Dim xday As Integer
+
+  If cmbdept.Text And If $billMode Then
+    If Message.Question(("Insert Billing for selected Consultation"), ("No"), ("Yes")) = 2 Then
+
+      lstdat = modPatient.GetRecordDate(modPatient.GetLastEncoutnerFromPatNo(Trim(txtpatno.Text)))
+      If lstdat Then
+        If modBasic.$AutoRegistNoBillHour Then
+          xday = CInt(modBasic.$AutoRegistNoBillHour)
+        Else
+          xday = 0
+        Endif
+        If DateDiff(lstdat, Now(), gb.Hour) < xday Then
+          autobil = True
+        Else
+          autobil = modBillings.InsertRegistrationBilling(modBasic.$AutoRegistBilling, Trim(txtencid.Text), cmbdept.Text, $discType, $billMode, "New", btnconsult.Tag)
+        Endif
+      Else
+        autobil = modBillings.InsertRegistrationBilling(modBasic.$AutoRegistBilling, Trim(txtencid.Text), cmbdept.Text, $discType, $billMode, "New", btnconsult.Tag)
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub btnconsult_Click()
+
+  Dim xList As Variant[]
+  Dim xMedUser As String[]
+
+  If modBasic.$LockConsultant = "LockByQuota" Then
+    xList = modConsult.GetUserPostingList(cmbdept.Text, dtconsultdate.Value, $billMode)
+  Else
+    xList = modBasic.$OPConsulUserList
+  Endif
+  xMedUser = MedicalSelectedValue(("Select Consultant"), xList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult.Tag = xMedUser[0]
+    btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
+  Endif
+
+End
+
+Public Sub btnshow_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnshow_Click()
+  Endif
+
+End
+
+Public Sub cmbdept_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdept)
+  modFillContainer.RestrictComboToContent(cmbdept)
+
+End
+
+Public Sub cmbdept_LostFocus()
+
+  modFillContainer.RestrictCombo(cmbdept)
+
+End
+
+Public Sub btnconsult_Change()
+
+  If btnconsult.Text = "" Then
+    btnconsult.Tag = ""
+  Endif
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtencid.Text = txtencid.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub btnbarcode_Click()
+
+  Dim $hReport As CRegistLabel
+
+  If txtencid.Text Then
+    If modNonMedical.AllowRegistSlipWithInvoiceEncid(txtencid.Text) = True Then
+      $hReport = New CRegistLabel(txtencid.Text)
+      modControlSub.OpenHTMLPreview(txtencid.Text, $hReport.RegistLabelPath(), "LabelSize")
+    Endif
+  Endif
+
+End

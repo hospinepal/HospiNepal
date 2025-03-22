@@ -1,0 +1,924 @@
+' Gambas module file
+
+'NOTE: ----------------------------------- Image manipulation ---------------------------------
+''Choose control for webcam
+Public Function GetWebCamValue(sDevice As String) As String
+
+  Dim xx As New String[]
+  Dim xval As String
+
+  xx = WebCamValue(sDevice, True)
+  If xx And If xx.Count Then
+    xval = xx[0]
+  Endif
+  Return xval
+
+End
+
+Public Function GetWebCamValueList(sDevice As String) As String[]
+
+  Dim xx As New String[]
+
+  xx = WebCamValue(sDevice, False)
+  Return xx
+
+End
+
+''---------------- Scanned Image Archive -----------------
+Public Sub ArchiveScannedMultiImage(encid As String)
+
+  Dim sList As String[]
+  Dim Row As Integer
+  Dim sLongID As String
+
+  If encid Then
+    sList = GetWebCamValueList(modDevice.WebCamDevice())
+    If sList And If sList.Count Then
+      For Row = 0 To sList.Count - 1
+        sLongID = modImage.SavePatientFileGeneral(encid, "Scanned Images", "Scanned Images:" & modString.GetDateString(Now()) & "-" & CStr(Row), sList[Row])
+      Next
+    Endif
+  Endif
+
+End
+
+''stretch charts to fill picturebox
+Public Sub StretchtPictureToBox(PictureBox1 As ImageView, sFile As String)
+
+  Dim xfile As String
+  Dim img As Image
+  Dim img1 As Image
+  Dim ximg As Image
+  Dim arcmd As String[]
+
+  If sFile Then
+    If File.Ext(sFile) = "svg" Then
+      xfile = Temp() & ".png"
+      arcmd = ["convert", sFile, xfile]
+      If System.Exist("convert") = True Then
+        modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+        Exec arcmd Wait
+      Else
+        modApplSub.InstallSelectedApplication(["imagemagick"])
+      Endif
+    Else
+      xfile = sFile
+    Endif
+    PictureBox1.Tag = xfile
+
+    If Exist(xfile) Then
+      If Stat(xfile).Size Then
+        img = Image.Load(xfile)
+        If modBasic.$InvChartLeft = 0 And If modBasic.$InvChartTop = 0 And If modBasic.$InvChartRight = 0 And If modBasic.$InvChartBottom = 0 Then                        ''
+          img1 = img.Stretch(PictureBox1.Width, PictureBox1.Height)
+        Else
+          ximg = img.Copy(modBasic.$InvChartLeft, modBasic.$InvChartTop, img.Width - modBasic.$InvChartRight, img.Height - modBasic.$InvChartBottom)
+          img1 = ximg.Stretch(PictureBox1.Width, PictureBox1.Height)
+        Endif
+        PictureBox1.Image = img1
+        ' PictureBox1.ZoomFit()
+      Endif
+    Endif
+  Endif
+
+End
+
+'
+''
+'''
+''''
+
+Private Function GetPatientFileFolderPath(encid As String) As String
+
+  Dim patNo As String
+  Dim xdir As String
+
+  patNo = modPatient.GetPatientNoByEnc(encid)
+  If Len(patNo) > 3 Then
+    xdir = Left(patNo, 3) &/ patNo &/ encid
+  Else
+    xdir = patNo &/ encid
+  Endif
+
+  Return xdir
+
+End
+
+''Save Ready Made Patient PDF files to FTP server and keep link in database tblpatreport
+Public Function SavePatientFileGeneral(encid As String, sType As String, sTitle As String, inputFile As String, Optional sHash As String) As Variant
+
+  Dim res As Result
+  Dim sFIle As String
+  Dim xdir As String
+  Dim xpath As String
+  Dim xblobfile As String
+  Dim aLobID As Variant
+  Dim res1 As Result
+  Dim xIntVal As String
+  Dim xHash As String
+
+  If Exist(inputFile) Then
+    Inc Application.Busy
+    If sHash Then
+      xHash = sHash
+    Else
+      xHash = modApplication.GetMD5SumFile(inputFile) & "_" & modString.GetNowString()
+    Endif
+
+    If LCase(File.Ext(inputFile)) = "pdf" Then
+      If modBasic.$UploadEncryptPDF = "Yes" Then
+        sFIle = File.Dir(inputFile) &/ File.BaseName(inputFile) & "_lock.pdf"
+        modDevAll.GetEncryptPDF(inputFile, sFIle, modHelpVariable.$CryptPDF)
+      Else
+        sFIle = inputFile
+      Endif
+    Else
+      sFIle = inputFile
+    Endif
+
+    If modBasic.$UploadFTPFolder Then
+      xpath = Trim(modReportVar.GetPatientVariableValue(modBasic.$UploadFTPFolder, encid))
+      If xpath Then
+        xdir = modString.GetDateString(Date()) &/ xpath
+      Else
+        xdir = GetPatientFileFolderPath(encid)
+      Endif
+    Else
+      xdir = GetPatientFileFolderPath(encid)
+    Endif
+
+    If modMisc.BlobTarget("ReadyReports") = "FTP" Then
+      xblobfile = modFTPSub.SendBlobToFTP(sFIle, xdir, "ReadyReports")
+    Else
+      xblobfile = File.Load(sFIle)
+    Endif
+    If xblobfile Then
+      res = modDatabase.$myConn.Create("tblpatreport")
+      res["fldcateg"] = sType
+      res["fldencounterval"] = encid
+      If modMisc.BlobTarget("ReadyReports") = "FTP" Then
+        res["fldpic"] = ""
+        res["fldlink"] = xblobfile
+      Else
+        res["fldpic"] = xblobfile
+        res["fldlink"] = ""
+      Endif
+      res["fldtitle"] = sTitle
+      res["flddetail"] = ""
+      res["fldextension"] = File.Ext(sFIle)
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = True
+      res["fldflag"] = False
+      If xHash Then
+        res["fldhashcode"] = xHash
+      Endif
+      res["flvisible"] = "Visible"
+      res["flduptime"] = ""
+      If MMain.$WebEntry = True Then
+        xIntVal = modString.GetDateString(Now())
+        res["fldid"] = CLong(xIntVal)
+        res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+        res["fldrepodate"] = Now()
+        res["fldrepomac"] = modHelpVariable.$MACAddress
+        res["fldhospcode"] = modBasic.$HospCode
+      Endif
+      res.Update()
+
+      If xHash Then
+        If MMain.$WebEntry = True Then
+          res1 = modDatabase.$myConn.Exec("select fldrepoid as fldfir from tblpatreport where fldhashcode=&1 and flduserid=&2 and fldcomp=&3", xHash, modBasic.$lbluser, modBasic.$compID)
+        Else
+          res1 = modDatabase.$myConn.Exec("select fldid as fldfir from tblpatreport where fldhashcode=&1 and flduserid=&2 and fldcomp=&3", xHash, modBasic.$lbluser, modBasic.$compID)
+        Endif
+        If res1.Available Then
+          res1.MoveLast
+          aLobID = res1["fldfir"]
+        Endif
+      Else
+        aLobID = modDatabase.$myConn.LastInsertId
+      Endif
+
+    Else
+      aLobID = 0
+    Endif
+    Dec Application.Busy
+  Endif
+  Return aLobID
+
+End
+
+''Save PNG Image to FTP server and put link in database tbluserimage (eg, login/logout/wrong pass)
+Public Sub AddUserImageToDB(strType As String, xPath As String)
+
+  Dim res As Result
+  Dim xblobfile As String
+
+  If modDatabase.$myConn.Tables.Exist("tbluserimage") Then
+    If xPath And If Exist(xPath) Then
+      If modMisc.BlobTarget("LogIn") = "FTP" Then
+        xblobfile = modFTPSub.SendBlobToFTP(xPath, modBasic.$lbluser, "LogIn")
+      Else
+        xblobfile = File.Load(xPath)
+      Endif
+    Else
+      xblobfile = ""
+    Endif
+
+    res = modDatabase.$myConn.Create("tbluserimage")
+    res["flduserid"] = modBasic.$lbluser
+    If xblobfile Then
+      If modMisc.BlobTarget("LogIn") = "FTP" Then
+        res["fldpic"] = ""
+        res["fldlink"] = xblobfile
+      Else
+        res["fldpic"] = xblobfile
+        res["fldlink"] = ""
+      Endif
+    Else
+      res["fldpic"] = ""
+      res["fldlink"] = ""
+    Endif
+    res["fldtime"] = Now()
+    res["fldhostmac"] = modHelpVariable.$MACAddress
+    res["fldhostuser"] = System.User.Name
+    res["fldhostip"] = modHelpVariable.$localIP
+    res["fldhostname"] = System.Host
+    res["fldcomp"] = modBasic.$compID
+    res["fldtype"] = strType
+    res.Update
+  Endif
+
+End
+
+''Save HTML/PDF logs to DB/FTP tblreportlog
+Public Sub SaveReportLog(sType As String, inputFile As String, Optional encid As String)
+
+  Dim res As Result
+  Dim sFile As String
+  Dim xmd5 As String
+  Dim xblobfile As String
+
+  If modDatabase.$myConn.Tables.Exist("tblreportlog") Then
+    If Exist(inputFile) Then
+      Inc Application.Busy
+      xmd5 = modApplication.GetMD5SumFile(inputFile)
+
+      If LCase(File.Ext(inputFile)) = "pdf" Then
+        If modBasic.$UploadEncryptPDF = "Yes" Then
+          sFile = File.Dir(inputFile) &/ File.BaseName(inputFile) & "_lock.pdf"
+          modDevAll.GetEncryptPDF(inputFile, sFile, modHelpVariable.$CryptPDF)
+        Else
+          sFile = inputFile
+        Endif
+      Else
+        sFile = inputFile
+      Endif
+
+      If modMisc.BlobTarget("Logs") = "FTP" Then
+        xblobfile = modFTPSub.SendBlobToFTP(sFile, modBasic.$lbluser, "Logs")
+      Else
+        xblobfile = File.Load(sFile)
+      Endif
+      If xblobfile Then
+        res = modDatabase.$myConn.Create("tblreportlog")
+        res["flduserid"] = modBasic.$lbluser
+        res["fldtype"] = sType
+        If encid Then
+          res["fldwindow"] = modHelpVariable.$LogInCategory & ":" & encid
+        Else
+          res["fldwindow"] = modHelpVariable.$LogInCategory
+        Endif
+        If modMisc.BlobTarget("Logs") = "FTP" Then
+          res["fldfile"] = ""
+          res["fldlink"] = xblobfile
+        Else
+          res["fldfile"] = xblobfile
+          res["fldlink"] = ""
+        Endif
+        res["fldcomment"] = xmd5
+        res["fldtime"] = Now()
+        res["fldhostmac"] = modHelpVariable.$MACAddress
+        res["fldhostuser"] = System.User.Name
+        res["fldhostip"] = modHelpVariable.$localIP
+        res["fldhostname"] = System.Host
+        res["fldcomp"] = modBasic.$compID
+        res.Update
+      Endif
+      Dec Application.Busy
+    Endif
+  Endif
+
+End
+
+''=========================== Patient Profile Image =================================
+Public Sub InsertPatientImage(categ As String, patno As String, sImage As String)
+
+  Dim res As Result
+  Dim xIntVal As String
+
+  If sImage Then
+    Inc Application.Busy
+    res = modDatabase.$myConn.Create("tblpersonimage")
+    res["fldcateg"] = categ
+    res["fldname"] = patNo
+    res["fldpic"] = File.Load(sImage)
+    res["fldlink"] = ""
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldsave"] = True
+    res["flduptime"] = ""
+    If MMain.$WebEntry = True Then
+      xIntVal = modString.GetDateString(Now())
+      res["fldid"] = CLong(xIntVal)
+      res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+      res["fldrepodate"] = Now()
+      res["fldrepomac"] = modHelpVariable.$MACAddress
+      res["fldhospcode"] = modBasic.$HospCode
+    Endif
+    res.Update()
+    Dec Application.Busy
+    'don't catch error
+  Endif
+
+End
+
+Public Function DisplayPersonImageData(categ As String, usrname As String) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  sql = "select fldpic,fldlink from tblpersonimage where fldcateg=&1 and fldname=&2"
+  res = modDatabase.$myConn.Exec(sql, categ, usrname)
+  If res.Available = True Then
+    res.MoveLast
+    If res["fldlink"] Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+    tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+  Else
+    tempFile = ""
+  Endif
+  Return tempFile
+
+End
+
+Public Sub ShowPhotoSplash(categ As String, usrname As String)
+
+  Dim hForm As FmImageAll
+  Dim sp As Float
+
+  sp = modBasic.$PatientImageSplash
+  If sp > 0 Then
+    hForm = New FmImageAll(categ, usrname)
+    hForm.Show
+    Wait sp
+    Try hForm.Close
+  Endif
+
+End
+
+''================= Visual Data Entry =================================
+Public Function DisplayVisualData(sChapter As String, strTest As String, strSubTest As String, sOption As String) As String
+
+  Dim res As Result
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  If strSubTest Then
+    res = modDatabase.$myConn.Exec("select fldname,fldpic,fldlink,flddet from tblmedimage where fldcateg like &1 and fldname=&2 and fldsubname=&3 and fldoption=&4", sChapter, strTest, strSubTest, sOption)
+  Else
+    res = modDatabase.$myConn.Exec("select fldname,fldpic,fldlink,flddet from tblmedimage where fldcateg like &1 and fldname=&2 and fldoption=&3", sChapter, strTest, sOption)
+  Endif
+  If res.Available Then
+    res.MoveFirst
+    If res["fldlink"] Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+    tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+
+    Return tempFile
+  Endif
+
+End
+
+''============= Images saved with Test/Radio values ==========================
+Public Function ShowTestExamImageListString(sType As String, sid As Long, encid As String) As String
+
+  Dim res As Result
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  Dim xx As String[]
+  Dim xHtmStr As String
+
+  If sType = "Test" Then
+    res = modDatabase.$myConn.Exec("select fldpic,fldtitle,fldlink from tblpatserialimage where fldtestid=&1 and fldencounterval=&2 and fldcateg=&3 and fldmode=&4", sid, encid, "IMAGE", "Laboratory")                     ''
+  Else If sType = "Radio" Then
+    res = modDatabase.$myConn.Exec("select fldpic,fldtitle,fldlink from tblpatserialimage where fldtestid=&1 and fldencounterval=&2 and fldcateg=&3 and fldmode=&4", sid, encid, "DICOM", "Radiology")
+  Endif
+  If res.Available Then
+    xx = New String[]
+    For Each res
+
+      If res["fldlink"] Then
+        Inc Application.Busy
+        aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+        Dec Application.Busy
+      Else
+        aFile = Temp()
+        hFile = res["fldpic"]
+        If hFile.Length Then
+          File.Save(aFile, hFile.Data)
+        Endif
+      Endif
+      If sType = "Test" Then
+        tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+      Else If sType = "Radio" Then
+        tempFile = Temp() & ".dcm"
+      Endif
+      If Exist(aFile) Then
+        Move aFile Kill tempFile
+      Endif
+
+      xx.Add("<p>" & res["fldtitle"] & "<br>" & modString.GetImageForHTML(tempFile) & "</p>")
+    Next
+    xHtmStr = xx.Join("gb.New")
+  Else
+    xHtmStr = ""
+  Endif
+
+  Return xHtmStr
+
+End
+
+''============== ScreenDraw from Clinic Forms ========================
+Public Function SaveClinicScreenDraw(encid As String, sTitle As String, sPath As String) As String
+
+  Dim res As Result
+  Dim xblobfile As String
+  Dim xIntVal As String
+  Dim xvalue As String
+
+  If modMisc.BlobTarget("Patient") = "FTP" Then
+    xblobfile = modFTPSub.SendBlobToFTP(sPath, encid, "Patient")
+  Else
+    xblobfile = File.Load(sPath)
+  Endif
+  If xblobfile Then
+    xvalue = encid & ":" & modMisc.GetWebIndexStr(modString.GetDateString(Now()))
+    res = modDatabase.$myConn.Create("tblpatimagedata")
+    res["fldcateg"] = "IMAGE"
+    res["fldencounterval"] = encid
+    If modMisc.BlobTarget("Patient") = "FTP" Then
+      res["fldpic"] = ""
+      res["fldlink"] = xblobfile
+    Else
+      res["fldpic"] = xblobfile
+      res["fldlink"] = ""
+    Endif
+    If MMain.$SISHAppMode = "Portal" Then
+      res["fldtitle"] = "[PATIENT] " & sTitle
+    Else
+      res["fldtitle"] = sTitle
+    Endif
+    res["fldkeyword"] = ""
+    res["flddetail"] = ""
+    res["fldhashcode"] = xvalue
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldsave"] = True
+    res["flduptime"] = ""
+    If MMain.$WebEntry = True Then
+      xIntVal = modString.GetDateString(Now())
+      res["fldid"] = CLong(xIntVal)
+      res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+      res["fldrepodate"] = Now()
+      res["fldrepomac"] = modHelpVariable.$MACAddress
+      res["fldhospcode"] = modBasic.$HospCode
+    Endif
+    res.Update()
+  Endif
+
+  Return xvalue
+
+End
+
+Public Function GetPatScreenImageHash(encid As String, sHash As String) As String
+
+  Dim res As Result
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  res = modDatabase.$myConn.Exec("select fldpic,fldlink,fldcateg from tblpatimagedata where fldencounterval=&1 and fldhashcode=&2", encid, sHash)
+  If res.Available Then
+    res.MoveLast
+    If res["fldlink"] Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+
+    tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+  Else
+    tempFile = ""
+  Endif
+
+  Return tempFile
+
+End
+
+Public Function GetBlobFileData(serial As Variant, Optional sTable As String) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim xpdf As String
+  Dim aFile As String
+  Dim xtable As String
+
+  If sTable Then
+    xtable = sTable
+  Else
+    xtable = "tblpatreport"
+  Endif
+  If MMain.$WebEntry = True Then
+    sql = Subst("select fldcateg,fldextension,fldpic,fldlink,fldcomp from &1", xtable) & " where fldrepoid=&1"
+  Else
+    sql = Subst("select fldcateg,fldextension,fldpic,fldlink,fldcomp from &1", xtable) & " where fldid=&1"
+  Endif
+  res = modDatabase.$syConn.Exec(sql, serial)
+  If res.Available = True Then
+
+    If res["fldlink"] Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+
+    If res["fldextension"] Then
+      tempFile = Temp() & "." & res["fldextension"]
+    Else
+      tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    Endif
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+
+    If File.Ext(tempFile) = "pdf" Then
+      If modGlobalSetting.ShowSettingFromDBAny("GeneralSettings/PDFEncrypt", res["fldcomp"]) = "Yes" Then
+        xpdf = Temp() & ".pdf"
+        modDevAll.GetDecryptPDF(tempFile, xpdf, modHelpVariable.$CryptPDF)
+      Else
+        xpdf = tempFile
+      Endif
+    Else
+      xpdf = tempFile
+    Endif
+
+  Else
+    xpdf = ""
+  Endif
+
+  Return xpdf
+
+End
+
+Public Function GetBlobFileRemoteData(serial As Variant, Optional sTable As String) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim xpdf As String
+  Dim aFile As String
+  Dim xtable As String
+
+  If sTable Then
+    xtable = sTable
+  Else
+    xtable = "tblpatreport"
+  Endif
+  If MMain.$WebEntry = True Then
+    sql = Subst("select fldcateg,fldextension,fldpic,fldlink,fldcomp from &1", xtable) & " where fldrepoid=&1"
+  Else
+    sql = Subst("select fldcateg,fldextension,fldpic,fldlink,fldcomp from &1", xtable) & " where fldid=&1"
+  Endif
+  res = modDatabase.$syConn.Exec(sql, serial)
+  If res.Available = True Then
+
+    If res["fldlink"] Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromRemoteFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+
+    If res["fldextension"] Then
+      tempFile = Temp() & "." & res["fldextension"]
+    Else
+      tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    Endif
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+    xpdf = tempFile
+
+  Else
+    xpdf = ""
+  Endif
+
+  Return xpdf
+
+End
+
+Public Function GetBlobHashData(encid As String, sHash As String, Optional sTable As String) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim xpdf As String
+  Dim aFile As String
+  Dim xtable As String
+
+  If sTable Then
+    xtable = sTable
+  Else
+    xtable = "tblpatreport"
+  Endif
+  sql = Subst("select fldcateg,fldextension,fldpic,fldlink,fldcomp from &1", xtable) & " where fldencounterval=&1 and fldhashcode=&2"
+  res = modDatabase.$syConn.Exec(sql, encid, sHash)
+  If res.Available = True Then
+    res.MoveLast
+
+    If res["fldlink"] Then
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+
+    If res["fldextension"] Then
+      tempFile = Temp() & "." & res["fldextension"]
+    Else
+      tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    Endif
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+
+    If File.Ext(tempFile) = "pdf" Then
+      If modGlobalSetting.ShowSettingFromDBAny("GeneralSettings/PDFEncrypt", res["fldcomp"]) = "Yes" Then
+        xpdf = Temp() & ".pdf"
+        modDevAll.GetDecryptPDF(tempFile, xpdf, modHelpVariable.$CryptPDF)
+      Else
+        xpdf = tempFile
+      Endif
+    Else
+      xpdf = tempFile
+    Endif
+
+  Else
+    xpdf = ""
+  Endif
+
+  Return xpdf
+
+End
+
+Public Function GetBlobFileDataTable(serial As Variant, sTable As String) As String
+
+  Dim res As Result
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+  Dim sType As String
+
+  If sTable = "tblpersonimage" Then
+    If MMain.$WebEntry = True Then
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink from tblpersonimage where fldrepoid=&1", serial)
+    Else
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink from tblpersonimage where fldid=&1", serial)
+    Endif
+    sType = "IMAGE"
+  Else If sTable = "tblpatserialimage" Then
+    If MMain.$WebEntry = True Then
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink,fldcateg from tblpatserialimage where fldrepoid=&1", serial)
+    Else
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink,fldcateg from tblpatserialimage where fldid=&1", serial)
+    Endif
+    If res.Available And If res["fldcateg"] Then
+      sType = res["fldcateg"]
+    Else
+      sType = "IMAGE"
+    Endif
+  Else If sTable = "tblpatimagedata" Then
+    If MMain.$WebEntry = True Then
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink,fldcateg from tblpatimagedata where fldrepoid=&1", serial)
+    Else
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink,fldcateg from tblpatimagedata where fldid=&1", serial)
+    Endif
+    If res.Available And If res["fldcateg"] Then
+      sType = res["fldcateg"]
+    Else
+      sType = "IMAGE"
+    Endif
+  Else If sTable = "tblpayimage" Then
+    If MMain.$WebEntry = True Then
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink from tblpayimage where fldrepoid=&1", serial)
+    Else
+      res = modDatabase.$myConn.Exec("select fldpic,fldlink from tblpayimage where fldid=&1", serial)
+    Endif
+    sType = "IMAGE"
+  Endif
+
+  If res.Available Then
+    If res["fldlink"] Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+
+    If sType = "DICOM" Then
+      tempFile = Temp() & ".dcm"
+    Else
+      tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    Endif
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+
+  Else
+    tempFile = ""
+  Endif
+
+  Return tempFile
+
+End
+
+Public Sub GetPastDocFolderImport(encid As String, sFolder As String)
+
+  Dim sFile As String
+  Dim sLongID As Long
+  Dim sList As String[]
+
+  sList = modApplication.GetFilesListinFolder(sFolder)
+  For Each sFile In sList
+    sLongID = modImage.SavePatientFileGeneral(encid, "Past Documents", File.BaseName(sFile), sFile)
+  Next
+
+End
+
+Public Sub SaveDocumentToPersonal(sUser As String, sComment As String, sPath As String)
+
+  Dim res As Result
+  Dim xblobfile As String
+
+  If modMisc.BlobTarget("Personal") = "FTP" Then
+    xblobfile = modFTPSub.SendBlobToFTP(sPath, sUser, "Personal")
+  Else
+    xblobfile = File.Load(sPath)
+  Endif
+  If xblobfile Then
+    Inc Application.Busy
+    res = modDatabase.$myConn.Create("tblpersonal")
+    res["fldcateg"] = "Document"
+    If modMisc.BlobTarget("Personal") = "FTP" Then
+      res["fldblob"] = ""
+      res["fldlink"] = xblobfile
+    Else
+      res["fldblob"] = xblobfile
+      res["fldlink"] = ""
+    Endif
+    res["flddetail"] = sComment
+    res["fldextension"] = File.Ext(sPath)
+    res["flduserid"] = sUser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldsave"] = True
+    res.Update()
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Function AddVoucherImageBook(sTarget As String, sBookID As String, sPatient As String, sTitle As String, sDetail As String, sAmt As Float, sPath As String) As Variant
+
+  Dim res As Result
+  Dim xblobfile As String
+  Dim xIntVal As String
+  Dim res1 As Result
+  Dim aLobID As Variant
+
+  If modMisc.BlobTarget("Vouchers") = "FTP" Then
+    xblobfile = modFTPSub.SendBlobToFTP(sPath, sBookID, "Vouchers")
+  Else
+    xblobfile = File.Load(sPath)
+  Endif
+  If xblobfile Then
+    res = modDatabase.$myConn.Create("tblpayimage")
+    res["fldbookid"] = sBookID
+    res["fldpatient"] = sPatient
+    res["fldcateg"] = sTarget
+    res["fldtitle"] = sTitle
+    res["flddetail"] = sDetail
+    res["fldamount"] = sAmt
+    If modMisc.BlobTarget("Vouchers") = "FTP" Then
+      res["fldpic"] = ""
+      res["fldlink"] = xblobfile
+    Else
+      res["fldpic"] = xblobfile
+      res["fldlink"] = ""
+    Endif
+
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldsave"] = True
+    res["flduptime"] = ""
+    If MMain.$WebEntry = True Then
+      xIntVal = modString.GetDateString(Now())
+      res["fldid"] = CLong(xIntVal)
+      res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+      res["fldrepodate"] = Now()
+      res["fldrepomac"] = modHelpVariable.$MACAddress
+      res["fldhospcode"] = modBasic.$HospCode
+    Endif
+    res.Update()
+
+    If MMain.$WebEntry = True Then
+      res1 = modDatabase.$myConn.Exec("select fldrepoid as fldfir from tblpayimage where fldbookid=&1", sBookID)
+    Else
+      res1 = modDatabase.$myConn.Exec("select fldid as fldfir from tblpayimage where fldbookid=&1", sBookID)
+    Endif
+    If res1.Available Then
+      res1.MoveLast
+      aLobID = res1["fldfir"]
+    Endif
+  Endif
+
+  Return aLobID
+
+End

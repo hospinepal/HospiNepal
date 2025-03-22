@@ -1,0 +1,436 @@
+' Gambas module file
+
+Public $Chapter As String = "Maternal CRF"
+' Private $Reference As String = "e-MNR, Nepal"
+
+Private $ANCCountVar As String = "e-MNR:1.2.1.8" '"ANC Visit Number"
+Private $GestAgeVar As String = "e-MNR:1.2.1.9" '"Gestational Age"
+
+Private $DelivModeVar As String = "e-MNR:1.4.3.1" '"Mode of delivery"
+Private $TermWeekVar As String = "e-MNR:1.4.2.2" '"Term birth (37-42 weeks)"
+Private $BookedVar As String = "e-MNR:1.4.1.1" '"Booked"
+Private $StillBirthVar As String = "e-MNR:1.4.3.8" '"Still birth type"
+Private $PreTermVar As String = "e-MNR:1.4.2.3" '"Pre-Term Birth"
+Private $BirthWtVat As String = "e-MNR:1.4.4.2" '"Birth weight of baby (gm)"
+Private $CongAnomalyVar As String = "e-MNR:1.4.4.5" '"Birth abnormalities in baby"
+
+Private $NewBornDeathVar As String = "e-MNR:1.6.3.7" '"Newborn Death"
+Private $MaterComplVar As String = "e-MNR:1.4.3.3"
+
+Private $MaterDeathVal As String = "Maternal Mortality"
+Private $HideTermVal As String = "Term (37-42)"
+
+Private $MatTDVaccination As String = "e-MNR:1.3.1.1"  ''TD vaccination (First  Second)
+Private $DelBirthTypes As String = "e-MNR:1.4.3.7"  '' Birth Types (Fresh Still Birth  Macerated Still Birth)
+Private $MatTDVaccinDate As String = "e-MNR:1.3.1.2"   ''Vaccination Date
+
+Public Sub GetMaternalDashBoard($con As Connection, dt1 As Date, dt2 As Date) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+
+  Dim colFirst As String[] = ["1st visit", "<20 wks", "20-23 wks", "24-28 wks", "29-32 wks", "33-36 wks", ">=37 wks", "Td1*", "Td2*"]
+  Dim colSecond As String[]
+  Dim colThird As String[]
+
+  Dim rsx As Result
+  Dim totcount As Integer
+
+  $BillingReport = New CReportHTML(["Variable", "Observation"], "", "")
+  $BillingReport.UserData.Add("FACILITY NAME : " & modHelpVariable.$HospitalName, "PARAM1")
+  $BillingReport.UserData.Add("DATE RANGE : " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  rsx = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $ANCCountVar, $Chapter)
+  If rsx.Available Then
+    totcount = rsx["xcnt"]
+  Else
+    totcount = 0
+  Endif
+  With asx
+    .Add("ANC Visit")
+    .Add("Total no of women attending ANC clinic : " & CStr(totcount))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  With asx
+    .Add("ANC Data")
+    .Add(modString.GetRichTableStringFromVariant(colFirst, GetANCDataFirst($con, dt1, dt2)))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  colSecond = ColumnsSecond($con)
+  With asx
+    .Add("Delivery Data")
+    .Add(modString.GetRichTableStringFromVariant(colSecond, GetDeliverySecond($con, dt1, dt2)))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  colThird = ColumnsThird($con)
+  With asx
+    .Add("AESI Data")
+    .Add(modString.GetRichTableStringFromVariant(colThird, GetPNCDataThird($con, dt1, dt2)))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  $BillingReport.AddSummary("* Values are for one month December 2024.")
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Private Function GetANCDataFirst($con As Connection, dt1 As Date, dt2 As Date) As Variant[]
+
+  Dim colTitle As String[] = ["<20 wks", "20-23 wks", "24-28 wks", "29-32 wks", "33-36 wks", ">=37 wks"]
+  Dim xFinal As Variant[]
+  Dim xRowVal As Collection
+
+  Dim rsx As Result
+  Dim res As Result
+  Dim bval As Float[]
+  Dim Row As Integer
+
+  Dim xTdDose As String[] = ["First", "Second"]
+  Dim aRow As Integer
+  Dim rsy As Result
+  Dim rsz As Result
+  Dim xvac As Integer
+  Dim xdate As Date
+
+  xFinal = New Variant[]
+  xRowVal = New Collection
+
+  rsx = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $ANCCountVar, $Chapter, "1")
+  If rsx.Available Then
+    xRowVal.Add(CStr(rsx["xcnt"]), CStr(0))
+  Else
+    xRowVal.Add("0", CStr(0))
+  Endif
+
+  For Row = 0 To colTitle.Count - 1
+    bval = GetGestDayRange(colTitle[Row])
+    If bval.Count Then
+      res = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquanti>=&5 and fldrepquanti<&6", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $GestAgeVar, $Chapter, bval[0], bval[1])
+      If res.Available Then
+        xRowVal.Add(CStr(res["xcnt"]), CStr(Row + 1))
+      Else
+        xRowVal.Add("0", CStr(Row + 1))
+      Endif
+    Endif
+  Next
+
+  xdate = Date("2024", "12", "1", "12", "12", "12")
+  For aRow = 0 To xTdDose.Count - 1
+    xvac = 0
+    rsy = $con.Exec("select DISTINCT(fldencounterval) as fldencounterval from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $MatTDVaccination, $Chapter, xTdDose[aRow])
+    If rsy.Available Then
+      For Each rsy
+        rsz = $con.Exec("select fldencounterval from tblpatientexam where fldencounterval=&1 and fldserialval=&2 and fldmethod=&3 and fldrepdate>=&4 and fldrepdate<=&5", rsy["fldencounterval"], $MatTDVaccinDate, $Chapter, modDate.StartSqlMonth(xdate), modDate.EndSqlMonth(xdate))
+        If rsz.Available Then
+          xvac = xvac + 1
+        Endif
+      Next
+      xRowVal.Add(CStr(xvac), CStr(colTitle.Count + aRow + 1))
+    Else
+      xRowVal.Add("0", CStr(colTitle.Count + aRow + 1))
+    Endif
+  Next
+
+  xFinal.Add(xRowVal)
+
+  Return xFinal
+
+End
+
+Private Function ColumnsSecond(sCon As Connection) As String[]
+
+  Dim colTitle As String[]
+  Dim delList As String[]
+
+  colTitle = New String[]
+  colTitle.Add("Total")
+  delList = GetDelModeList(sCon)
+  colTitle.Insert(delList)
+  colTitle.Add("Term (37-42 wks)")
+  colTitle.Add("Booked")
+  colTitle.Add("Unbooked")
+
+  Return colTitle
+
+End
+
+Private Function GetDeliverySecond($con As Connection, dt1 As Date, dt2 As Date) As Variant[]
+
+  Dim xFinal As Variant[]
+  Dim xRowVal As Collection
+
+  Dim rsx As Result
+  Dim aDelList As String[]
+  Dim delcnt As Integer
+  Dim res As Result
+  Dim Colm As Integer
+  Dim rsy As Result
+  Dim rsy1 As Result
+  Dim rsy2 As Result
+
+  xFinal = New Variant[]
+  xRowVal = New Collection
+
+  rsx = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $DelivModeVar, $Chapter)
+  If rsx.Available Then
+    xRowVal.Add(CStr(rsx["xcnt"]), CStr(0))
+  Else
+    xRowVal.Add("0", CStr(0))
+  Endif
+
+  aDelList = GetDelModeList($con)
+  delcnt = aDelList.Count
+  For Colm = 0 To aDelList.Count - 1
+    res = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $DelivModeVar, $Chapter, aDelList[Colm])
+    If res.Available Then
+      xRowVal.Add(CStr(res["xcnt"]), CStr(Colm + 1))
+    Else
+      xRowVal.Add("0", CStr(Colm + 1))
+    Endif
+  Next
+
+  rsy = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $TermWeekVar, $Chapter, "Yes")
+  If rsy.Available Then
+    xRowVal.Add(CStr(rsy["xcnt"]), CStr(delcnt + 1))
+  Else
+    xRowVal.Add("0", CStr(delcnt + 1))
+  Endif
+
+  rsy1 = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $BookedVar, $Chapter, "Yes")
+  If rsy1.Available Then
+    xRowVal.Add(CStr(rsy1["xcnt"]), CStr(delcnt + 2))
+  Else
+    xRowVal.Add("0", CStr(delcnt + 2))
+  Endif
+
+  rsy2 = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $BookedVar, $Chapter, "No")
+  If rsy2.Available Then
+    xRowVal.Add(CStr(rsy2["xcnt"]), CStr(delcnt + 3))
+  Else
+    xRowVal.Add("0", CStr(delcnt + 3))
+  Endif
+
+  xFinal.Add(xRowVal)
+
+  Return xFinal
+
+End
+
+Private Function ColumnsThird(sCon As Connection) As String[]
+
+  Dim colTitle As String[]
+
+  colTitle = New String[]
+  colTitle.Insert(GetStillBirthList(sCon))
+  colTitle.Insert(GetPreTermList(sCon))
+  colTitle.Insert(["LBW", "VLBW", "ELBW"])
+  colTitle.Add("Congenital anomaly")
+  colTitle.Add("Neonatal Death")
+  colTitle.Add("Maternal Death")
+  colTitle.Add("Stillbirth Fresh")
+  colTitle.Add("Stillbirth Macerated")
+
+  Return colTitle
+
+End
+
+Private Function GetPNCDataThird($con As Connection, dt1 As Date, dt2 As Date) As Variant[]
+
+  Dim xFinal As Variant[]
+  Dim xRowVal As Collection
+  Dim sCount As Integer
+
+  Dim rsx As Result
+  Dim stilLst As String[]
+  Dim rsy As Result
+  Dim pretrLst As String[]
+  Dim Colm As Integer
+  Dim Colm1 As Integer
+  Dim Colm2 As Integer
+
+  Dim res As Result
+  Dim birWtLst As String[] = ["LBW", "VLBW", "ELBW"]
+  Dim bval As Float[]
+  Dim rsy1 As Result
+  Dim rsy2 As Result
+  Dim rsy3 As Result
+
+  Dim xBirth As String[] = ["Fresh Still Birth", "Macerated Still Birth"]
+  Dim aRow As Integer
+  Dim rsz As Result
+
+  xFinal = New Variant[]
+  xRowVal = New Collection
+
+  sCount = 0
+  stilLst = GetStillBirthList($con)
+  For Colm = 0 To stilLst.Count - 1
+    rsx = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $StillBirthVar, $Chapter, stilLst[Colm])
+    If rsx.Available Then
+      xRowVal.Add(CStr(rsx["xcnt"]), CStr(Colm + sCount))
+    Else
+      xRowVal.Add("0", CStr(Colm + sCount))
+    Endif
+  Next
+
+  sCount = stilLst.Count
+  pretrLst = GetPreTermList($con)
+  For Colm1 = 0 To pretrLst.Count - 1
+    rsy = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $PreTermVar, $Chapter, pretrLst[Colm1])
+    If rsy.Available Then
+      xRowVal.Add(CStr(rsy["xcnt"]), CStr(Colm1 + sCount))
+    Else
+      xRowVal.Add("0", CStr(Colm1 + sCount))
+    Endif
+  Next
+
+  sCount = stilLst.Count + pretrLst.Count
+  For Colm2 = 0 To birWtLst.Count - 1
+    bval = GetBirthWeightRange(birWtLst[Colm2])
+    If bval.Count Then
+      res = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquanti>=&5 and fldrepquanti<&6", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $BirthWtVat, $Chapter, bval[0], bval[1])
+      If res.Available Then
+        xRowVal.Add(CStr(res["xcnt"]), CStr(Colm2 + sCount))
+      Else
+        xRowVal.Add("0", CStr(Colm2 + sCount))
+      Endif
+    Endif
+  Next
+
+  sCount = stilLst.Count + pretrLst.Count + birWtLst.Count
+  rsy1 = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $CongAnomalyVar, $Chapter, "Yes")
+  If rsy1.Available Then
+    xRowVal.Add(CStr(rsy1["xcnt"]), CStr(sCount))
+  Else
+    xRowVal.Add("0", CStr(sCount))
+  Endif
+
+  sCount = sCount + 1
+  rsy2 = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $NewBornDeathVar, $Chapter, "Yes")
+  If rsy2.Available Then
+    xRowVal.Add(CStr(rsy2["xcnt"]), CStr(sCount))
+  Else
+    xRowVal.Add("0", CStr(sCount))
+  Endif
+
+  sCount = sCount + 1
+  rsy3 = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $MaterComplVar, $Chapter, $MaterDeathVal)
+  If rsy3.Available Then
+    xRowVal.Add(CStr(rsy3["xcnt"]), CStr(sCount))
+  Else
+    xRowVal.Add("0", CStr(sCount))
+  Endif
+
+  sCount = sCount + 1
+  For aRow = 0 To xBirth.Count - 1
+    rsz = $con.Exec("select COUNT(DISTINCT(fldencounterval)) as xcnt from tblpatientexam where fldtime>=&1 and fldtime<=&2 and fldserialval=&3 and fldmethod=&4 and fldrepquali=&5", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), $DelBirthTypes, $Chapter, xBirth[aRow])
+    If rsz.Available Then
+      xRowVal.Add(CStr(rsz["xcnt"]), CStr(sCount + aRow))
+    Else
+      xRowVal.Add("0", CStr(sCount + aRow))
+    Endif
+  Next
+
+  xFinal.Add(xRowVal)
+
+  Return xFinal
+
+End
+
+''==================================================
+Private Function GetPreTermList(sCon As Connection) As String[]
+
+  Dim rsx As Result
+  Dim colTitle As String[]
+
+  colTitle = New String[]
+  rsx = sCon.Exec("select fldanswer from tblstructexamoption where fldheadcode=&1 and fldanswer<>&2", $PreTermVar, $HideTermVal)
+  If rsx.Available Then
+    For Each rsx
+      colTitle.Add(rsx["fldanswer"])
+    Next
+  Endif
+
+  Return colTitle
+
+End
+
+Private Function GetStillBirthList(sCon As Connection) As String[]
+
+  Dim rsx As Result
+  Dim colTitle As String[]
+
+  colTitle = New String[]
+  rsx = sCon.Exec("select fldanswer from tblstructexamoption where fldheadcode=&1", $StillBirthVar)
+  If rsx.Available Then
+    For Each rsx
+      colTitle.Add(rsx["fldanswer"])
+    Next
+  Endif
+
+  Return colTitle
+
+End
+
+Private Function GetDelModeList(sCon As Connection) As String[]
+
+  Dim rsx As Result
+  Dim colTitle As String[]
+
+  colTitle = New String[]
+  rsx = sCon.Exec("select fldanswer from tblstructexamoption where fldheadcode=&1", $DelivModeVar)
+  If rsx.Available Then
+    For Each rsx
+      colTitle.Add(rsx["fldanswer"])
+    Next
+  Endif
+
+  Return colTitle
+
+End
+
+Private Function GetGestDayRange(sType As String) As Float[]
+
+  Dim xxx As Float[]
+
+  If sType = "<20 wks" Then
+    xxx = [0, 20]
+  Else If sType = "20-23 wks" Then
+    xxx = [20, 24]
+  Else If sType = "24-28 wks" Then
+    xxx = [24, 29]
+  Else If sType = "29-32 wks" Then
+    xxx = [29, 33]
+  Else If sType = "33-36 wks" Then
+    xxx = [33, 37]
+  Else If sType = ">=37 wks" Then
+    xxx = [37, 50]
+  Endif
+
+  Return xxx
+
+End
+
+Private Function GetBirthWeightRange(sType As String) As Float[]
+
+  Dim xxx As Float[]
+
+  If sType = "LBW" Then
+    xxx = [1500, 2500]
+  Else If sType = "VLBW" Then
+    xxx = [1000, 1500]
+  Else If sType = "ELBW" Then
+    xxx = [100, 1000]
+  Endif
+
+  Return xxx
+
+End

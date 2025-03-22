@@ -1,0 +1,208 @@
+' Gambas class file
+
+Private $encid As String
+Private $patNo As String
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+
+  txtname.Text = modPatient.GetPatientNameByEnc($encid)
+  cmbvaccine.List = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select flditem as col from tblvaccine"))
+  cmbschedule.List = ["First Dose", "Second Dose", "Third Dose", "Fourth Dose", "Fifth Dose", "Sixth Dose", "Seventh Dose", "Booster Dose"]
+  $patNo = modPatient.GetPatientNoByEnc($encid)
+  SHowVaccineRecord()
+  btnvacuser.Tag = modBasic.$lbluser
+  btnvacuser.Text = modGeneral.GetUserFullName(btnvacuser.Tag)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim hForm As FmAddVariableGrid
+
+  hForm = New FmAddVariableGrid("flditem", "tblvaccine")
+  hForm.ShowModal
+  cmbvaccine.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select flditem as col from tblvaccine"))
+
+End
+
+Public Sub cmbvaccine_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbvaccine)
+  modFillContainer.RestrictComboToContent(cmbvaccine)
+
+End
+
+Public Sub cmbschedule_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbschedule)
+  modFillContainer.RestrictComboToContent(cmbschedule)
+
+End
+
+Public Sub cmbstockid_Click()
+
+  Dim xList As String[]
+  Dim stockno As String
+
+  xList = modStock.FillVaccineDispensingArrayAllBatch()
+  stockno = PharmGridList("Select Particulars", "vaccine", "Generic", xList, cmbstockid, GridView1.Height)
+  If stockno Then
+    SHowInventoryAllBatch(CInt(stockno))
+  Endif
+
+End
+
+Private Sub SHowInventoryAllBatch(stockNo As Integer)
+
+  Dim res As Result
+
+  If stockno Then
+    res = modDatabase.$myConn.Exec("select fldstockid,fldcategory,fldbatch,fldexpiry,fldqty,fldsellpr from tblentry where fldstockno=&1", CInt(stockno))
+    If res.Available Then
+      txtstockno.Value = stockNo
+      cmbstockid.Text = res["fldstockid"]
+      txtbatch.Text = res["fldbatch"]
+      dtexpiry.Value = res["fldexpiry"]
+    Endif
+  Endif
+
+End
+
+Private Sub BlankAll()
+
+  cmbvaccine.Text = ""
+  cmbstockid.Text = ""
+  txtstockno.Value = 0
+  txtbatch.Text = ""
+  dtexpiry.Value = ""
+  txtdose.Value = 0
+  txtunit.Text = ""
+  cmbschedule.Text = ""
+  btnvacuser.Tag = ""
+  btnvacuser.Text = ""
+  txtdose.Value = 0
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res As Result
+
+  If cmbvaccine.Text And If txtdose.Value And If cmbschedule.Text Then
+    res = modDatabase.$myConn.Create("tblvaccdosing")
+    res["fldencounterval"] = $encid
+    res["flditem"] = cmbvaccine.Text
+    res["fldstockno"] = txtstockno.Value
+    res["fldtype"] = cmbschedule.Text
+    res["fldvalue"] = txtdose.Value
+    res["fldunit"] = Trim(txtunit.Text)
+
+    res["flduserid"] = btnvacuser.Tag
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldsave"] = True
+    res["xyz"] = False
+    res.Update
+    SHowVaccineRecord()
+    BlankAll()
+
+  Endif
+
+End
+
+Private Sub SHowVaccineRecord()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,flditem,fldtype,fldvalue,fldunit,fldencounterval from tblvaccdosing where fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&1)"
+  $rData = modDatabase.$myConn.Exec(sql, $patNo)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 1
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Vaccine"
+    .Columns[3].Text = "Schedule"
+    .Columns[4].Text = "Dose"
+    .Columns[5].Text = "Unit"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, "VACCINATION HISTORY", "Patient No: " & CStr($patNo),, $encid)
+
+End
+
+Public Sub btnvacuser_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Consultant User"), modBasic.$OPConsulUserList)
+  If xMedUser And If xMedUser.Count Then
+    btnvacuser.Tag = xMedUser[0]
+    btnvacuser.Text = xMedUser[1]
+  Else
+    btnvacuser.Tag = ""
+    btnvacuser.Text = ""
+  Endif
+
+End
+
+Public Sub btnvacuser_Change()
+
+  If btnvacuser.Text = "" Then
+    btnvacuser.Tag = ""
+  Endif
+
+End

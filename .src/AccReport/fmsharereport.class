@@ -1,0 +1,1111 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $sType As String
+
+Private $amtChart As String[]
+Private $ProgressBar1 As ProgressBar
+Private $SSQLFields As String[]
+Private $sUser As String
+Private $RepoStr As String
+
+Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  cmbdiscmode.List = modNonMedical.FillDiscountCombo()
+  cmbdiscmode.Add("%")
+  cmbdiscmode.Text = "%"
+  cmbtype.List = ["Credit", "Cash", "%"]
+  cmbtype.Text = "%"
+
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  rbpayble.Value = True
+  rbinv.Value = True
+  rbrate.Value = True
+  rbshareper.Value = True
+  modAccount.PasInvoiceSetting(cmbfiscal, True)
+  LoadTableNames()
+
+  rbcategory.Value = True
+  cmbitemtype.List = GetCategoryGroups()
+  cmbitemtype.Text = "%"
+  rbpunched.Value = True
+  $RepoStr = modDataRepo.GetRepoLastStr()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatbilldetail = "tblpatbilldetail"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatbilldetail"] Then
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatbilldetail = "tblpatbilldetail"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub mnufiscal_Click()
+
+  Dim res As Result
+  Dim xyear As String
+
+  xyear = InputCombo("Select Fiscal Year Range", "Select Year", modBasic.$FiscalYearList, "", True)
+  If xyear Then
+    res = modDatabase.$myConn.Exec("select fldfrom,fldend from tblfiscalid where fldlabel=&1", xyear)
+    If res.Available Then
+      res.MoveFirst
+      dtfir.Value = res["fldfrom"]
+      dtlast.Value = res["fldend"]
+    Endif
+  Endif
+
+End
+
+Public Sub cmbitemtype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbitemtype)
+  modFillContainer.RestrictComboToContent(cmbitemtype)
+
+End
+
+Public Sub cmbdiscmode_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdiscmode)
+  modFillContainer.RestrictComboToContent(cmbdiscmode)
+
+End
+
+Public Sub cmbtype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbtype)
+  modFillContainer.RestrictComboToContent(cmbtype)
+
+End
+
+Private Function GetCategoryGroups() As String[]
+
+  Dim xList As String[]
+
+  If rbcategory.Value = True Then
+    xList = ["Diagnostic Tests", "General Services", "Procedures", "Equipment", "Radio Diagnostics", "Other Items", "Medicines", "Surgicals", "Extra Items"]
+  Else If rbgroup.Value = True Then
+    xList = modNonMedical.GetGroupNameAccount()
+  Endif
+  xList.Add("%")
+  Return xList
+
+End
+
+Public Sub rbcategory_Click()
+
+  cmbitemtype.List = GetCategoryGroups()
+  cmbitemtype.Text = "%"
+
+End
+
+Public Sub rbgroup_Click()
+
+  cmbitemtype.List = GetCategoryGroups()
+  cmbitemtype.Text = "%"
+
+End
+
+Private Function GetItemState() As String
+
+  Dim xx As String
+
+  If rbpunched.Value = True Then
+    xx = "Punched"
+  Else If rblocked.Value = True Then
+    xx = "Locked"
+  Endif
+  Return xx
+
+End
+
+Private Function GetSelUserList() As String[]
+
+  Dim fld As String
+  Dim aList As String[]
+  Dim bList As String[]
+  Dim cList As String[]
+  Dim xAllList As String[]
+  Dim userList As String[]
+  Dim xgroupbool As Boolean
+
+  If rbpayble.Value = True Then
+    fld = "fldpayto"
+  Else If rbrefer.Value = True Then
+    fld = "fldrefer"
+  Endif
+  If rbpunched.Value = True Then
+    xgroupbool = True
+  Else If rblocked.Value = True Then
+    xgroupbool = False
+  Endif
+
+  xAllList = New String[]
+  If rbcategory.Value = True Then
+    If rbinv.Value = True Then
+      aList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec(Subst("select distinct(&1) as col from " & $tblpatbilling, fld) & " where flditemtype like &1 and flddisctype like &2 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&3 and fldtime<=&4)" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+      bList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldvalue) as col from tblpatgenshare where flditemid in(select fldid from " & $tblpatbilling & " where flditemtype like &1 and flddisctype like &2 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&3 and fldtime<=&4)) and fldsave=&5" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xgroupbool))
+      cList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldshareuser) as col from tblpatusershares where fldbillid in(select fldid from " & $tblpatbilling & " where flditemtype like &1 and flddisctype like &2 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&3 and fldtime<=&4))" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+    Else If rbentry.Value = True Then
+      aList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec(Subst("select distinct(&1) as col from " & $tblpatbilling, fld) & " where flditemtype like &1 and flddisctype like &2 and fldtime>=&3 and fldtime<=&4" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+      bList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldvalue) as col from tblpatgenshare where flditemid in(select fldid from " & $tblpatbilling & " where flditemtype like &1 and flddisctype like &2) and fldtime>=&3 and fldtime<=&4 and fldsave=&5" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xgroupbool))
+      cList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldshareuser) as col from tblpatusershares where fldbillid in(select fldid from " & $tblpatbilling & " where flditemtype like &1 and flddisctype like &2) and fldtime>=&3 and fldtime<=&4" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+    Endif
+  Else If rbgroup.Value = True Then
+    If rbinv.Value = True Then
+      aList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec(Subst("select distinct(&1) as col from " & $tblpatbilling, fld) & " where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and flddisctype like &2 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&3 and fldtime<=&4)" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+      bList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldvalue) as col from tblpatgenshare where flditemid in(select fldid from " & $tblpatbilling & " where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and flddisctype like &2 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&3 and fldtime<=&4)) and fldsave=&5" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xgroupbool))
+      cList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldshareuser) as col from tblpatusershares where fldbillid in(select fldid from " & $tblpatbilling & " where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and flddisctype like &2 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&3 and fldtime<=&4))" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+    Else If rbentry.Value = True Then
+      aList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec(Subst("select distinct(&1) as col from " & $tblpatbilling, fld) & " where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and flddisctype like &2 and fldtime>=&3 and fldtime<=&4" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+      bList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldvalue) as col from tblpatgenshare where flditemid in(select fldid from " & $tblpatbilling & " where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and flddisctype like &2) and fldtime>=&3 and fldtime<=&4 and fldsave=&5" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xgroupbool))
+      cList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldshareuser) as col from tblpatusershares where fldbillid in(select fldid from " & $tblpatbilling & " where flditemname in(select flditemname from tblreportgroup where fldgroup like &1) and flddisctype like &2) and fldtime>=&3 and fldtime<=&4" & $RepoStr, cmbitemtype.Text, cmbdiscmode.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value)))
+    Endif
+  Endif
+  If aList Then
+    xAllList.Insert(aList)
+  Endif
+  If bList Then
+    xAllList.Insert(bList)
+  Endif
+  If cList Then
+    xAllList.Insert(cList)
+  Endif
+
+  userList = modString.BinaryDistinctStringArray(xAllList, gb.Ascent)
+
+  Return userList
+
+End
+
+Private Sub FillUserList()
+
+  Dim pic1 As Picture
+  Dim xuser As String
+  Dim xuserList As String[]
+
+  xuserList = GetSelUserList()
+  pic1 = Picture["icon:/small/identity"]
+  lstitem.Clear()
+  For Each xuser In xuserList
+    If xuser Then
+      lstitem.Add(xuser, modGeneral.GetUserFullName(xuser), pic1)
+    Endif
+  Next
+
+End
+
+Public Sub btnload_Click()
+
+  Dim res As Result
+
+  cmbitemname.Clear()
+  If rbentry.Value Or If rbinv.Value Then
+    FillUserList()
+    If rbcategory.Value = True Then
+      res = modDatabase.$syConn.Exec("select flditemname as col from tblservicecost where flditemtype like &1", cmbitemtype.Text)
+    Else If rbgroup.Value = True Then
+      res = modDatabase.$syConn.Exec("select flditemname as col from tblreportgroup where fldgroup like &1", cmbitemtype.Text)
+    Endif
+    cmbitemname.List = modControlSub.GetDirectFillresult(res)
+    cmbitemname.Add("%")
+    cmbitemname.Text = "%"
+    lstitem.SetFocus
+  Endif
+
+End
+
+Public Sub cmbitemname_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbitemname)
+  modFillContainer.RestrictComboToContent(cmbitemname)
+
+End
+
+Private Function CategoryListRep() As String[]
+
+  Dim xx As String[]
+
+  If cmbitemtype.Text = "%" Then
+    If rbcategory.Value = True Then
+      xx = ["Diagnostic Tests", "General Services", "Procedures", "Equipment", "Radio Diagnostics", "Other Items", "Medicines", "Surgicals", "Extra Items"]
+    Else If rbgroup.Value = True Then
+      xx = modNonMedical.GetGroupNameAccount()
+    Endif
+  Else
+    xx = New String[]
+    xx.Add(cmbitemtype.Text)
+  Endif
+  Return xx
+
+End
+
+Private Function GetInvoiced() As Boolean
+
+  Dim xx As Boolean
+
+  If rbinv.Value = True Then
+    xx = True
+  Else
+    xx = False
+  Endif
+  Return xx
+
+End
+
+Public Sub rbpayble_Click()
+
+  $sType = "Payable"
+
+End
+
+Public Sub rbrefer_Click()
+
+  $sType = "Referral"
+
+End
+
+Private Function GetTotalFormat() As String
+
+  Dim xx As String
+
+  If rbrate.Value = True Then
+    xx = "SubTotal"
+  Else If rbtotal.Value = True Then
+    xx = "NetTotal"
+  Endif
+  Return xx
+
+End
+
+Private Function GetShareInput() As String
+
+  Dim xx As String
+
+  If rbshareper.Value = True Then
+    xx = "Percent"
+  Else If rbshareamt.Value = True Then
+    xx = "Amount"
+  Endif
+  Return xx
+
+End
+
+Private Sub GetFieldList()
+
+  Dim xhospfld As String
+  Dim xList As String[]
+
+  xList = New String[]
+  xhospfld = modDataRepo.HospitalField()
+  If rbrate.Value = True Then
+    xList = ["fldid", "fldencounterval", "fldencounterval", "flditemname", "flditemrate", "(flditemqty-fldretqty)", "(flditemrate*(flditemqty-fldretqty))", "fldid", "fldid", "fldid", "fldtime", "fldbillno", "fldbilltype", "flddisctype", "fldbillno"]
+  Else If rbtotal.Value = True Then
+    xList = ["fldid", "fldencounterval", "fldencounterval", "flditemname", "flditemrate", "(flditemqty-fldretqty)", "(flditemrate*(flditemqty-fldretqty)*(1-flddiscper/100))", "fldid", "fldid", "fldid", "fldtime", "fldbillno", "fldbilltype", "flddisctype", "fldbillno"]
+  Endif
+  If xhospfld Then
+    xList.Add(xhospfld)
+  Endif
+  $SSQLFields = xList
+
+End
+
+Private Function ExecuteQuery(xFldList As String[], sUser As String, $con As Connection) As Result
+
+  Dim res As Result
+  Dim fld As String
+  Dim sql1 As String
+  Dim sql2 As String
+  Dim sql3 As String
+  Dim xgroupbool As Boolean
+
+  If rbpayble.Value = True Then
+    fld = "fldpayto"
+  Else If rbrefer.Value = True Then
+    fld = "fldrefer"
+  Endif
+  If rbpunched.Value = True Then
+    xgroupbool = True
+  Else If rblocked.Value = True Then
+    xgroupbool = False
+  Endif
+
+  If rbcategory.Value = True Then
+    If rbinv.Value = True Then
+      sql1 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & Subst("where &1", fld) & " like &7 and fldsave=&1 and fldbilltype like &9 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemtype like &5 and flddisctype like &6" & " and fldid not in(select flditemid from tblpatgenshare where fldvalue=&7)" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr                                                                                               ''
+      sql2 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldsave=&{10})" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr
+      sql3 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select fldbillid from tblpatusershares where fldshareuser=&7 and fldactive=&8)" & $RepoStr
+    Else
+      sql1 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & Subst("where &1", fld) & " like &7 and fldsave=&1 and fldbilltype like &9 and fldtime>=&2 and fldtime<=&3 and flditemname like &4 and flditemtype like &5 and flddisctype like &6" & " and fldid not in(select flditemid from tblpatgenshare where fldvalue=&7)" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr                                                   ''
+      sql2 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3 and fldsave=&{10})" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr
+      sql3 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and flditemname like &4 and flditemtype like &5 and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select fldbillid from tblpatusershares where fldshareuser=&7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3)" & $RepoStr
+    Endif
+  Else If rbgroup.Value = True Then
+    If rbinv.Value = True Then
+      sql1 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & Subst("where &1", fld) & " like &7 and fldsave=&1 and fldbilltype like &9 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6" & " and fldid not in(select flditemid from tblpatgenshare where fldvalue=&7)" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr                                                                                               ''
+      sql2 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldsave=&{10})" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr
+      sql3 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&2 and fldtime<=&3) and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select fldbillid from tblpatusershares where fldshareuser=&7 and fldactive=&8)" & $RepoStr
+    Else
+      sql1 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & Subst("where &1", fld) & " like &7 and fldsave=&1 and fldbilltype like &9 and fldtime>=&2 and fldtime<=&3 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6" & " and fldid not in(select flditemid from tblpatgenshare where fldvalue=&7)" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr                                                   ''
+      sql2 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select flditemid from tblpatgenshare where fldvalue=&7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3 and fldsave=&{10})" & " and fldid not in(select fldbillid from tblpatusershares where fldshareuser=&7)" & $RepoStr
+      sql3 = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " " & "where fldsave=&1 and flditemname like &4 and flditemname in(select flditemname from tblreportgroup where fldgroup like &5) and flddisctype like &6 and fldbilltype like &9" & " and fldid in(select fldbillid from tblpatusershares where fldshareuser=&7 and fldactive=&8 and fldtime>=&2 and fldtime<=&3)" & $RepoStr
+    Endif
+  Endif
+  res = $con.Exec(sql1 & " UNION ALL " & sql2 & " UNION ALL " & sql3, True, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbitemname.Text, cmbitemtype.Text, cmbdiscmode.Text, sUser, "Active", cmbtype.Text, xgroupbool)
+
+  Return res
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant, xuser As String) As Variant
+
+  Dim xxx As Variant
+
+  If Column = 2 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
+  Else If Column = 4 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 6 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 7 Then
+    If rbshareper.Value = True Then
+      xxx = modReportVar.GetLocaleNumberFormat(modSharing.GetUserPayPercent(GetItemState(), modDatabase.$syConn, xVariable, xuser, $sType), -2)
+    Else If rbshareamt.Value = True Then
+      xxx = modReportVar.GetLocaleNumberFormat(modSharing.GetUserPayAmount(GetItemState(), modDatabase.$syConn, xVariable, xuser, $sType), gb.Currency)
+    Endif
+  Else If Column = 8 Then
+    xxx = modReportVar.GetLocaleNumberFormat(modSharing.GetUserPayTaxReduction(GetItemState(), modDatabase.$syConn, xVariable, xuser, $sType), -2)
+  Else If Column = 9 Then
+    If rbshareper.Value = True Then
+      xxx = modReportVar.GetLocaleNumberFormat(modSharing.GetUserPayOrReferAmt(GetItemState(), modDatabase.$syConn, xVariable, $sType, xuser, GetTotalFormat()), gb.Currency)
+    Else If rbshareamt.Value = True Then
+      xxx = modReportVar.GetLocaleNumberFormat(modSharing.GetUserPayOrReferDirect(GetItemState(), modDatabase.$syConn, xVariable, $sType, xuser, GetTotalFormat()), gb.Currency)
+    Endif
+  Else If Column = 10 Then
+    xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+  Else If Column = 14 Then
+    xxx = modNonMedical.GetInvoiceReferenceNo(xVariable)
+  Else
+    xxx = xVariable
+  Endif
+  Return xxx
+
+End
+
+Public Sub lstitem_Select()
+
+  $sUser = lstitem.Current.Key
+
+End
+
+Public Sub cmdrepo_Click()
+
+  TabStrip1.Index = 0
+  Inc Application.Busy
+
+  If rbpayble.Value Or If rbrefer.Value Then
+    If lstitem.Selection.Count Then
+      If rblocked.Value = True Then
+        rbshareamt.Value = True
+      Endif
+
+      GetFieldList()
+      $rData = ExecuteQuery($SSQLFields.Copy(), $sUser, modDatabase.$syConn)
+      ShowSaleData()
+
+      If chkgrid.Value = True Then
+        FillChartData()
+        If chkamt.Value = True Then
+          FillItemChartAMT()
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+  Dec Application.Busy
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]], $sUser)
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Private Sub ShowSaleData()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Encounter"
+    .Columns[2].Text = "Name"
+    .Columns[3].Text = "Particulars"
+    .Columns[4].Text = "Rate"
+    .Columns[5].Text = "QTY"
+    .Columns[6].Text = "Total"
+    If rbshareper.Value = True Then
+      .Columns[7].Text = "Share%"
+    Else If rbshareamt.Value = True Then
+      .Columns[7].Text = "ShareAmt"
+    Endif
+    .Columns[8].Text = "TDS%"
+    .Columns[9].Text = "NetAmt"
+    .Columns[10].Text = "EntryDate"
+    .Columns[11].Text = "Invoice"
+    .Columns[12].Text = "Mode"
+    .Columns[13].Text = "Package"
+    .Columns[14].Text = "Reference"
+  End With
+
+  If modBasic.$QuantiUnitEnable = "Disable" Then
+    txtamt.Value = Round(modGridView.SumGridAmountt(GridView1, 9), -2)
+  Else
+    txtamt.Value = 0
+  Endif
+
+End
+
+Private Sub FillChartData()
+
+  ' Dim totamt As Float
+  ' Dim xfield As String
+  '
+  ' totamt = 0
+  $amtChart = New String[]
+  $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  ' If rbpayble.Value = True Then
+  '   xfield = "fldpayto"
+  ' Else If rbrefer.Value = True Then
+  '   xfield = "fldrefer"
+  ' Endif
+  ' For Each $rData
+  '   totamt = totamt + $rData["tot"] * (modSharing.GetUserPayPercent(modDatabase.$syConn, $rData["fldid"], $rData[xfield], $rData["flditemname"], $sType) / 100) * (1 - (modSharing.GetUserPayTaxReduction(modDatabase.$syConn, $rData["fldid"], $rData[xfield], $rData["flditemname"], $sType) / 100))
+  '   If chkamt.Value = True Then
+  '     $amtChart.Add(DateDiff(dtfir.Value, $rData["fldtime"], modChart.GetDateIntegerFromSetting()) & ";" & CStr($rData["tot"] / modChart.GetAMTValueChart()))
+  '   Endif
+  '   $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+  '   Wait
+  ' Next
+  ' txtamt.Value = Round(totamt, -2)
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub GridView1_DblClick()
+
+  Dim xx As Integer
+  Dim yy As Integer
+
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnugridview.Popup
+
+End
+
+Public Sub mnuenchart_Click()
+
+  Dim xx As String
+  Dim xField As String
+  Dim Column As Integer
+  Dim res As Result
+  Dim xval As Variant
+  Dim hFile As CUnivariate
+  Dim sOrder As String[]
+
+  Dim hUniv As FmAnalyzeSett
+
+  hUniv = New FmAnalyzeSett("Univariate", modGridView.GetGridViewColumns(GridView1))
+  hUniv.ShowModal
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  Inc Application.Busy
+  hFile = New CUnivariate
+
+  Column = modCustPatient.GetUnivariateColumn(1)
+  GetFieldList()
+  xField = $SSQLFields[Column]
+  res = ExecuteQuery([xField], lstitem.Current.Key, modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Column, res[xField], $sUser)
+      If xval Then
+        hFile.Add(xval)
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modSettings.ShowSettingFromFIle("UnivariateAnalysis/DataType") = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetEncChartGridNew(hFile.GetSPSSFile(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrosstab_Click()
+
+  Dim xx As String
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hFile As CBivariate
+  Dim sOrder As String[]
+  Dim hBivar As FmAnalyzeSett
+
+  hBivar = New FmAnalyzeSett("Bivariate", modGridView.GetGridViewColumns(GridView1))
+  hBivar.ShowModal
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  Inc Application.Busy
+  hFile = New CBivariate
+  GetFieldList()
+  Row = modCustPatient.GetCrossVarRow(1)
+  xFieRow = $SSQLFields[Row]
+  Column = modCustPatient.GetCrossVarColumn(1)
+  xFieColm = $SSQLFields[Column]
+  res = ExecuteQuery([xFieRow, xFieColm], lstitem.Current.Key, modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Row, res[xFieRow], $sUser)
+      yval = GetGridViewValue(Column, res[xFieColm], $sUser)
+      If xval And If yval Then
+        hFile.Add([xval, yval])
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetCrossTabStatNew(hFile.GetSPSSFile(), hFile.GetGroups(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrotab_Click()
+
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hForm As FmGridCrossTab
+  Dim xForm As CCrossTab
+  Dim hGdChr As FmAnalyzeSett
+
+  hGdChr = New FmAnalyzeSett("GridCrossTab", modGridView.GetGridViewColumns(GridView1))
+  hGdChr.ShowModal
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  If modCustPatient.$TabRowColumn And If modCustPatient.$TabFieldColumn Then
+    xForm = New CCrossTab
+    Inc Application.Busy
+    GetFieldList()
+    Row = CInt(modCustPatient.$TabRowColumn) - 1
+    xFieRow = $SSQLFields[Row]
+    Column = CInt(modCustPatient.$TabFieldColumn) - 1
+    xFieColm = $SSQLFields[Column]
+    res = ExecuteQuery([xFieRow, xFieColm], lstitem.Current.Key, modDatabase.$syConn)
+
+    If res.Available Then
+      For Each res
+        xval = GetGridViewValue(Row, res[xFieRow], $sUser)
+        yval = GetGridViewValue(Column, res[xFieColm], $sUser)
+        If xval And If yval Then
+          xForm.Add([xval, yval])
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    Dec Application.Busy
+
+    hForm = New FmGridCrossTab(GridView1.Columns[Row].Text, xForm.GetSPSSFile())
+    hForm.ShowModal
+    modExternal.$ExecValueColl.Clear()
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub mnugridsumm_Click()
+
+  Dim xx As String
+  Dim ChapCol As String
+  Dim GropCol As String
+  Dim xChapList As String[]
+  Dim xGropList As String[]
+
+  Dim res As Result
+  Dim valCol As String
+  Dim xFieldList As String[]
+
+  Dim xFinList As Variant[]
+  Dim xrowVar As Variant[]
+  Dim xchapval As String
+  Dim xgroup As String
+  Dim xPath As String
+
+  Dim hGdSum As FmAnalyzeSett
+
+  hGdSum = New FmAnalyzeSett("GridSummary", modGridView.GetGridViewColumns(GridView1))
+  hGdSum.ShowModal
+
+  Inc Application.Busy
+  xFieldList = New String[]
+  GetFieldList()
+  If modCustPatient.$SumChapterColumn Then
+    ChapCol = $SSQLFields[modCustPatient.$SumChapterColumn - 1]
+    xFieldList.Add(ChapCol)
+  Endif
+  GropCol = $SSQLFields[modCustPatient.$SumGroupColumn - 1]
+  valCol = $SSQLFields[modCustPatient.$SumValueColumn - 1]
+  xFieldList.Add(GropCol)
+  xFieldList.Add(valCol)
+
+  xChapList = New String[]
+  xGropList = New String[]
+  xFinList = New Variant[]
+  res = ExecuteQuery(xFieldList, lstitem.Current.Key, modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xrowVar = New Variant[]
+      If modCustPatient.$SumChapterColumn Then
+        xchapval = GetGridViewValue(modCustPatient.$SumChapterColumn - 1, res[ChapCol], $sUser)
+        xrowVar.Add(xchapval)
+        xChapList.Add(xchapval)
+      Endif
+      xgroup = GetGridViewValue(modCustPatient.$SumGroupColumn - 1, res[GropCol], $sUser)
+      xrowVar.Add(xgroup)
+      xGropList.Add(xgroup)
+
+      xrowVar.Add(GetGridViewValue(modCustPatient.$SumValueColumn - 1, res[valCol], $sUser))
+      xFinList.Add(xrowVar)
+    Next
+  Endif
+  Dec Application.Busy
+
+  xx = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  If modCustPatient.$SumGroupColumn And If modCustPatient.$SumValueColumn Then
+    If modCustPatient.$SumChapterColumn Then
+      If modCustPatient.$SummaryType = "Summation(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapterTableReport("Share Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else If modCustPatient.$SummaryType = "Count(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapCountTableReport("Share Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else
+        xPath = modCHTMLReport.SummaryGridChapterReport("Share Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Endif
+    Else
+      xPath = modCHTMLReport.SummaryGridReport("Share Report Summary", xx, modString.GetDistinctStringArray(xGropList), xFinList)
+    Endif
+    modControlSub.DisplayReportExport(xPath)
+  Endif
+
+End
+
+''---------------------------------------------- AMT Chart ---------------------------------------
+Private Sub FillItemChartAMT()
+
+  Dim sPath As String
+  Dim sNew As String
+
+  sPath = Temp()
+  File.Save(sPath, $amtChart.Join(gb.NewLine))
+  sNew = modString.GetGroupSUmmaryCSV(sPath, 0, 1, ";", gb.Tab, gb.Float)
+
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Endif
+  mnustatsamt.Tag = sNew
+
+End
+
+Public Sub PictureBox2_Menu()
+
+  mnuamt.Popup
+
+End
+
+Public Sub mnuexpoamt_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox2.Image.Save(Dialog.Path &/ "ReceivedAmount" & ".png")
+
+End
+
+Public Sub mnustatsamt_Click()
+
+  modDevice.DesktopOpenFile(mnustatsamt.Tag)
+
+End
+
+''--------------------------------------------------- Reports -------------------------------------
+Public Sub btnfullrep_Click()
+
+  Dim xx As String
+  ' Dim sAmt As String[]
+  ' Dim i As Integer
+
+  xx = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  ' sAmt = New String[]
+  ' For i = 1 To 12
+  '   If i = 10 Then
+  '     sAmt.Add(modReportVar.GetLocaleNumberFormat(txtamt.Value, gb.Currency))
+  '   Else
+  '     sAmt.Add("***")
+  '   Endif
+  ' Next
+  modCHTMLReport.ExportGridToHTML(GridView1, cmbitemtype.Text, xx)
+
+End
+
+Public Sub btnPrecise_Click()
+
+  Dim xPath As String
+  Dim xList As String[]
+
+  xList = GetSelUserList()
+  If xList Then
+    Inc Application.Busy
+    cmbitemname.Text = "%"
+    If rbcategory.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentPrecise(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, cmbitemtype.Text, "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentPrecise(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, cmbitemtype.Text, "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Else If rbgroup.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentPrecise(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, cmbitemtype.Text, "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentPrecise(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, cmbitemtype.Text, "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnsummdeptwise_Click()
+
+End
+
+Public Sub btnallsum_Click()
+
+  Dim xPath As String
+  Dim xList As String[]
+
+  xList = GetSelUserList()
+  If xList Then
+    Inc Application.Busy
+    cmbitemname.Text = "%"
+    If rbcategory.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Else If rbgroup.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnallsumdept_Click()
+
+  Dim xPath As String
+  Dim xList As String[]
+
+  xList = GetSelUserList()
+  If xList Then
+    Inc Application.Busy
+    cmbitemname.Text = "%"
+    If rbcategory.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingCategPaymentSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingCategPaymentSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Else If rbgroup.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingCategPaymentSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingCategPaymentSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btndetailall_Click()
+
+  Dim xPath As String
+  Dim xList As String[]
+
+  xList = GetSelUserList()
+  If xList Then
+    Inc Application.Busy
+    cmbitemname.Text = "%"
+    If rbcategory.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Else If rbgroup.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnpatwise_Click()
+
+  Dim xPath As String
+  Dim xList As String[]
+
+  If lstitem.Current.Key Then
+    xList = [lstitem.Current.Key]
+    Inc Application.Busy
+    cmbitemname.Text = "%"
+    If rbcategory.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Else If rbgroup.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btndetaildate_Click()
+
+  Dim xPath As String
+  Dim xList As String[]
+
+  If lstitem.Current.Key Then
+    xList = [lstitem.Current.Key]
+    Inc Application.Busy
+    cmbitemname.Text = "%"
+    If rbcategory.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Category", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Else If rbgroup.Value = True Then
+      If rbpayble.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Payable", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Else If rbrefer.Value = True Then
+        xPath = modRHTMLShare.SharingPaymentItemSummary(GetItemState(), modDatabase.$syConn, "Group", dtfir.Value, dtlast.Value, CategoryListRep(), "Referral", GetInvoiced(), cmbdiscmode.Text, GetTotalFormat(), xList, GetShareInput(), cmbtype.Text)
+      Endif
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub chkamt_Click()
+
+  TabStrip1.Index = 1
+
+End
+
+Public Sub mnuapprove_Click()
+
+  fmShareVerify.Close
+  fmShareVerify.ShowModal
+
+End
+
+Public Sub mnucolumns_Click()
+
+  If Message.Question(modGridView.GetColumnsListString(GridView1), ("OK"), ("Setting")) = 2 Then
+    fmChartSetting.Close
+    fmChartSetting.ShowModal
+  Endif
+
+End

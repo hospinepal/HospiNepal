@@ -1,0 +1,1229 @@
+' Gambas module file
+
+Public $UserNameData As Collection
+Public $UserCodeData As Collection
+Public $EthnicCodeData As Collection
+Public $UserContactData As Collection
+Public $UserEmailData As Collection
+Public $UserAccountData As Collection
+Public $UserPANNoData As Collection
+Public $UserTDSData As Collection
+
+'NOTE: ----------------------- Patient Password -----------------
+Public Sub AddPatientUserAccount(sUser As String, sPass As String, sFrom As Date, sTo As Date, UserIDType As String, sStatus As String)
+
+  Dim res As Result
+  Dim res1 As Result
+
+  res1 = modDatabase.$myConn.Exec("select fldpatientval from tblpatientpass where fldpatientval=&1", sUser)
+  If res1.Available = False Then
+    res = modDatabase.$myConn.Create("tblpatientpass")
+    res["fldpatientval"] = sUser
+    res["fldpass"] = modPassword.EncryptSimple(sPass)
+    res["fldfromdate"] = sFrom
+    res["fldtodate"] = sTo
+    res["fldusercode"] = UserIDType
+    res["fldstatus"] = sStatus
+    res.Update()
+  Endif
+
+End
+
+Public Function SendPatientPasswordForRemote(encid As String) As String
+
+  Dim sType As String
+  Dim sUser As String
+  Dim spass As String
+  Dim validval As Integer
+  Dim xpassword As String
+  Dim passvalue As String
+  Dim res As Result
+
+  sType = modBasic.$RemoteUserType
+  If sType Then
+    If sType = "Encounter" Then
+      sUser = encid
+    Else If sType = "PatientID" Then
+      sUser = modPatient.GetPatientNoByEnc(encid)
+    Endif
+    res = modDatabase.$myConn.Exec("select fldpass from tblpatientpass where fldpatientval=&1", sUser)
+    If res.Available Then
+      spass = res["fldpass"]
+      Return spass
+
+    Else
+      validval = modBasic.$RemotePassValidity
+      xpassword = modPassword.GetRandomPassword()
+      If modBasic.$RemotePassLen > 0 And If modBasic.$RemotePassLen <= 12 Then
+        passvalue = Left(xpassword, modBasic.$RemotePassLen)
+      Else
+        passvalue = xpassword
+      Endif
+
+      AddPatientUserAccount(sUser, passvalue, modDate.StartSqlDate(Now()), DateAdd(Now(), gb.Day, validval), sType, "Active")
+      Return passvalue
+
+    Endif
+  Endif
+
+End
+
+Public Function GetQRCodeRemoteReport(encid As String, sHost As String, sMode As String) As String
+
+  Dim sType As String
+  Dim sUser As String
+  Dim res As Result
+  Dim xpass As String
+  Dim xstr As String
+  Dim sPath As String
+
+  sType = modBasic.$RemoteUserType
+  If sType Then
+    If sType = "Encounter" Then
+      sUser = encid
+    Else If sType = "PatientID" Then
+      sUser = modPatient.GetPatientNoByEnc(encid)
+    Endif
+
+    res = modDatabase.$myConn.Exec("select fldpass from tblpatientpass where fldpatientval=&1", sUser)
+    If res.Available Then
+      xpass = res["fldpass"]
+
+      If sType = "Encounter" Then
+        xstr = sHost & "?user=" & sUser & "&pass=" & xpass
+      Else If sType = "PatientID" Then
+        xstr = sHost & "?user=" & sUser & "&pass=" & xpass & "&type=" & sMode
+      Endif
+      sPath = modDevAll.MakeQRCode(xstr)
+      Return sPath
+
+    Endif
+
+  Endif
+
+End
+
+'NOTE: --------------------------- COMPUTERS -----------------------------------------
+Public Function CompList() As String[]
+
+  Dim xx As String[]
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select distinct(fldcomp) as col from tblmacaccess")
+  If res.Available Then
+    xx = modControlSub.GetDirectFillresult(res)
+    If xx Then
+      xx.Sort()
+    Endif
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetCompNameFromCompID(txtcompid As String, Optional sCon As Connection) As String
+
+  Dim res As Result
+  Dim xx As String
+  Dim $con As Connection
+
+  If sCon Then
+    $con = sCon
+  Else
+    $con = modDatabase.$myConn
+  Endif
+  res = $con.Exec("select fldcompname from tblmacaccess where fldcomp=&1", txtcompid)
+  If res.Available = True Then
+    res.MoveFirst
+    If res["fldcompname"] Then
+      xx = res["fldcompname"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetIPTypeFromMAC(txtmac As String) As String
+
+  Dim res As Result
+  Dim typ As String
+
+  res = modDatabase.$myConn.Exec("select fldiptype from tblmacaccess where fldhostmac=&1", txtmac)
+  If res.Available Then
+    If res["fldiptype"] Then
+      typ = res["fldiptype"]
+    Else
+      typ = ""
+    Endif
+  Else
+    typ = ""
+  Endif
+  Return typ
+
+End
+
+Public Function GetMacCodeFromMacAdd(mac As String) As Integer
+
+  Dim res As Result
+  Dim xx As Integer
+
+  res = modDatabase.$myConn.Exec("select fldcode from tblmacaccess where fldhostmac=&1", mac)
+  If res.Available Then
+    If res["fldcode"] Then
+      xx = res["fldcode"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function GetMaxMacAddCode() As Integer
+
+  Dim xx As Integer
+  Dim rs As Result
+
+  rs = modDatabase.$myConn.Exec("select MAX(fldcode) as fldid from tblmacaccess")
+  If rs.Available Then
+    If rs["fldid"] Then
+      xx = rs["fldid"] + 1
+    Else
+      xx = 1
+    Endif
+  Else
+    xx = 1
+  Endif
+  Return xx
+
+End
+
+'NOTE:--------------------------- USERS ----------------------------
+Public Sub GetUserIDAll() As String[]
+
+  Dim xxx As String[]
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select flduserid from tbluser")
+  xxx = modControlSub.GetDirectFillresult(res)
+
+  Return xxx
+
+End
+
+Public Function GetUsersCategory() As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  res = modDatabase.$myConn.Exec("select distinct(fldcategory) as col from tbluser where fldcategory IS NOT NULL")
+  xx = modControlSub.GetDirectFillresult(res)
+  Return xx
+
+End
+
+Public Function CategoricalUserList(sType As String, Optional sFormat As String) As Variant[]
+
+  Dim xxx As Variant[]
+  Dim res As Result
+
+  xxx = New Variant[]
+  If modBasic.$PayableUserFormat = "Restricted" And If sFormat Then
+    If MMain.$WebEntry = True And If modBasic.$HospCode Then
+      If sType = "%" Then
+        res = modDatabase.$myConn.Exec("select flduserid,fldusername from tbluser where fldstatus=&1 and fldhospcode=&2 and fldcategory=&3", "Active", modBasic.$HospCode, sFormat)
+      Else
+        res = modDatabase.$myConn.Exec(Subst("select flduserid,fldusername from tbluser where &1", sType) & "=&1 and fldstatus=&2 and fldhospcode=&3 and fldcategory=&4", True, "Active", modBasic.$HospCode, sFormat)
+      Endif
+    Else
+      If sType = "%" Then
+        res = modDatabase.$myConn.Exec("select flduserid,fldusername from tbluser where fldstatus=&1 and fldcategory=&2", "Active", sFormat)
+      Else
+        res = modDatabase.$myConn.Exec(Subst("select flduserid,fldusername from tbluser where &1", sType) & "=&1 and fldstatus=&2 and fldcategory=&3", True, "Active", sFormat)
+      Endif
+    Endif
+
+  Else
+    If MMain.$WebEntry = True And If modBasic.$HospCode Then
+      If sType = "%" Then
+        res = modDatabase.$myConn.Exec("select flduserid,fldusername from tbluser where fldstatus=&1 and fldhospcode=&2", "Active", modBasic.$HospCode)
+      Else
+        res = modDatabase.$myConn.Exec(Subst("select flduserid,fldusername from tbluser where &1", sType) & "=&1 and fldstatus=&2 and fldhospcode=&3", True, "Active", modBasic.$HospCode)
+      Endif
+    Else
+      If sType = "%" Then
+        res = modDatabase.$myConn.Exec("select flduserid,fldusername from tbluser where fldstatus=&1", "Active")
+      Else
+        res = modDatabase.$myConn.Exec(Subst("select flduserid,fldusername from tbluser where &1", sType) & "=&1 and fldstatus=&2", True, "Active")
+      Endif
+    Endif
+
+  Endif
+  If res.Available Then
+    For Each res
+      xxx.Add([res["flduserid"], res["fldusername"]])
+    Next
+  Endif
+
+  Return xxx
+
+End
+
+Public Function CategoricalUserCodeList(sType As String) As Variant[]
+
+  Dim xxx As Variant[]
+  Dim res As Result
+
+  xxx = New Variant[]
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    If sType = "%" Then
+      res = modDatabase.$myConn.Exec("select flduserid,fldusername,fldusercode from tbluser where fldstatus=&1 and fldhospcode=&2 and fldusercode like &3", "Active", modBasic.$HospCode, "%")
+    Else
+      res = modDatabase.$myConn.Exec(Subst("select flduserid,fldusername,fldusercode from tbluser where &1", sType) & "=&1 and fldstatus=&2 and fldhospcode=&3 and fldusercode like &4", True, "Active", modBasic.$HospCode, "%")
+    Endif
+  Else
+    If sType = "%" Then
+      res = modDatabase.$myConn.Exec("select flduserid,fldusername,fldusercode from tbluser where fldstatus=&1 and fldusercode like &2", "Active", "%")
+    Else
+      res = modDatabase.$myConn.Exec(Subst("select flduserid,fldusername,fldusercode from tbluser where &1", sType) & "=&1 and fldstatus=&2 and fldusercode like &3", True, "Active", "%")
+    Endif
+  Endif
+  If res.Available Then
+    For Each res
+      xxx.Add([res["flduserid"], res["fldusername"], res["fldusercode"]])
+    Next
+  Endif
+
+  Return xxx
+
+End
+
+Public Function GetExpoReportUser(sUser As String) As Boolean
+
+  Dim res As Result
+  Dim xx As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldreport from tbluser where flduserid=&1 and fldstatus=&2", sUser, "Active")
+  If res.Available Then
+    If res["fldreport"] Then
+      xx = res["fldreport"]
+    Else
+      xx = False
+    Endif
+  Else
+    xx = False
+  Endif
+  Return xx
+
+End
+
+Public Function GetSuperUser(sUser As String) As Boolean
+
+  Dim res As Result
+  Dim xx As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldfaculty from tbluser where flduserid=&1 and fldstatus=&2", sUser, "Active")
+  If res.Available Then
+    If res["fldfaculty"] Then
+      xx = res["fldfaculty"]
+    Else
+      xx = False
+    Endif
+  Else
+    xx = False
+  Endif
+  Return xx
+
+End
+
+Public Function AllowClinicalEdit(sUser As String) As Boolean
+
+  Dim xbool As Boolean
+
+  If sUser = modBasic.$lbluser Then
+    xbool = True
+  Else If modBasic.$SuperUser = True Then
+    xbool = True
+  Else
+    xbool = False
+  Endif
+  Return xbool
+
+End
+
+Public Function GetClinicianCodeList() As String[]
+
+  Dim res As Result
+  Dim xxx As String[]
+
+  xxx = New String[]
+  res = modDatabase.$myConn.Exec("select fldusername,fldusercode from tbluser where (fldopconsult=&1 or fldipconsult=&1) and fldstatus=&2 and fldusercode like &3", True, "Active", "%")
+  If res.Available Then
+    For Each res
+      xxx.Add(res["fldusername"] & "|" & res["fldusercode"])
+    Next
+  Endif
+  Return xxx
+
+End
+
+Public Function GetUserFullName(userid As String, Optional sCon As Connection) As String
+
+  Dim res As Result
+  Dim xx As String
+  Dim $con As Connection
+
+  If sCon Then
+    $con = sCon
+  Else
+    $con = modDatabase.$myConn
+  Endif
+
+  If userid Then
+    xx = modHelpVariable.GetCollectionValue($UserNameData, userid, modBasic.$AppCacheGeneralParameters)
+    If Not xx Then
+      res = $con.Exec("select fldusername from tbluser where flduserid=&1", userid)
+      If res.Available Then
+        If res["fldusername"] Then
+          xx = res["fldusername"]
+          If modBasic.$AppCacheGeneralParameters = "Yes" Then
+            $UserNameData.Add(xx, userid)
+          Endif
+        Else
+          xx = ""
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetPrescriberCodeFromName(docname As String) As String
+
+  Dim xx As String
+  Dim res As Result
+
+  xx = modHelpVariable.GetCollectionValue($UserCodeData, docname, modBasic.$AppCacheGeneralParameters)
+  If Not xx Then
+    res = modDatabase.$myConn.Exec("select fldusercode from tbluser where flduserid=&1", docname)
+    If res.Available = True Then
+      res.MoveFirst
+      If res["fldusercode"] Then
+        xx = res["fldusercode"]
+        If modBasic.$AppCacheGeneralParameters = "Yes" Then
+          $UserCodeData.Add(xx, docname)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Else
+      xx = ""
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetUserFullNamePrint(userid As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  If userid Then
+    res = modDatabase.$myConn.Exec("select fldname from tblreportuser where flduserid=&1", userid)
+    If res.Available = True Then
+      If res["fldname"] Then
+        xx = res["fldname"]
+      Else
+        xx = GetUserFullName(userid)
+      Endif
+    Else
+      xx = GetUserFullName(userid)
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetUserContact(userid As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String
+
+  xx = modHelpVariable.GetCollectionValue($UserContactData, userid, modBasic.$AppCacheGeneralParameters)
+  If Not xx Then
+    sql = "select fldcontact from tbluser where flduserid=&1"
+    res = modDatabase.$myConn.Exec(sql, userid)
+    If res.Available Then
+      If res["fldcontact"] Then
+        xx = res["fldcontact"]
+        If modBasic.$AppCacheGeneralParameters = "Yes" Then
+          $UserContactData.Add(xx, userid)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Else
+      xx = ""
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetUserEMail(userid As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String
+
+  xx = modHelpVariable.GetCollectionValue($UserEmailData, userid, modBasic.$AppCacheGeneralParameters)
+  If Not xx Then
+    sql = "select fldemail from tbluser where flduserid=&1"
+    res = modDatabase.$myConn.Exec(sql, userid)
+    If res.Available Then
+      If res["fldemail"] Then
+        xx = res["fldemail"]
+        If modBasic.$AppCacheGeneralParameters = "Yes" Then
+          $UserEmailData.Add(xx, userid)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Else
+      xx = ""
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetStaffAccountRelig(userid As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String
+
+  xx = modHelpVariable.GetCollectionValue($UserAccountData, userid, modBasic.$AppCacheUserShareParameters)
+  If Not xx Then
+    sql = "select fldbankaccount from tblstafflist where flduserid=&1"
+    res = modDatabase.$myConn.Exec(sql, userid)
+    If res.Available Then
+      If res["fldbankaccount"] Then
+        xx = res["fldbankaccount"]
+        If modBasic.$AppCacheUserShareParameters = "Yes" Then
+          $UserAccountData.Add(xx, userid)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Else
+      xx = ""
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetStaffPanIdent(userid As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String
+
+  xx = modHelpVariable.GetCollectionValue($UserPANNoData, userid, modBasic.$AppCacheUserShareParameters)
+  If Not xx Then
+    sql = "select fldgovtaccount from tblstafflist where flduserid=&1"
+    res = modDatabase.$myConn.Exec(sql, userid)
+    If res.Available Then
+      If res["fldgovtaccount"] Then
+        xx = res["fldgovtaccount"]
+        If modBasic.$AppCacheUserShareParameters = "Yes" Then
+          $UserPANNoData.Add(xx, userid)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Else
+      xx = ""
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetStaffTaxPer(userid As String) As Float
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As Float
+  Dim yy As Variant
+
+  yy = modHelpVariable.GetCollectionValue($UserTDSData, userid, modBasic.$AppCacheUserShareParameters)
+  If yy Then
+    xx = CFloat(yy)
+  Else
+    xx = 0
+  Endif
+  If Not xx Then
+    sql = "select fldtaxpercent from tblstafflist where flduserid=&1"
+    res = modDatabase.$myConn.Exec(sql, userid)
+    If res.Available Then
+      If res["fldtaxpercent"] Then
+        xx = res["fldtaxpercent"]
+        If modBasic.$AppCacheUserShareParameters = "Yes" Then
+          $UserTDSData.Add(xx, userid)
+        Endif
+      Else
+        xx = 0
+      Endif
+    Else
+      xx = 0
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetMainUserCode(userid As String) As Long
+
+  Dim res As Result
+  Dim xx As Float
+
+  res = modDatabase.$myConn.Exec("select fldcode from tbluser where flduserid=&1", userid)
+  If res.Available Then
+    If res["fldcode"] Then
+      xx = res["fldcode"]
+    Else
+      xx = 0
+    Endif
+  Else
+    xx = 0
+  Endif
+  Return xx
+
+End
+
+Public Function GetEthnicCode(surName As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  xx = modHelpVariable.GetCollectionValue($EthnicCodeData, surName, modBasic.$AppCacheGeneralParameters)
+  If Not xx Then
+    res = modDatabase.$myConn.Exec("select fldgroupname from tblethnicgroup where lower(flditemname)=&1", LCase(surName))
+    If res.Available Then
+      If res["fldgroupname"] Then
+        xx = res["fldgroupname"]
+        If modBasic.$AppCacheGeneralParameters = "Yes" Then
+          $EthnicCodeData.Add(xx, surName)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Else
+      xx = ""
+    Endif
+  Endif
+  Return xx
+
+End
+
+'NOTE:----------------------------- USER IN SYSTEM ------------------------------------
+Public Function FillCurrentUseronJob(sComp As String) As String[]
+
+  Dim res As Result
+  Dim xxx As String[]
+
+  res = modDatabase.$myConn.Exec("select distinct(flduser) as col from tblsystemlog where fldcomp like &1", sComp)
+  xxx = modControlSub.GetDirectFillresult(res)
+
+  Return xxx
+
+End
+
+Public Function FillCurrentUserNameonJob(sComp As String) As Variant[]
+
+  Dim xval As String
+  Dim xList As String[]
+  Dim xVar As Variant[]
+
+  xVar = New Variant[]
+  xList = FillCurrentUseronJob(sComp)
+  If xList.Count Then
+    For Each xval In xList
+      xVar.Add(xval, modGeneral.GetUserFullName(xval))
+    Next
+  Endif
+
+  Return xVar
+
+End
+
+Public Function GetCurrentUseronMac(mac As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select flduser from tblsystemlog where fldhostmac=&1", mac)
+  If res.Available = True Then
+    res.MoveLast
+    If res["flduser"] Then
+      xx = res["flduser"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetCurrentUserFromIP(lbip As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select flduser from tblsystemlog where fldhostip=&1", lbip)
+  If res.Available = True Then
+    res.MoveLast
+    If res["flduser"] Then
+      xx = res["flduser"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetCurrentCompOnSys() As String[]
+
+  Dim res As Result
+  Dim xx As String[]
+
+  res = modDatabase.$myConn.Exec("select distinct(fldcomp) as col from tblsystemlog")
+  If res.Available Then
+    xx = modControlSub.GetDirectFillresult(res)
+  Endif
+  Return xx
+
+End
+
+Public Function GetCurrentLocationFromIP(lbip As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldcomp from tblsystemlog where fldhostip=&1", lbip)
+  If res.Available = True Then
+    res.MoveLast
+    If res["fldcomp"] Then
+      xx = res["fldcomp"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetCurrentIPFromUser(lbuser As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldhostip from tblsystemlog where flduser=&1", lbuser)
+  If res.Available = True Then
+    res.MoveLast
+    If res["fldhostip"] Then
+      xx = res["fldhostip"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetCurrentIPonMac(mac As String) As String
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim xx As String
+  Dim iptype As String
+
+  iptype = GetIPTypeFromMAC(mac)
+  If iptype = "Fixed" Then
+    res = modDatabase.$myConn.Exec("select fldhostip from tblmacaccess where fldhostmac=&1", mac)
+    xx = res["fldhostip"]
+  Else
+    res = modDatabase.$myConn.Exec("select fldhostip from tblsystemlog where fldhostmac=&1", mac)
+    If res.Available = True Then
+      res.MoveLast
+      xx = res["fldhostip"]
+    Else
+      res1 = modDatabase.$myConn.Exec("select fldhostip from tbljobrecord where fldhostmac=&1", mac)
+      If res1.Available = True Then
+        res1.MoveLast
+        xx = res1["fldhostip"]
+      Else
+        xx = ""
+      Endif
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Function GetVersiononMac(mac As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldversion from tblsystemlog where fldhostmac=&1", mac)
+  If res.Available = True Then
+    res.MoveLast
+    If res["fldversion"] Then
+      xx = res["fldversion"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+'NOTE:--------------------- DEPARTMENTS FOR CONSULTATION/BED -------------------------
+Public Function GetWardBedCount(sDept As String) As Integer
+
+  Dim res As Result
+  Dim xval As Integer
+
+  res = modDatabase.$myConn.Exec("select COUNT(fldbed) as xtot from tbldepartmentbed where flddept like &1 and (fldstatus IS NULL or fldstatus=&2)", sDept, "Active")
+  If res.Available Then
+    If res["xtot"] Then
+      xval = res["xtot"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetRoomNoFromDept(sDept As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select fldroom from tbldepartment where flddept=&1 and fldhospcode=&2", sDept, modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select fldroom from tbldepartment where flddept=&1", sDept)
+  Endif
+  If res.Available Then
+    xx = res["fldroom"]
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetCategoryFromDept(sDept As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select fldcateg from tbldepartment where flddept=&1 and fldhospcode=&2", sDept, modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select fldcateg from tbldepartment where flddept=&1", sDept)
+  Endif
+  If res.Available Then
+    If res["fldcateg"] Then
+      xx = res["fldcateg"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetDepartmentAllList(sType As String) As String[]
+
+  Dim xxx As String[]
+  Dim res As Result
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where fldcateg like &1 and fldhospcode=&2", sType, modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where fldcateg like &1", sType)
+  Endif
+  If res.Available Then
+    xxx = modControlSub.GetDirectFillresult(res)
+    If xxx Then
+      xxx.Sort()
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Public Function GetDepartForConsultOnly() As String[]
+
+  Dim xxx As String[]
+  Dim res As Result
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where fldcateg like &1 and fldhospcode=&2", "Consultation", modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where fldcateg like &1", "Consultation")
+  Endif
+  If res.Available Then
+    xxx = modControlSub.GetDirectFillresult(res)
+    If xxx Then
+      xxx.Sort()
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Public Function GetDepartForOPVisitOnly() As String[]
+
+  Dim xxx As String[]
+  Dim res As Result
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where fldcateg like &1 and fldhospcode=&2", "OPD Visit", modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where fldcateg like &1", "OPD Visit")
+  Endif
+  If res.Available Then
+    xxx = modControlSub.GetDirectFillresult(res)
+    If xxx Then
+      xxx.Sort()
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Public Function GetDepartmentsForOPDBoth() As String[]
+
+  Dim xxx As String[]
+  Dim res As Result
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where (fldcateg like &1 or fldcateg like &2) and fldhospcode=&3", "Consultation", "OPD Visit", modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select flddept as col from tbldepartment where (fldcateg like &1 or fldcateg like &2)", "Consultation", "OPD Visit")
+  Endif
+  If res.Available Then
+    xxx = modControlSub.GetDirectFillresult(res)
+    If xxx Then
+      xxx.Sort()
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Public Function GetDepartmentWithBedList() As String[]
+
+  Dim res As Result
+  Dim xxx As String[]
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select distinct(flddept) as col from tbldepartmentbed where fldhospcode=&1", modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select distinct(flddept) as col from tbldepartmentbed")
+  Endif
+  If res.Available Then
+    xxx = modControlSub.GetDirectFillresult(res)
+    If xxx Then
+      xxx.Sort()
+    Endif
+  Endif
+  Return xxx
+
+End
+
+Public Function RegistrationDeptList() As String[]
+
+  Dim xx As String[]
+  Dim xgroup As String
+
+  xgroup = modSettings.ShowSettingFromFIle("RegistrationForm/DefaultDeptGroup")
+  If xgroup Then
+    xx = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select flditemname as col from tbldeptgroup where fldgroupname=&1", xgroup))                                                  ''
+  Else
+    xx = modGeneral.GetDepartmentsForOPDBoth()
+  Endif
+  Return xx
+
+End
+
+Public Function GetDepartmentNameFromBed(sBed As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    res = modDatabase.$myConn.Exec("select flddept from tbldepartmentbed where fldbed=&1 and fldhospcode=&2", sBed, modBasic.$HospCode)
+  Else
+    res = modDatabase.$myConn.Exec("select flddept from tbldepartmentbed where fldbed=&1", sBed)
+  Endif
+  If res.Available Then
+    If res["flddept"] Then
+      xx = res["flddept"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetPatientCurrDepartStatus(xStatus As String, sCurrent As String) As String
+
+  Dim xval As String
+
+  Select xStatus
+    Case "Admitted", "Discharged", "LAMA", "Death", "Refer", "Absconder"
+      xval = modGeneral.GetDepartmentNameFromBed(sCurrent)
+    Case Else
+      xval = sCurrent
+  End Select
+
+  Return xval
+
+End
+
+Public Function GetDepartCaptionList() As String[]
+
+  Dim xList As String[]
+  Dim aType As String[]
+
+  xList = New String[]
+  aType = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldactive) as col from tbldepartment where fldactive like &1", "%"))
+  If aType Then
+    If aType.Exist("Emergency") Then
+      xList.Insert(aType)
+    Else
+      xList.Add("Emergency")
+      xList.Insert(aType)
+    Endif
+  Else
+    xList.Add("Emergency")
+  Endif
+
+  Return xList
+
+End
+
+Public Function GetDepartCaption(sDept As String) As String
+
+  Dim res As Result
+  Dim bedno As String
+
+  res = modDatabase.$myConn.Exec("select fldactive from tbldepartment where flddept=&1", sDept)
+  If res.Available Then
+    If res["fldactive"] Then
+      bedno = res["fldactive"]
+    Else
+      bedno = ""
+    Endif
+  Else
+    bedno = ""
+  Endif
+  Return bedno
+
+End
+
+Public Function GetDepartConsultTime(sFormat As String, sDepart As String, sDate As Date) As Date
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim xstart As Date
+  Dim xInterval As Integer
+  Dim xcount As Integer
+  Dim xtime As Date
+  Dim newtime As Date
+
+  res = modDatabase.$myConn.Exec("select fldinterval,fldstart from tbldepartment where flddept=&1", sDepart)
+  If res.Available Then
+
+    If res["fldstart"] Then
+      xstart = res["fldstart"]
+    Else
+      xstart = modBasic.$RegistConsultStart
+    Endif
+
+    If res["fldinterval"] Then
+      xInterval = res["fldinterval"]
+    Else
+      xInterval = modBasic.$RegistConsultInterval
+    Endif
+
+    If xstart Then
+      If sFormat = "Consultation" Then
+        res1 = modDatabase.$myConn.Exec("select COUNT(fldid) as xcnt from tblconsult where fldconsultname like &1 and fldconsulttime>=&2 and fldconsulttime<=&3 and fldstatus<>&4", sDepart, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Cancelled")
+      Else
+        res1 = modDatabase.$myConn.Exec("select COUNT(fldid) as xcnt from tblopvisit where fldconsultname like &1 and fldconsulttime>=&2 and fldconsulttime<=&3 and fldstatus<>&4", sDepart, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), "Cancelled")
+      Endif
+      If res1.Available Then
+        xcount = res1["xcnt"]
+      Else
+        xcount = 0
+      Endif
+
+      xtime = Date(Year(sDate), Month(sDate), Day(sDate), Hour(xstart), Minute(xstart))
+      newtime = DateAdd(xtime, gb.Minute, xcount * xInterval)
+    Else
+      newtime = sDate
+    Endif
+
+  Endif
+
+  Return newtime
+
+End
+
+''--------------- Telemedicine -----------------------
+Public Function GetTeleMedUserProfile(xCode As String, Optional sCon As Connection) As Collection
+
+  Dim res As Result
+  Dim sCol As Collection
+  Dim $Con As Connection
+
+  If sCon Then
+    $Con = sCon
+  Else
+    $Con = modDatabase.$myConn
+  Endif
+  sCol = New Collection
+  res = $Con.Exec("select fldusername,fldcontact,fldemail,fldcategory,fldhospital,fldcharge from tbltelemeduser where fldteleuser=&1", xCode)
+  If res.Available Then
+    sCol.Add(res["fldusername"], "Name")
+    sCol.Add(res["fldcontact"], "Contact")
+    sCol.Add(res["fldemail"], "EMail")
+    sCol.Add(res["fldcategory"], "Category")
+    sCol.Add(res["fldhospital"], "Hospital")
+    sCol.Add(res["fldcharge"], "ConsultFee")
+  Endif
+
+  Return sCol
+
+End
+
+Public Function GetTeleMedUserName(xCode As String, Optional sCon As Connection) As String
+
+  Dim res As Result
+  Dim xval As String
+  Dim $Con As Connection
+
+  If sCon Then
+    $Con = sCon
+  Else
+    $Con = modDatabase.$myConn
+  Endif
+  res = $Con.Exec("select fldusername from tbltelemeduser where fldteleuser=&1", xCode)
+  If res.Available Then
+    If res["fldusername"] Then
+      xval = res["fldusername"]
+    Else
+      xval = ""
+    Endif
+  Else
+    xval = ""
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetTeleMedUserContact(xCode As String, Optional sCon As Connection) As String
+
+  Dim res As Result
+  Dim xval As String
+  Dim $Con As Connection
+
+  If sCon Then
+    $Con = sCon
+  Else
+    $Con = modDatabase.$myConn
+  Endif
+  res = $Con.Exec("select fldcontact from tbltelemeduser where fldteleuser=&1", xCode)
+  If res.Available Then
+    If res["fldcontact"] Then
+      xval = res["fldcontact"]
+    Else
+      xval = ""
+    Endif
+  Else
+    xval = ""
+  Endif
+
+  Return xval
+
+End
+
+Public Function GetTeleMedUserEMail(xCode As String, Optional sCon As Connection) As String
+
+  Dim res As Result
+  Dim xval As String
+  Dim $Con As Connection
+
+  If sCon Then
+    $Con = sCon
+  Else
+    $Con = modDatabase.$myConn
+  Endif
+  res = $Con.Exec("select fldemail from tbltelemeduser where fldteleuser=&1", xCode)
+  If res.Available Then
+    If res["fldemail"] Then
+      xval = res["fldemail"]
+    Else
+      xval = ""
+    Endif
+  Else
+    xval = ""
+  Endif
+
+  Return xval
+
+End

@@ -1,0 +1,540 @@
+' Gambas module file
+
+''--Purchase entry -----
+Public Function PurchaseEntryMaLePa(ReferenceNo As String, txtcategory As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim sql1 As String
+  Dim sql2 As String
+  Dim rs As Result
+  Dim res As Result
+  Dim asx As New String[0]
+
+  Dim i As Integer
+  Dim xtotcost As Float
+  Dim xnet As Float
+  Dim xtax As Float
+  Dim xreqDate As Date
+
+  $BillingReport = New CReportHTML([("SNo"), ("Purchase Order"), ("Item Classification"), ("Item Ledger"), ("Particulars"), ("Batch"), ("Stock No"), ("Model No"), ("Unit"), ("QTY"), ("Net Rate"), ("Total excluding VAT"), ("VAT"), ("Total including VAT"), ("Other expense"), ("Total including Other"), ("Remarks")], "PurchaseReport", "")
+  $BillingReport.SetTemplatePath(modHelpVariable.$htmlDirectory &/ "custom/purchase_entry")
+  $BillingReport.SetTranslationList(modHelpVariable.$htmlDirectory &/ "custom/purchase_entry/translate")
+
+  sql1 = "select fldsuppname,fldpurtype,fldbillno,flddebit,fldcredit,fldtotaltax,fldlastdisc,fldpurdate,fldreference,flduserid,fldtime,fldpurorder from tblpurchasebill where fldreference=&1 and fldcategory=&2"
+  rs = modDatabase.$syConn.Exec(sql1, ReferenceNo, txtcategory)
+  rs.MoveFirst
+  modHTMLStockReport.LoadSupplierParameters(rs["fldsuppname"], $BillingReport)
+  $BillingReport.UserData.Add(rs["fldpurorder"], "PurchaseRequestNo")
+  $BillingReport.UserData.Add(rs["fldreference"], "PurchaseReferenceNo")
+  $BillingReport.UserData.Add(rs["flduserid"], "PurchaseReferenceUser")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(rs["fldtime"], gb.MediumDate), "PurchaseReferenceDate")
+
+  $BillingReport.UserData.Add(rs["fldpurtype"], "PurchasePaymentType")
+  $BillingReport.UserData.Add(rs["fldbillno"], "PurchaseInvoiceNumber")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(rs["fldpurdate"], gb.MediumDate), "PurchaseInvoiceDate")
+
+  If rs["fldpurorder"] Then
+    xreqDate = modStock.GetPurchOrderDateFromRequest(rs["fldpurorder"])
+    If xreqDate Then
+      $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(xreqDate, gb.MediumDate), "PurchaseRequestDate")
+    Endif
+    $BillingReport.UserData.Add(rs["fldpurorder"], "PurchaseRequestNo")
+  Else
+    $BillingReport.UserData.Add("", "PurchaseRequestDate")
+    $BillingReport.UserData.Add("", "PurchaseRequestNo")
+  Endif
+
+  sql2 = "select fldid,fldpurtype,fldpurdate,fldbillno,fldsuppname,fldcategory,fldstockid,fldstockno,flsuppcost,fldtotalqty,fldnetcost,fldtaxamt,fldtotalcost,fldcomment,flduserid from tblpurchase where fldreference=&1"                                                      ''
+  res = modDatabase.$syConn.Exec(sql2, ReferenceNo)
+  res.MoveFirst
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(res["fldpurdate"], gb.MediumDate), "ReferenceDate")
+
+  i = 1
+  xtotcost = 0
+  xnet = 0
+  xtax = 0
+  For Each res
+    xtotcost = xtotcost + res["fldtotalcost"]
+    With asx
+      .Add(CStr(i))
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(res["fldstockid"])
+      .Add(modStock.GetBatchFromStockNo(res["fldstockno"]))
+      .Add(CStr(res["fldstockno"]))
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(res["fldtotalqty"], -2))
+      .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"], gb.Currency))
+      If res["fldtaxamt"] Then
+        xnet = xnet + (res["fldtotalcost"] - res["fldtaxamt"])
+        xtax = xtax + res["fldtaxamt"]
+        .Add(modReportVar.GetLocaleNumberFormat((res["fldtotalcost"] - res["fldtaxamt"]), gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldtaxamt"], gb.Currency))
+      Else
+        xnet = xnet + res["fldtotalcost"]
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldtotalcost"], gb.Currency))
+        .Add("")
+      Endif
+      .Add(modReportVar.GetLocaleNumberFormat(res["fldtotalcost"], gb.Currency))
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(res["fldtotalcost"], gb.Currency))
+      .Add(res["fldsuppname"])
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    i = i + 1
+  Next
+
+  $BillingReport.UserData.Add(modString.ConvertMoneyToText(xtotcost), "AmtWord")
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("TOTAL")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(xnet, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(xtotcost, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(xtotcost, gb.Currency))
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function PurchaseOrderMaLePa(xReferenceNo As String, txtsupplier As String, Optional sStatus As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim xtot As Float
+  Dim xtaxper As Float
+  Dim xtax As Float
+  Dim xfinal As Float
+
+  $BillingReport = New CReportHTML([("SNo"), ("Category"), ("Particulars"), ("Brand"), ("Pack"), ("QTY"), ("Rate"), ("Total"), ("Remarks")], "PurchaseReport", "")
+  $BillingReport.SetTemplatePath(modHelpVariable.$htmlDirectory &/ "custom/purchase_order")
+  $BillingReport.SetTranslationList(modHelpVariable.$htmlDirectory &/ "custom/purchase_order/translate")
+
+  If txtsupplier Then
+    modHTMLStockReport.LoadSupplierParameters(txtsupplier, $BillingReport)
+    $BillingReport.UserData.Add(xReferenceNo, "PurchaseRequestNo")
+
+    xtot = 0
+    xtax = 0
+    If sStatus Then
+      res = modDatabase.$syConn.Exec("select fldtime,fldstockid,fldcategory,fldrate,fldqty,fldstatus,flduserid,flddelivery,fldverify,fldverify_time from tblpurorder where fldsuppname=&1 and fldreference=&2 and fldstatus=&3", txtsupplier, xReferenceNo, sStatus)
+    Else
+      res = modDatabase.$syConn.Exec("select fldtime,fldstockid,fldcategory,fldrate,fldqty,fldstatus,flduserid,flddelivery,fldverify,fldverify_time from tblpurorder where fldsuppname=&1 and fldreference=&2", txtsupplier, xReferenceNo)
+    Endif
+    If res.Available Then
+      res.MoveFirst
+      $BillingReport.UserData.Add(res["flduserid"], "PurchaseRequestUser")
+      $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumDate), "PurchaseRequestDate")
+      $BillingReport.UserData.Add(res["fldverify"], "PurchaseRequestVerifyUser")
+      $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(res["fldverify_time"], gb.MediumDate), "PurchaseRequestVerifyDate")
+      $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(res["flddelivery"], gb.MediumDate), "PurchaseRequestDelivery")
+
+      For Each res
+        xtaxper = 0
+        xtot = xtot + res["fldrate"] * res["fldqty"]
+        xtaxper = modNonMedical.ShowTaxValueItem(res["fldcategory"], res["fldstockid"])
+        If xtaxper Then
+          xtax = xtax + (xtaxper * res["fldrate"] * res["fldqty"]) / 100
+        Endif
+        With asx
+          .Add(CStr(res.Index + 1))
+          .Add(res["fldcategory"])
+          .Add(modStock.GetgenericText(res["fldstockid"], res["fldcategory"]))
+          If res["fldcategory"] = "Medicines" Then
+            .Add(modPharmLabel.GetMedicineNameOptionType(res["fldstockid"], "Brand"))
+            .Add(modPharmLabel.GetPackVolString(res["fldstockid"]))
+          Else
+            .Add("")
+            .Add("")
+          Endif
+          .Add(modReportVar.GetLocaleNumberFormat(res["fldqty"], -2))
+          .Add(modReportVar.GetLocaleNumberFormat(res["fldrate"], gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(res["fldrate"] * res["fldqty"], gb.Currency))
+          .Add("")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+    Endif
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("SUBTOTAL")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("TOTAL TAX")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    xfinal = xtot + xtax
+    $BillingReport.UserData.Add(modString.ConvertMoneyToText(xfinal), "AmtWord")
+    With asx
+      .Add("")
+      .Add("")
+      .Add("GRAND TOTAL")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(xfinal, gb.Currency))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+  Endif
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''for already entered
+Public Function PastPurchaseOrderMaLePa(xReferenceNo As String, txtcategory As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim rs As Result
+  Dim sql1 As String
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim xtot As Float
+  Dim xfinal As Float
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("Brand"), ("Pack"), ("QTY"), ("Rate"), ("Total"), ("Remarks")], "PurchaseReport", "")
+  $BillingReport.SetTemplatePath(modHelpVariable.$htmlDirectory &/ "custom/purchase_order")
+  $BillingReport.SetTranslationList(modHelpVariable.$htmlDirectory &/ "custom/purchase_order/translate")
+
+  sql1 = "select fldsuppname,fldpurtype,fldbillno,flddebit,fldcredit,fldtotaltax,fldlastdisc,fldpurdate,fldreference,flduserid,fldtime,fldpurorder from tblpurchasebill where fldreference=&1 and fldcategory=&2"
+  rs = modDatabase.$syConn.Exec(sql1, xReferenceNo, txtcategory)
+  If rs.Available Then
+    rs.MoveFirst
+    If rs["fldsuppname"] Then
+      modHTMLStockReport.LoadSupplierParameters(rs["fldsuppname"], $BillingReport)
+      $BillingReport.UserData.Add(rs["fldpurorder"], "PurchaseRequestNo")
+      $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(rs["fldpurdate"], gb.MediumDate), "PurchaseRequestDate")
+      $BillingReport.UserData.Add(rs["flduserid"], "PurchaseRequestUser")
+
+      xtot = 0
+      res = modDatabase.$syConn.Exec("select fldstockid,fldcategory,fldnetcost,fldtotalqty,fldtaxamt,fldtotalcost from tblpurchase where fldsuppname=&1 and fldreference=&2", rs["fldsuppname"], xReferenceNo)
+      If res.Available Then
+
+        For Each res
+          xtot = xtot + res["fldnetcost"] * res["fldtotalqty"]
+          With asx
+            .Add(CStr(res.Index + 1))
+            .Add(modStock.GetgenericText(res["fldstockid"], res["fldcategory"]))
+            If res["fldcategory"] = "Medicines" Then
+              .Add(modPharmLabel.GetMedicineNameOptionType(res["fldstockid"], "Brand"))
+              .Add(modPharmLabel.GetPackVolString(res["fldstockid"]))
+            Else
+              .Add("")
+              .Add("")
+            Endif
+            .Add(modReportVar.GetLocaleNumberFormat(res["fldtotalqty"], -2))
+            .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"], gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"] * res["fldtotalqty"], gb.Currency))
+            .Add("")
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+      Endif
+
+      With asx
+        .Add("")
+        .Add("SUBTOTAL")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+      With asx
+        .Add("")
+        .Add("TOTAL TAX")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(rs["fldtotaltax"], gb.Currency))
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+      xfinal = xtot + rs["fldtotaltax"]
+      $BillingReport.UserData.Add(modString.ConvertMoneyToText(xfinal), "AmtWord")
+      With asx
+        .Add("")
+        .Add("GRAND TOTAL")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(xfinal, gb.Currency))
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+
+    Endif
+  Endif
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''======================= Store ============================
+Public Function GetStoreRequestMaLePa(res As Result) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("Specification"), ("Pack"), ("QTY"), ("Remarks")], "PurchaseReport", "")
+  $BillingReport.SetTemplatePath(modHelpVariable.$htmlDirectory &/ "custom/store_request")
+  $BillingReport.SetTranslationList(modHelpVariable.$htmlDirectory &/ "custom/store_request/translate")
+
+  If res And If res.Available Then
+    For Each res
+      With asx
+        .Add(CStr(res.Index + 1))
+        .Add(modStock.GetgenericText(res["fldstockid"], res["fldcategory"]))
+        If res["fldcategory"] = "Medicines" Then
+          .Add(modPharmLabel.GetMedicineNameOptionType(res["fldstockid"], "Brand"))
+          .Add(modPharmLabel.GetPackVolString(res["fldstockid"]))
+        Else
+          .Add("")
+          .Add("")
+        Endif
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldqty"], -2))
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function GetStoreDeliveryMaLePa(res As Result) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xtotal As Float
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("Symbol"), ("Specification"), ("Pack"), ("QTY"), ("Rate"), ("Total"), ("Remarks")], "PurchaseReport", "")
+  $BillingReport.SetTemplatePath(modHelpVariable.$htmlDirectory &/ "custom/store_transfer")
+  $BillingReport.SetTranslationList(modHelpVariable.$htmlDirectory &/ "custom/store_transfer/translate")
+
+  If res And If res.Available Then
+    xtotal = 0
+    For Each res
+      xtotal = xtotal + res["fldnetcost"] * res["fldqty"]
+      With asx
+        .Add(CStr(res.Index + 1))
+        .Add(modStock.GetgenericText(res["fldstockid"], res["fldcategory"]))
+        .Add("")
+        If res["fldcategory"] = "Medicines" Then
+          .Add(modPharmLabel.GetMedicineNameOptionType(res["fldstockid"], "Brand"))
+          .Add(modPharmLabel.GetPackVolString(res["fldstockid"]))
+        Else
+          .Add("")
+          .Add("")
+        Endif
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldqty"], -2))
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"], gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"] * res["fldqty"], gb.Currency))
+        .Add(res["fldreference"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      .Add("")
+      .Add("GRAND TOTAL")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(xtotal, gb.Currency))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''-------------- Transfer report
+Public Function GetStoreTransferReportMaLePa(sRefNo As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xtotal As Float
+  Dim res As Result
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("Symbol"), ("Specification"), ("Pack"), ("QTY"), ("Rate"), ("Total"), ("Remarks")], "PurchaseReport", "")
+  $BillingReport.SetTemplatePath(modHelpVariable.$htmlDirectory &/ "custom/store_transfer")
+  $BillingReport.SetTranslationList(modHelpVariable.$htmlDirectory &/ "custom/store_transfer/translate")
+
+  res = modDatabase.$syConn.Exec("select fldreference,fldstockid,fldqty,fldnetcost,fldfromcomp,fldtocomp,fldtoentrytime,fldtoentrytime,fldfromuser,fldtouser,fldcategory,fldcomment,fldrequest from tbltransfer where fldreference=&1", sRefNo)
+  If res And If res.Available Then
+    res.MoveFirst
+    $BillingReport.UserData.Add(res["fldreference"], "StoreTransferNo")
+    $BillingReport.UserData.Add(res["fldcomment"], "StoreTransferReason")
+    $BillingReport.UserData.Add(res["fldfromcomp"], "StoreSourceComp")
+    $BillingReport.UserData.Add(res["fldtocomp"], "StoreTargetComp")
+    $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(res["fldtoentrytime"], gb.MediumDate), "StoreTransferDate")
+    $BillingReport.UserData.Add(res["fldfromuser"], "StoreTransferEntryUser")
+    $BillingReport.UserData.Add(res["fldtouser"], "StoreTransferVerifyUser")
+
+    xtotal = 0
+    For Each res
+      xtotal = xtotal + res["fldnetcost"] * res["fldqty"]
+      With asx
+        .Add(CStr(res.Index + 1))
+        .Add(modStock.GetgenericText(res["fldstockid"], res["fldcategory"]))
+        .Add("")
+        If res["fldcategory"] = "Medicines" Then
+          .Add(modPharmLabel.GetMedicineNameOptionType(res["fldstockid"], "Brand"))
+          .Add(modPharmLabel.GetPackVolString(res["fldstockid"]))
+        Else
+          .Add("")
+          .Add("")
+        Endif
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldqty"], -2))
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"], gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"] * res["fldqty"], gb.Currency))
+        .Add(res["fldrequest"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      .Add("")
+      .Add("GRAND TOTAL")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(xtotal, gb.Currency))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''-------------- Consume report
+Public Function GetStoreConsumeReportMaLePa(sRefNo As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xtotal As Float
+  Dim res As Result
+
+  $BillingReport = New CReportHTML([("SNo"), ("Particulars"), ("Symbol"), ("Specification"), ("Pack"), ("QTY"), ("Rate"), ("Total"), ("Remarks")], "PurchaseReport", "")
+  $BillingReport.SetTemplatePath(modHelpVariable.$htmlDirectory &/ "custom/store_transfer")
+  $BillingReport.SetTranslationList(modHelpVariable.$htmlDirectory &/ "custom/store_transfer/translate")
+
+  res = modDatabase.$syConn.Exec("select fldreference,fldstockid,fldqtydisp,fldnetcost,fldcomp,fldtarget,fldtime,flduserid,fldcategory,fldcomment,fldrequest from tblbulksale where fldreference=&1", sRefNo)
+  If res And If res.Available Then
+    res.MoveFirst
+    $BillingReport.UserData.Add(res["fldreference"], "StoreTransferNo")
+    $BillingReport.UserData.Add(res["fldcomment"], "StoreTransferReason")
+    $BillingReport.UserData.Add(res["fldcomp"], "StoreSourceComp")
+    $BillingReport.UserData.Add(res["fldtarget"], "StoreTargetComp")
+    $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumDate), "StoreTransferDate")
+    $BillingReport.UserData.Add(res["flduserid"], "StoreTransferEntryUser")
+    $BillingReport.UserData.Add("", "StoreTransferVerifyUser")
+
+    xtotal = 0
+    For Each res
+      xtotal = xtotal + res["fldnetcost"] * res["fldqtydisp"]
+      With asx
+        .Add(CStr(res.Index + 1))
+        .Add(modStock.GetgenericText(res["fldstockid"], res["fldcategory"]))
+        .Add("")
+        If res["fldcategory"] = "Medicines" Then
+          .Add(modPharmLabel.GetMedicineNameOptionType(res["fldstockid"], "Brand"))
+          .Add(modPharmLabel.GetPackVolString(res["fldstockid"]))
+        Else
+          .Add("")
+          .Add("")
+        Endif
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldqtydisp"], -2))
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"], gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(res["fldnetcost"] * res["fldqtydisp"], gb.Currency))
+        .Add(res["fldrequest"])
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    With asx
+      .Add("")
+      .Add("GRAND TOTAL")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(xtotal, gb.Currency))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  Return $BillingReport.NewHTMLPath()
+
+End

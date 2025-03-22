@@ -1,0 +1,217 @@
+' Gambas class file
+
+Private $encid As String
+Private $sType As String
+
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Public Sub _new(encid As String, sType As String)
+
+  $encid = encid
+  $sType = sType
+
+End
+
+Public Sub Form_Open()
+
+  Dim hForm As FmQuantiEntry
+  Dim xstatus As String
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  If modBasic.$TabletModeEnable = "Yes" Then
+    hForm = New FmQuantiEntry(txtqty, pnlquanti)
+  Endif
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  txtpatientaddress.Text = modPatient.GetPatientAddressByEnc($encid)
+
+  xstatus = modPatient.CurrentAdmissionStatus($encid)
+  txtlocation.Text = modPatient.GetLocationSetting($encid, xstatus)
+  If $sType Then
+    cmbcategory.Text = $sType
+  Else
+    cmbcategory.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldcategory) as col from tblmedinventory"))
+  Endif
+
+  If $sType = "Blood" Then
+    cmbcategory.Enabled = False
+    cmbitem.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select flditem as col from tblbloodstore"))
+  Endif
+  FillRequestGrid()
+  CompleteGrid()
+  cmbcategory.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub cmbcategory_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcategory)
+  modFillContainer.RestrictComboToContent(cmbcategory)
+
+End
+
+Public Sub cmbcategory_LostFocus()
+
+  cmbitem.Clear()
+  cmbitem.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(flditem) as col from tblmedinventory where fldcategory=&1", cmbcategory.Text))                                                                         ''
+
+End
+
+Public Sub btnsubOK_Click()
+
+  Dim i As Integer
+
+  pnlquanti.Visible = False
+  For i = 1 To txtqty.Value
+    modPatientGeneral.PatMedicalItemRequest(cmbcategory.Text, $encid, cmbitem.Text, TextArea1.Text)
+  Next
+  FillRequestGrid()
+  cmbitem.Text = ""
+  txtqty.Value = 0
+  cmbcategory.SetFocus
+
+End
+
+Public Sub FillRequestGrid()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+
+  sql = "select fldid,fldtime_order,fldcategory,flditem,fldcomment,fldid from tblpatmeditem where fldencounterval=&1 and fldorder=&2"                                             ''
+  res = modDatabase.$myConn.Exec(sql, $encid, "Requested")
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldtime_order"], gb.GeneralDate)
+      Else If Column = 5 Then
+        GridView1[res.Index, Column].Picture = Picture["icon:/small/cancel"]
+        GridView1[res.Index, Column].Text = ""
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+    .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Category"
+    .Columns[3].Text = "Particulars"
+  End With
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Column = 5 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblpatmeditem", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      FillRequestGrid()
+    Endif
+  Endif
+
+End
+
+Public Sub btnsubOK_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnsubOK_Click()
+  Endif
+
+End
+
+Public Sub cmbitem_GotFocus()
+
+  If modBasic.$TabletModeEnable = "Yes" Then
+    If Not cmbitem.Text Then
+      cmbitem.Popup
+    Endif
+  Endif
+
+End
+
+Public Sub cmbitem_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbitem)
+  modFillContainer.RestrictComboToContent(cmbitem)
+
+End
+
+Public Sub cmbcategory_Click()
+
+  cmbitem.Clear()
+
+End
+
+Public Sub txtqty_GotFocus()
+
+  pnlquanti.Visible = True
+  txtqty.SelectAll
+
+End
+
+''------------------------ Completed ----------------------
+Private Sub CompleteGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,flditem,fldcode from tblpatmeditem where fldencounterval=&1 and fldcategory=&2 and fldorder=&3 and fldsave=&4"
+  $rData2 = modDatabase.$myConn.Exec(sql, $encid, "Blood", "Done", True)
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData2, $aMyFields2)
+
+  With GridView2
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Particulars"
+    .Columns[3].Text = "Code"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 1 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData2[$aMyFields2[Column]], gb.GeneralDate)
+  Else
+    GridView2.Data.Text = $rData2[$aMyFields2[Column]]
+  Endif
+
+End

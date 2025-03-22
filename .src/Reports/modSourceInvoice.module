@@ -1,0 +1,566 @@
+' Gambas module file
+
+Public Function GetTotalExpensebyPatient($BillingReport As CReportHTML, $con As Connection, encid As String, sType As String) As Float
+
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim tot As Float
+  Dim xdisc As Float
+  Dim xtax As Float
+  Dim atot As Float
+  Dim adisc As Float
+  Dim atax As Float
+
+  Dim xmode As String
+  Dim xmodeList As String[] = ["Credit", "Cash"]
+  Dim xdoa As Date
+  Dim xCategList As String[]
+  Dim xcateg As String
+  Dim i As Integer
+  Dim xfin As Float
+
+  Dim xdueclr As Float
+  Dim xcshcrdt As Float
+  Dim xdeposit As Float
+  Dim xcashtot As Float
+  Dim xinvpay As Float
+
+  xdoa = modPatient.GetAdmissionDate(encid)
+  xdeposit = modNonMedical.GetPatientDeposit($con, encid)
+  If sType = "Admitted" And If xdoa Then
+  Else
+    xcshcrdt = modNonMedical.GetCashinCreditAmtbyPatient($con, encid)
+    xdueclr = modNonMedical.GetDueClearPaidAmtbyPatient($con, encid)
+    xcashtot = modNonMedical.GetCashBillAmtbyPatient($con, encid)
+    xinvpay = modNonMedical.InvoicePaidAmountbyPatient($con, encid)
+  Endif
+
+  For Each xmode In xmodeList
+    $BillingReport.AddSection(UCase(xmode), True)
+
+    $BillingReport.AddChapter(UCase(xmode) & " EXPENSES")
+    xCategList = modControlSub.GetDirectFillresult($con.Exec("select distinct(flditemtype) as col from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldbilltype=&3", encid, True, xmode))
+    i = 1
+    xdisc = 0
+    xtax = 0
+    tot = 0
+    For Each xcateg In xCategList
+      adisc = 0
+      atax = 0
+      atot = 0
+
+      If sType = "Admitted" Then
+        If xdoa Then
+          res = $con.Exec("select flditemname,AVG(flditemrate) as flditemrate,SUM(flditemqty) as flditemqty,SUM(fldtaxamt) as fldtaxamt,SUM(flddiscamt) as flddiscamt,SUM(fldditemamt) as fldditemamt from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldbilltype=&3 and flditemtype=&4 and fldtime>=&5 GROUP BY flditemname", encid, True, xmode, xcateg, xdoa)
+        Endif
+      Else
+        res = $con.Exec("select flditemname,AVG(flditemrate) as flditemrate,SUM(flditemqty) as flditemqty,SUM(fldtaxamt) as fldtaxamt,SUM(flddiscamt) as flddiscamt,SUM(fldditemamt) as fldditemamt from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldbilltype=&3 and flditemtype=&4 GROUP BY flditemname", encid, True, xmode, xcateg)
+      Endif
+      If res And If res.Available Then
+        $BillingReport.AddChapter(xcateg)
+        For Each res
+          If res["flddiscamt"] Then
+            adisc = adisc + res["flddiscamt"]
+          Endif
+          If res["fldtaxamt"] Then
+            atax = atax + res["fldtaxamt"]
+          Endif
+          If res["fldditemamt"] Then
+            atot = atot + res["fldditemamt"]
+          Endif
+          With asx
+            .Add(CStr(i))
+            .Add(res["flditemname"])
+            .Add(modReportVar.GetLocaleNumberFormat(res["flditemrate"], gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(res["flditemqty"], -2))
+            .Add(modReportVar.GetLocaleNumberFormat(res["flddiscamt"], gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(res["fldtaxamt"], gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(res["fldditemamt"], gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next 'ends res
+
+        xdisc = xdisc + adisc
+        xtax = xtax + atax
+        tot = tot + atot
+        With asx
+          .Add("")
+          .Add(modString.HTMLBlankSpace(5) & "SUBTOTAL")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(adisc, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(atax, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(atot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    With asx
+      .Add("")
+      .Add("TOTAL " & UCase(xmode) & " EXPENSES")
+      .Add("...")
+      .Add("...")
+      .Add(modReportVar.GetLocaleNumberFormat(xdisc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    $BillingReport.AddChapter(UCase(xmode) & " PAYMENTS")
+    ''for admitted/complete
+    If xmode = "Cash" Then
+      With asx
+        .Add("")
+        .Add("DEPOSITS")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(xdeposit, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+
+    ''for complete only
+    If sType = "Admitted" And If xdoa Then
+    Else
+      If xmode = "Credit" Then
+        With asx
+          .Add("")
+          .Add("CASH IN CREDIT")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(xcshcrdt, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("")
+          .Add("CREDIT CLEARED")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(xdueclr, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("")
+          .Add("PENDING CREDIT")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(tot - (xcshcrdt + xdueclr), gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+
+      Else If xmode = "Cash" Then
+        With asx
+          .Add("")
+          .Add("CASH PAYMENTS")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(xcashtot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("")
+          .Add("CASH PENDING")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(tot - (xcashtot + xdeposit), gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Endif
+
+    With asx
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+      .Add("...")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  $BillingReport.AddChapter("SUMMARY")
+  If sType = "Admitted" And If xdoa Then
+  Else
+    ''grand summary
+    With asx
+      .Add("")
+      .Add("TOTAL PAYMENTS")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(xdeposit + xinvpay, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  xfin = xdeposit + xinvpay
+  Return xfin
+
+End
+
+Public Function GetPendingExpensebyPatient($BillingReport As CReportHTML, $con As Connection, encid As String, sType As String, xmodeList As String[]) As Float
+
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim rte As Float
+  Dim qty As Float
+  Dim amt As Float
+  Dim disc As Float
+  Dim xtax As Float
+  Dim xfin As Float
+
+  Dim scateg As String
+  Dim stot As Float
+  Dim categList As String[]
+  Dim xmode As String
+  Dim xdoa As Date
+
+  ''extra espenses
+  Dim tot As Float
+  Dim res1 As Result
+  Dim res2 As Result
+
+  Dim beditem As String
+  Dim unitrate As String
+  Dim xhr As Float
+  Dim xrate As Float
+  Dim xdscamt As Float
+  Dim xtaxamt As Float
+  Dim xtotamt As Float
+
+  xdoa = modPatient.GetAdmissionDate(encid)
+  i = 1
+  tot = 0
+  $BillingReport.AddSection("ESTIMATED CHARGES", True)
+  If xdoa Then
+    $BillingReport.AddChapter("ESTIMATED BED CHARGES")
+    res1 = $con.Exec("select fldid,flditem,fldbillitem,flddisctype,fldfirsttime,fldfirstreport from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4 and fldfirstreport=&5", encid, "General Services", True, False, "Bed")
+    If res1.Available Then
+      res1.MoveFirst
+      unitrate = ""
+      xhr = 0
+      xrate = 0
+      xdscamt = 0
+      xtaxamt = 0
+      xtotamt = 0
+
+      beditem = res1["fldbillitem"]
+      If Not beditem Then
+        beditem = modNonMedical.GetIPDepartChargeRate(res1["flditem"], res1["flddisctype"])
+      Endif
+      If beditem Then
+        unitrate = modNonMedical.GetBillingTargeDept(beditem, "General Services")
+        xhr = modPatPatho.GetEquiDurationSetting("General Services", unitrate, res1["fldfirsttime"], Now(), True)
+        xrate = modNonMedical.GetCashBillItemCost(beditem, "General Services")
+        xdscamt = modNonMedical.DiscPercentForCategoryValue(encid, res1["flddisctype"], "General Services", beditem, modNonMedical.GetDiscBindBillMode(res1["flddisctype"]))
+        xtaxamt = modNonMedical.ShowTaxValues("General Services", beditem)
+        xtotamt = (xrate * xhr) * (1 - xdscamt / 100) * (1 + xtaxamt / 100)
+        tot = tot + xtotamt
+        With asx
+          .Add(CStr(i))
+          .Add(beditem)
+          .Add(modReportVar.GetLocaleNumberFormat(xrate, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xhr, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(xdscamt, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(xtaxamt, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(xtotamt, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+      Endif
+    Endif
+  Endif
+
+  res2 = $con.Exec("select fldid,flditem,flddisctype,fldfirsttime from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4", encid, "Equipment", True, False)
+  If res2.Available Then
+    $BillingReport.AddChapter("ESTIMATED EQUIPMENTS CHARGES")
+    For Each res2
+      unitrate = ""
+      xhr = 0
+      xrate = 0
+      xdscamt = 0
+      xtaxamt = 0
+      xtotamt = 0
+
+      unitrate = modNonMedical.GetBillingTargeDept(res2["flditem"], "Equipment")
+      xhr = modPatPatho.GetEquiDurationSetting("Equipment", unitrate, res2["fldfirsttime"], Now(), True)
+      xrate = modNonMedical.GetCashBillItemCost(res2["flditem"], "Equipment")
+      xdscamt = modNonMedical.DiscPercentForCategoryValue(encid, res2["flddisctype"], "Equipment", res2["flditem"], modNonMedical.GetDiscBindBillMode(res1["flddisctype"]))
+      xtaxamt = modNonMedical.ShowTaxValues("Equipment", res2["flditem"])
+      xtotamt = (xrate * xhr) * (1 - xdscamt / 100) * (1 + xtaxamt / 100)
+      tot = tot + xtotamt
+      With asx
+        .Add(CStr(i))
+        .Add(res2["flditem"])
+        .Add(modReportVar.GetLocaleNumberFormat(xrate, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xhr, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(xdscamt, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(xtaxamt, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(xtotamt, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next
+  Endif
+  With asx
+    .Add("")
+    .Add("<b>ESTIMATED TOTAL CHARGES</b>")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("...")
+    .Add("...")
+    .Add("...")
+    .Add("...")
+    .Add("...")
+    .Add("...")
+    .Add("...")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  $BillingReport.AddSection("PENDING SALES", True)
+  ''saved entries
+  For Each xmode In xmodeList
+
+    categList = modControlSub.GetDirectFillresult($con.Exec("select distinct(flddisctype) as col from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldbilltype=&4 and flditemqty>&5", encid, True, False, xmode, 0))
+    For Each scateg In categList
+      If sType = "Admitted" Then
+        If xdoa Then
+          res = $con.Exec("select flditemname,flditemrate,flditemqty,flddiscamt,fldtaxamt,fldditemamt,fldbilltype,flddisctype from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and flddisctype=&4 and fldbilltype=&5 and flditemqty>&6 and fldtime>=&7", encid, True, False, scateg, xmode, 0, xdoa)
+        Endif
+      Else
+        res = $con.Exec("select flditemname,flditemrate,flditemqty,flddiscamt,fldtaxamt,fldditemamt,fldbilltype,flddisctype from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and flddisctype=&4 and fldbilltype=&5 and flditemqty>&6", encid, True, False, scateg, xmode, 0)
+      Endif
+      If res And If res.Available Then
+        $BillingReport.AddChapter("MODE : " & xmode & modString.HTMLBlankSpace(10) & " PACKAGE : " & scateg)
+
+        i = 1
+        stot = 0
+        For Each res
+          rte = 0
+          disc = 0
+          xtax = 0
+          qty = 0
+          amt = 0
+          If res["flditemrate"] Then
+            rte = res["flditemrate"]
+          Endif
+          If res["flditemqty"] Then
+            qty = res["flditemqty"]
+          Endif
+          If res["fldtaxamt"] Then
+            xtax = res["fldtaxamt"]
+          Endif
+          If res["flddiscamt"] Then
+            disc = res["flddiscamt"]
+          Endif
+          If res["fldditemamt"] Then
+            amt = res["fldditemamt"]
+          Endif
+          stot = stot + amt
+          With asx
+            .Add(CStr(i))
+            .Add(res["flditemname"])
+            .Add(modReportVar.GetLocaleNumberFormat(rte, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(qty, -2))
+            .Add(modReportVar.GetLocaleNumberFormat(disc, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(amt, gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next
+        With asx
+          .Add("")
+          .Add("SUBTOTAL")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(stot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("")
+          .Add("<b>SALES RECEIVEABLE AMT</b>")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          If xmode = "Cash" Then
+            .Add(modReportVar.GetLocaleNumberFormat(stot, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
+          Endif
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+
+      Endif
+    Next   ''end category
+
+  Next
+
+  $BillingReport.AddSection("PENDING RETURNS", True)
+  ''saved entries
+  For Each xmode In xmodeList
+
+    categList = modControlSub.GetDirectFillresult($con.Exec("select distinct(flddisctype) as col from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and fldbilltype=&4 and flditemqty<&5", encid, True, False, xmode, 0))
+    For Each scateg In categList
+      If sType = "Admitted" Then
+        If xdoa Then
+          res = $con.Exec("select flditemname,flditemrate,flditemqty,flddiscamt,fldtaxamt,fldditemamt,fldbilltype,flddisctype from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and flddisctype=&4 and fldbilltype=&5 and flditemqty<&6 and fldtime>=&7", encid, True, False, scateg, xmode, 0, xdoa)
+        Endif
+      Else
+        res = $con.Exec("select flditemname,flditemrate,flditemqty,flddiscamt,fldtaxamt,fldditemamt,fldbilltype,flddisctype from tblpatbilling where fldencounterval=&1 and fldsave=&2 and fldprint=&3 and flddisctype=&4 and fldbilltype=&5 and flditemqty<&6", encid, True, False, scateg, xmode, 0)
+      Endif
+      If res And If res.Available Then
+        $BillingReport.AddChapter("MODE : " & xmode & modString.HTMLBlankSpace(10) & "  PACKAGE : " & scateg)
+
+        i = 1
+        stot = 0
+        For Each res
+          rte = 0
+          disc = 0
+          xtax = 0
+          qty = 0
+          amt = 0
+          If res["flditemrate"] Then
+            rte = res["flditemrate"]
+          Endif
+          If res["flditemqty"] Then
+            qty = res["flditemqty"]
+          Endif
+          If res["fldtaxamt"] Then
+            xtax = res["fldtaxamt"]
+          Endif
+          If res["flddiscamt"] Then
+            disc = res["flddiscamt"]
+          Endif
+          If res["fldditemamt"] Then
+            amt = res["fldditemamt"]
+          Endif
+          stot = stot + amt
+          With asx
+            .Add(CStr(i))
+            .Add(res["flditemname"])
+            .Add(modReportVar.GetLocaleNumberFormat(rte, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(qty, -2))
+            .Add(modReportVar.GetLocaleNumberFormat(disc, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(amt, gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next
+        With asx
+          .Add("")
+          .Add("SUBTOTAL")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(stot, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("")
+          .Add("<b>RETURN RECEIVEABLE AMT</b>")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          If xmode = "Cash" Then
+            .Add(modReportVar.GetLocaleNumberFormat(stot, gb.Currency))
+          Else
+            .Add(modReportVar.GetLocaleNumberFormat(0, gb.Currency))
+          Endif
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+          .Add("...")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+
+      Endif
+    Next   ''end category
+
+  Next
+
+  xfin = 0
+
+  Return xfin
+
+End

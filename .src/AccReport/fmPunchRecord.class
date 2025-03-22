@@ -1,0 +1,142 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  cmbtype.List = ["Cashier:Not Saved", "Cashier:Not Billed"] ''"Pharmacy:Not Saved",
+  cmbcomp.List = modBasic.$AllCompPerList
+  cmbcomp.Text = "%"
+  cmbstatus.List = ["Admitted", "Discharged", "LAMA", "Refer", "Death", "Absconder", "%"]
+  cmbstatus.Text = "%"
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Private Sub ShowGridRecord(strType As String)
+
+  Dim sql As String
+  Dim xFldList As String[]
+  Dim xhospfld As String
+  Dim xstate As String
+
+  xhospfld = modDataRepo.HospitalField()
+  If strType = "Cashier:Not Saved" Then
+    xFldList = ["fldid", "fldencounterval", "flditemtype", "flditemname", "flditemrate", "flditemqty", "fldorduserid", "fldordcomp", "fldordtime"]
+  Else If strType = "Cashier:Not Billed" Then
+    xFldList = ["fldid", "fldencounterval", "flditemtype", "flditemname", "flditemrate", "flditemqty", "flduserid", "fldcomp", "fldtime"]
+  Endif
+  If xhospfld Then
+    xFldList.Add(xhospfld)
+  Endif
+
+  If cmbstatus.Text = "%" Then
+    xstate = ""
+  Else
+    xstate = " and fldencounterval in (select fldencounterval from tblencounter where fldadmission like &5)"
+  Endif
+
+  If strType = "Cashier:Not Saved" Then
+    sql = "select " & xFldList.Join(",") & " from tblpatbilling where fldprint=&1 and fldsave=&2 and fldordcomp like &3 and lower(fldorduserid) like &4" & xstate                             ''
+    $rData = modDatabase.$syConn.Exec(sql, False, False, cmbcomp.Text, LCase(txtuser.Text) & "%", cmbstatus.Text)
+  Else If strType = "Cashier:Not Billed" Then
+    sql = "select " & xFldList.Join(",") & " from tblpatbilling where fldprint=&1 and fldsave=&2 and fldcomp like &3 and lower(flduserid) like &4" & xstate                            ''
+    $rData = modDatabase.$syConn.Exec(sql, False, True, cmbcomp.Text, LCase(txtuser.Text) & "%", cmbstatus.Text)
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "EncID"
+    .Columns[2].Text = "Category"
+    .Columns[3].Text = "Particulars"
+    .Columns[4].Text = "Rate"
+    .Columns[5].Text = "QTY"
+    .Columns[6].Text = "User"
+    .Columns[7].Text = "Comp"
+    .Columns[8].Text = "DateTime"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 8 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 9 Then
+    GridView1.Data.Text = modDataRepo.GetHospitalTextLabel($rData[$aMyFields[Column]])
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Public Sub btnrefresh_Click()
+
+  txthide.Text = cmbtype.Text
+  ShowGridRecord(txthide.Text)
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, cmbtype.Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+Public Sub GridView1_Menu()
+
+  If modHelpVariable.$LogInCategory = "Account" Then
+    mnuhide.Popup
+  Endif
+
+End
+
+Public Sub mnundo_Click()
+
+  Dim res As Result
+  Dim Row As Integer
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Row = GridView1.Row
+    If txthide.Text = "Cashier:Not Billed" Then
+      res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1 and fldstatus=&2 and flditemtype<>&3 and flditemtype<>&4 and flditemtype<>&5", GridView1[GridView1.Row, 0].Text, "Done", "Medicines", "Surgicals", "Extra Items")
+      If res.Available Then
+        res["fldstatus"] = "Punched"
+        res["fldsave"] = False
+        res["xyz"] = False
+        res.Update
+      Endif
+      ShowGridRecord(txthide.Text)
+      GridView1.Row = Row
+    Endif
+  Endif
+
+End

@@ -1,0 +1,397 @@
+' Gambas module file
+
+''------------------------------------------- FOR SMALL DATA ---------------------------------------------------------------------
+' Private $rData As Result
+' Private $aMyFields As String[]
+' on filling grid
+' $rData = modDatabase.$myConn.Exec(sql)
+' $aMyFields = New String[]
+' modGridView.ReadSmallData(GridView1, $rData,$aMyFields)
+' GridView1.Columns[0].Width = 100 * modBasic.$AppWidthRatio
+' use as on data
+' $rData.MoveTo(Row)
+' modGeneralMain.GridViewDecoration(GridView1, Row)
+' GridView1.Data.Text = $rData[$aMyFields[Column]]
+Public Sub ReadSmallData(GridView1 As GridView, $hres As Result, $aMyFields As String[], Optional {index} As Integer)
+
+  Dim rxf As ResultField
+
+  GridView1.Clear
+  GridView1.Columns.Count = $hres.Fields.Count
+  GridView1.Rows.Count = $hres.Count
+  For Each rxf In $hres.Fields
+    $aMyFields.Add(rxf.Name)
+  Next
+  GridView1.Rows.Height = modBasic.$AppGridRowHeight
+
+  If {index} Then
+    GridView1.Row = {index}
+  Else
+    GridView1.Row = 0
+  Endif
+
+End
+
+Public Sub ReadSmallMyData(GridView1 As GridView, $hres As MyResult, $aMyFields As String[], Optional {index} As Integer)
+
+  Dim rxf As String
+
+  GridView1.Clear
+  GridView1.Columns.Count = $hres.Fields.Count
+  GridView1.Rows.Count = $hres.Count
+  For Each rxf In $hres.Fields
+    $aMyFields.Add(rxf)
+  Next
+  GridView1.Rows.Height = modBasic.$AppGridRowHeight
+
+  If {index} Then
+    GridView1.Row = {index}
+  Else
+    GridView1.Row = 0
+  Endif
+
+End
+
+Public Sub ReadExplicitData(GridView1 As GridView, $hres As Result, Optional {index} As Integer)
+
+  Dim j As Integer
+  Dim fld As ResultField
+
+  GridView1.Clear
+  GridView1.Columns.Count = $hres.Fields.Count
+  GridView1.Rows.Count = $hres.Count
+
+  For Each $hres
+    j = 0
+    For Each fld In $hres.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $hres.Index, j)
+      GridView1[$hres.Index, j].Text = $hres[fld.Name]
+      j = j + 1
+    Next
+  Next
+  GridView1.Rows.Height = modBasic.$AppGridRowHeight
+
+  If {index} Then
+    GridView1.Row = {index}
+  Else
+    GridView1.Row = 0
+  Endif
+
+End
+
+Public Function GetGridViewRichText(GridView1 As GridView) As String
+
+  Dim xx As String
+  Dim Column As Integer
+  Dim Row As Integer
+
+  xx = modRepoTemplete.HTMLTableSyntax()
+  xx = xx & "<tr>" & gb.NewLine
+  For Column = 0 To GridView1.Columns.Count - 1
+    xx = xx & "<td class='reportmid_table_h'>" & GridView1.Columns[Column].Text & "</td>" & gb.NewLine
+  Next
+  xx = xx & "</tr>" & gb.NewLine
+
+  For Row = 0 To GridView1.Rows.Count - 1
+    xx = xx & "<tr>" & gb.NewLine
+    For Column = 0 To GridView1.Columns.Count - 1
+      xx = xx & "<td>" & GridView1[Row, Column].Text & "</td>" & gb.NewLine
+    Next
+    xx = xx & "</tr>" & gb.NewLine
+  Next
+  xx = xx & "</table>"
+
+  Return xx
+
+End
+
+Public Sub ExportGridToSqlite(GridView1 As GridView)
+
+  Dim $qlitConn As Connection
+  Dim sFile As String
+  Dim hTable As Table
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim res As Result
+
+  Inc Application.Busy
+  sFile = User.Home & "/selected"
+  If Exist(sFile) Then Kill sFile
+  modDBApp.CreateSQliteDB(sFile)
+  $qlitConn = modDBApp.OpenConnection("sqlite3", File.Dir(sFile), File.Name(sFile), "", "")
+  If Not $qlitConn.Tables.Exist("tblselected") Then
+    hTable = $qlitConn.Tables.Add("tblselected")
+    hTable.Fields.Add("_id", db.Serial)
+    For Column = 0 To GridView1.Columns.Count - 1
+      If GridView1.Columns[Column].Text Then
+        hTable.Fields.Add(GridView1.Columns[Column].Text, db.String, 250)
+      Else
+        hTable.Fields.Add("Column" & CStr(column), db.String, 250)
+      Endif
+    Next
+    hTable.PrimaryKey = ["_id"]
+    hTable.Update
+  Endif
+
+  For Row = 0 To GridView1.Rows.Count - 1
+    res = $qlitConn.Create("tblselected")
+    For Column = 0 To GridView1.Columns.Count - 1
+      If GridView1.Columns[Column].Text Then
+        res[GridView1.Columns[Column].Text] = GridView1[Row, Column].Text
+      Else
+        res["Column" & CStr(column)] = GridView1[Row, Column].Text
+      Endif
+    Next
+    res.Update
+    res.Delete
+  Next
+  Dec Application.Busy
+  Message.Info(("Data exported to ") & sFile, ("OK"))
+
+End
+
+'use this on grid_click
+Public Sub CheckUncheckGridWithDB(sCon As Connection, GridView1 As GridView, Col As Integer, fldCheck As String, fldid As String, tblCheck As String, serial As Long)
+
+  Dim res As Result
+
+  If fldCheck And If fldid And If tblCheck Then
+    If GridView1[GridView1.Row, Col].Picture = Picture["icons/unchecked.png"] Then
+      res = sCon.Edit(tblCheck, fldid & "=&1", serial)
+      res[fldCheck] = True
+      res.Update()
+      GridView1[GridView1.Row, Col].Picture = Picture["icons/checked.png"]
+    Else If GridView1[GridView1.Row, Col].Picture = Picture["icons/checked.png"] Then
+      res = sCon.Edit(tblCheck, fldid & "=&1", serial)
+      res[fldCheck] = False
+      res.Update()
+      GridView1[GridView1.Row, Col].Picture = Picture["icons/unchecked.png"]
+    Endif
+  Endif
+
+End
+
+Public Sub CheckUncheckGridNoDB(GridView1 As GridView, Col As Integer)
+
+  If GridView1[GridView1.Row, Col].Picture = Picture["icons/unchecked.png"] Then
+    GridView1[GridView1.Row, Col].Picture = Picture["icons/checked.png"]
+  Else If GridView1[GridView1.Row, Col].Picture = Picture["icons/checked.png"] Then
+    GridView1[GridView1.Row, Col].Picture = Picture["icons/unchecked.png"]
+  Endif
+
+End
+
+Public Sub SetLabReportIcon(TableView1 As GridView, col1 As Integer, col2 As Integer, colx As Integer)
+
+  Dim Row As Integer
+
+  For Row = 0 To TableView1.Rows.Count - 1
+    If TableView1[Row, col1].Text = "Reported" Or If TableView1[Row, col1].Text = "Verified" Then
+      TableView1[Row, colx].Picture = Picture[modMisc.GetGridIcon(TableView1[Row, col2].Text)]
+    Else If TableView1[Row, col1].Text = "Sampled" Then
+      TableView1[Row, colx].Picture = Picture["icons/null.svg"]
+    Endif
+  Next
+
+End
+
+''-------------- with load -------------
+Private Function GetGridIconLoad(txtboolean As Boolean) As String
+
+  Dim xx As String
+
+  If txtboolean = True Then
+    xx = "icons/coll5.png"
+  Else
+    xx = "icons/coll4.png"
+  Endif
+
+  Return xx
+
+End
+
+Public Sub SetLabReportIconwithLoad(TableView1 As GridView, col1 As Integer, col2 As Integer, colD As Integer, colx As Integer)
+
+  Dim Row As Integer
+
+  For Row = 0 To TableView1.Rows.Count - 1
+    If TableView1[Row, col1].Text = "Reported" Or If TableView1[Row, col1].Text = "Verified" Then
+      If TableView1[Row, colD].Text Then
+        TableView1[Row, colx].Picture = Picture[GetGridIconLoad(TableView1[Row, col2].Text)]
+      Else
+        TableView1[Row, colx].Picture = Picture[modMisc.GetGridIcon(TableView1[Row, col2].Text)]
+      Endif
+
+    Else If TableView1[Row, col1].Text = "Sampled" Then
+      If TableView1[Row, colD].Text Then
+        TableView1[Row, colx].Picture = Picture["icons/coll6.png"]
+      Else
+        TableView1[Row, colx].Picture = Picture["icons/null.svg"]
+      Endif
+
+    Endif
+  Next
+
+End
+
+''------------------------------ To change font of column -------------------------------------------------------------------
+Public Sub SetAccordingToFontCol(GridView1 As GridView, colFont As Integer, colWord As Integer)
+
+  Dim Row As Integer
+
+  For Row = 0 To GridView1.Rows.Count - 1
+    GridView1[row, colWord].Text = GridView1[row, colWord].Text
+    GridView1[Row, colWord].Font = Font[GridView1[Row, colFont].Text]
+  Next
+
+End
+
+' ' ''------------------------------- Search Text ---------------------------------
+' ' Public Function SearchTextinGrid(GridView1 As GridView, Column As Integer, SearchText As String) As Integer
+' '
+' '   Dim i As Integer
+' '   Dim p As Integer
+' '
+' '   p = 0
+' '   For i = 0 To GridView1.Rows.Count - 1
+' '     If LCase(GridView1[i, Column].Text) Like "*" & LCase(SearchText) & "*" Then
+' '       p = p + 1
+' '     Else
+' '       GridView1.Rows[i].Height = 1
+' '     Endif
+' '   Next
+' '   Return p
+' '
+' ' End
+
+''----------------------------- add total --------------------------------------
+Public Function SumGridAmountt(GridView1 As GridView, col As Integer) As Float
+
+  Dim xx As Float
+  Dim i As Integer
+
+  xx = 0
+  For i = 0 To GridView1.Rows.Count - 1
+    xx = xx + GridView1[i, col].Text
+  Next
+
+  Return xx
+
+End
+
+Public Function SumGridAmountDoublet(GridView1 As GridView, col1 As Integer, col2 As Integer) As Float
+
+  Dim xx As Float
+  Dim i As Integer
+
+  xx = 0
+  For i = 0 To GridView1.Rows.Count - 1
+    xx = xx + GridView1[i, col1].Text * GridView1[i, col2].Text
+  Next
+
+  Return xx
+
+End
+
+Public Function GetItemPresentGrid(GridView1 As GridView, sCol As Integer, sItem As String) As Boolean
+
+  Dim i As Integer
+  Dim xx As Boolean
+
+  xx = False
+  For i = 0 To GridView1.Rows.Count - 1
+    If GridView1[i, sCol].Text = sItem Then
+      xx = True
+      Break
+    Endif
+  Next
+
+  Return xx
+
+End
+
+Public Function GetGridColValFromColText(xGridView As GridView, TestName As String, TestCol As Integer, valCol As Integer) As String
+
+  Dim i As Integer
+  Dim xx As String
+
+  For i = 0 To xGridView.Rows.Count - 1
+    If xGridView[i, TestCol].Text = TestName Then
+      xx = xGridView[i, valCol].Text
+      Break
+    Endif
+  Next
+  Return xx
+
+End
+
+Public Function GetItemNameIndexGrid(GridView1 As GridView, indexcol As Integer, sItem As String) As Integer
+
+  Dim xx As Integer
+  Dim i As Integer
+
+  For i = 0 To GridView1.Rows.Count - 1
+    If GridView1[i, indexcol].Text = sItem Then
+      xx = i
+      Break
+    Endif
+  Next
+  Return xx
+
+End
+
+Public Function GetColumnsListString(xWebTable1 As GridView) As String
+
+  Dim Column As Integer
+  Dim RowVal As String
+  Dim xxx As String[]
+  Dim xColumns As String[] = ["Column", "Column"]
+  Dim xleft As String[]
+  Dim xright As String[]
+  Dim Row As Integer
+
+  xleft = New String[]
+  xright = New String[]
+  For Column = 0 To xWebTable1.Columns.Count - 1
+    If xWebTable1.Columns[Column].Text Then
+      RowVal = xWebTable1.Columns[Column].Text
+    Else
+      RowVal = "X"
+    Endif
+    If Frac((Column + 1) / 2) = 0 Then
+      xright.Add(CStr(Column + 1) & " : " & RowVal)
+    Else
+      xleft.Add(CStr(Column + 1) & " : " & RowVal)
+    Endif
+  Next
+  If Frac((xWebTable1.Columns.Count) / 2) = 0 Then
+  Else
+    xright.Add("X : X")
+  Endif
+
+  xxx = New String[]
+  xxx.Add(xColumns[0] & modString.HTMLBlankSpace(5) & xColumns[1])
+  For Row = 0 To xleft.Count - 1
+    xxx.Add(xleft[Row] & modString.HTMLBlankSpace(5) & xright[Row])
+  Next
+
+  Return xxx.Join(gb.NewLine)
+
+End
+
+Public Function GetGridViewColumns(GridView1 As GridView) As String[]
+
+  Dim Column As Integer
+  Dim xColm As String[]
+
+  xColm = New String[]
+  For Column = 0 To GridView1.Columns.Count - 1
+    If GridView1.Columns[Column].Text Then
+      xColm.Add(GridView1.Columns[Column].Text)
+    Else
+      xColm.Add("X")
+    Endif
+  Next
+  Return xColm
+
+End

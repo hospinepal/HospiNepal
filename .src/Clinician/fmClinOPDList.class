@@ -1,0 +1,2297 @@
+' Gambas class file
+
+Private $refList As String[]
+Private $ExamLst As String[]
+Private $UserRestrict As String[]
+Private $rData As Result
+Private $aMyFields As String[]
+Private $ProgressBar1 As ProgressBar
+Private $SSQLFields As String[]
+Private $ColCount As Integer
+Private $newColumn As String[]
+Private $RepoStr As String
+
+Private $sTable As String
+
+Public Sub _new(sTable As String)
+
+  $sTable = sTable
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  If $sTable = "tblconsult" Then
+    Me.Title = "Consultation List"
+    Me.Tag = "Consultation List"
+    If modBasic.$LockToOwnConsultant = "Yes" Then
+      btnconsult.Tag = modBasic.$lbluser
+      btnconsult.Text = modGeneral.GetUserFullName(btnconsult.Tag)
+      btnconsult.Enabled = False
+    Endif
+  Else If $sTable = "tblopvisit" Then
+    Me.Title = "OPD Visit List"
+    Me.Tag = "OPD Visit List"
+  Endif
+
+  If MMain.$WebReport = "Multiple" Then
+    xPanelentry.Visible = False
+    yPanelEntry.Visible = False
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      Panel3.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+  Else
+    Panel3.Visible = False
+  Endif
+
+  Select modHelpVariable.$LogInCategory
+    Case "Research"
+      mnudata.Enabled = True
+      mnuhistoryall.Enabled = True
+      mnuarchives.Enabled = True
+      mnucustreport.Enabled = True
+    Case "Clinician"
+      mnudata.Enabled = True
+      mnuhistoryall.Enabled = True
+      mnuarchives.Enabled = True
+      mnucustreport.Enabled = True
+      mnuservices.Enabled = True
+      mnucustforms.Enabled = True
+      mnuformatexams.Enabled = True
+  End Select
+  $UserRestrict = modBasic.$ClinicDisableCompo
+  $refList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldlocation from tblreferlist"))
+
+  If modBasic.$FixedDepartment Then
+    cmbdept.Text = modBasic.$FixedDepartment
+    If modBasic.$LockToOwnDepart = "Yes" Then
+      cmbdept.Enabled = False
+    Endif
+  Else
+    If $sTable = "tblconsult" Then
+      cmbdept.List = modGeneral.GetDepartForConsultOnly()
+      pnlconsult.Visible = True
+    Else If $sTable = "tblopvisit" Then
+      cmbdept.List = modGeneral.GetDepartForOPVisitOnly()
+      pnlconsult.Visible = False
+    Endif
+    cmbdept.Add("%")
+    cmbdept.Text = modSettings.ShowSettingFromFIle("Clinic/DefaultOPD")
+  Endif
+
+  If modHelpVariable.$LogInCategory = "Clinician" Then
+    GetComboItemList()
+    xPanelentry.Visible = True
+    yPanelEntry.Visible = True
+  Endif
+  dtsort.Value = Now()
+  chkshowdepart.Value = True
+
+  $ExamLst = modMedicine.FillClinicalSubClass("Physician Examinations")
+  FillCustomMenu()
+  FillCustomFormMenu()
+  FillExamMenu()
+  modSettings.ShowCheckBox(chkdate, "OPDPatientList/SelectDate")
+  rbconsult.Value = True
+  If cmbdept.Text Then
+    btnrefresh_Click()
+  Endif
+  cmbdept.SetFocus
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub cmblocation_Click()
+
+  cmbvalue.Clear()
+  If cmblocation.Text Then
+    cmbvalue.List = modDataRepo.GetRepoValueListType(cmblocation.Text)
+  Endif
+
+End
+
+Public Sub ToolButton1_Click()
+
+  Dim xcol As String
+
+  xcol = InputColor("Triage", ToolButton1.Background)
+  If xcol = CStr(Color.Transparent) Then
+    ToolButton1.Background = Color.White
+  Else
+    If xcol Then
+      ToolButton1.Background = CInt(xcol)
+    Endif
+  Endif
+
+End
+
+Public Sub btnepsort_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtsort.Value))
+  If xx Then
+    dtsort.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub chkdate_Click()
+
+  modSettings.EnterCheckSetting(chkdate, "OPDPatientList/SelectDate")
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["S"] And If Key.Control Then
+    btnmobilebed_Click()
+  Else If Key.Code = Key["U"] And If Key.Control Then
+    btnfollowdate_Click()
+  Else If Key.Code = Key["D"] And If Key.Control Then
+    btnmobilediagno_Click()
+  Endif
+
+End
+
+Private Function LabUnitForm() As String
+
+  Dim xx As String
+
+  If rbsi.Value = True Then
+    xx = "SI"
+  Else
+    xx = "Metric"
+  Endif
+  Return xx
+
+End
+
+Public Sub btnconsult_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Consultant"), modBasic.$OPConsulUserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult.Tag = xMedUser[0]
+    btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult_Change()
+
+  If btnconsult.Text = "" Then
+    btnconsult.Tag = ""
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  If cmbdept.Text Then
+    Inc Application.Busy
+    FillBedGrid()
+    Dec Application.Busy
+    modSettings.SaveSettingsToFile("Clinic/DefaultOPD", cmbdept.Text)
+    GridView1.SetFocus
+  Endif
+
+End
+
+Public Sub txtencid_Change()
+
+  FillBedGrid()
+
+End
+
+Public Sub btnrefresh_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnrefresh_Click()
+  Endif
+
+End
+
+Private Function GetFieldsList()
+
+  Dim xhospfld As String
+
+  xhospfld = modDataRepo.HospitalField()
+  If $sTable = "tblconsult" Then
+    $SSQLFields = ["fldid", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldflag", "fldencounterval", "flduserid", "fldconsultname", "fldconsulttime", "fldbillingmode"]
+  Else If $sTable = "tblopvisit" Then
+    $SSQLFields = ["fldid", "fldencounterval", "fldencounterval", "fldencounterval", "fldencounterval", "fldflag", "fldencounterval", "fldencounterval", "fldconsultname", "fldconsulttime", "fldbillingmode"]
+  Endif
+  If xhospfld Then
+    $SSQLFields.Add(xhospfld)
+  Endif
+
+End
+
+Private Function GetSQLColumns() As String[]
+
+  Dim xFldList As String[]
+  Dim i As Integer
+  Dim j As Integer
+
+  GetFieldsList()
+  modCustPatient.FillNewCOlumnCollection(Me.Tag)
+  $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+  xFldList = $SSQLFields.Copy()
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      xFldList.Add("fldencounterval")
+    Next
+  Endif
+  For j = 0 To xFldList.Count - 1
+    xFldList[j] = $sTable & "." & xFldList[j]
+  Next
+  Return xFldList
+
+End
+
+Public Sub mnusearchconsult_Click()
+
+  Dim xname As String
+  Dim sql As String
+  Dim xFldList As String[]
+
+  xname = InputBox(("Search Consultant UserID"), "Search", "")
+  If xname Then
+    cmbdept.Text = "%"
+    xFldList = GetSQLColumns()
+    sql = Subst("select " & xFldList.Join(",") & " from &1", $sTable) & " where fldstatus=&1 and flduserid=&2"                       ''
+    $rData = modDatabase.$myConn.Exec(sql, "Planned", xname)
+    ResizeGrid()
+  Endif
+
+End
+
+Public Sub mnusearchname_Click()
+
+  Dim xname As String[]
+  Dim sql As String
+  Dim xFldList As String[]
+
+  xname = InputDoubleText(("Search Patient Name"), ["First Name", "SurName"], ["%", "%"], modBasic.$SurNameList)
+  If xname Then
+    cmbdept.Text = "%"
+    xFldList = GetSQLColumns()
+    sql = Subst("select " & xFldList.Join(",") & " from &1", $sTable) & " where fldstatus=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where lower(fldptnamefir) like &2 and lower(fldptnamelast) like &3))"                       ''
+    $rData = modDatabase.$myConn.Exec(sql, "Planned", LCase(xname[0]), LCase(xname[1]))
+    ResizeGrid()
+  Endif
+
+End
+
+Private Sub FillBedGrid()
+
+  Dim xFldList As String[]
+
+  xFldList = GetSQLColumns()
+  $rData = ExecuteQuery(xFldList)
+  ResizeGrid()
+
+End
+
+Private Function ExecuteQuery(xFldList As String[]) As Result
+
+  Dim res As Result
+  Dim sql As String
+  Dim xencid As String
+  Dim xcolor As String
+  Dim xorder As String
+  Dim xconsult As String
+  Dim xunion As String
+  Dim xpreun As String
+
+  If ToolButton1.Background = Color.White Then
+    xcolor = ""
+  Else
+    If rbname.Value = True Then
+      xcolor = db.Subst(" and tblencounter.fldheight=&1", CStr(ToolButton1.Background))
+    Else If rbconsult.Value = True Then
+      xcolor = " and " & $sTable & "." & "fldencounterval in(select fldencounterval from tblencounter where " & db.Subst("fldheight=&1)", CStr(ToolButton1.Background))
+    Endif
+  Endif
+
+  If Len(txtencid.Text) Then
+    xencid = db.Subst(" and lower(" & $sTable & "." & "fldencounterval) like &1", LCase(Trim(txtencid.Text)) & "%")
+  Else
+    xencid = ""
+  Endif
+
+  If btnconsult.Tag Then
+    xconsult = db.Subst(" and " & $sTable & "." & "flduserid like &1", btnconsult.Tag)
+  Else
+    xconsult = ""
+  Endif
+
+  If rbname.Value = True Then
+    xpreun = "("
+    xunion = " inner join tblencounter on " & $sTable & "." & "fldencounterval=tblencounter.fldencounterval) inner join tblpatientinfo on tblencounter.fldpatientval=tblpatientinfo.fldpatientval"
+    xorder = " ORDER BY tblpatientinfo.fldptnamefir"
+  Else If rbconsult.Value = True Then
+    xpreun = ""
+    xunion = ""
+    xorder = " ORDER BY " & $sTable & "." & "fldconsulttime"
+  Endif
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text, $sTable)
+  If chkdate.Value = True Then
+    If modBasic.$FixedDepartment Then
+      sql = Subst("select &1 from " & xpreun & "&2", xFldList.Join(","), $sTable) & xunion & "  where " & $sTable & "." & "fldconsulttime>=&1 and " & $sTable & "." & "fldconsulttime<=&2 and " & $sTable & "." & "fldstatus=&3 and " & $sTable & "." & "fldconsultname=&4" & xencid & xconsult & xcolor & $RepoStr & xorder                                           ''
+      res = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(dtsort.Value), modDate.EndSqlDate(dtsort.Value), "Planned", modBasic.$FixedDepartment)
+    Else
+      If cmbdept.Text = "%" Then
+        sql = Subst("select &1 from " & xpreun & "&2", xFldList.Join(","), $sTable) & xunion & " where " & $sTable & "." & "fldconsulttime>=&1 and " & $sTable & "." & "fldconsulttime<=&2 and " & $sTable & "." & "fldstatus=&3" & xencid & xconsult & xcolor & $RepoStr & xorder                                             ''
+      Else
+        sql = Subst("select &1 from " & xpreun & "&2", xFldList.Join(","), $sTable) & xunion & " where " & $sTable & "." & "fldconsulttime>=&1 and " & $sTable & "." & "fldconsulttime<=&2 and " & $sTable & "." & "fldstatus=&3 and " & $sTable & "." & "fldconsultname=&4" & xencid & xconsult & xcolor & $RepoStr & xorder
+      Endif
+      res = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(dtsort.Value), modDate.EndSqlDate(dtsort.Value), "Planned", cmbdept.Text)
+    Endif
+
+  Else
+    If modBasic.$FixedDepartment Then
+      sql = Subst("select &1 from " & xpreun & "&2", xFldList.Join(","), $sTable) & xunion & " where " & $sTable & "." & "fldstatus=&1 and " & $sTable & "." & "fldconsultname=&2" & xencid & xconsult & xcolor & $RepoStr & xorder                                            ''
+      res = modDatabase.$myConn.Exec(sql, "Planned", modBasic.$FixedDepartment)
+    Else
+      If cmbdept.Text = "%" Then
+        sql = Subst("select &1 from " & xpreun & "&2", xFldList.Join(","), $sTable) & xunion & " where " & $sTable & "." & "fldstatus=&1" & xencid & xconsult & xcolor & $RepoStr & xorder                                              ''
+      Else
+        sql = Subst("select &1 from " & xpreun & "&2", xFldList.Join(","), $sTable) & xunion & " where " & $sTable & "." & "fldstatus=&1 and " & $sTable & "." & "fldconsultname=&2" & xencid & xconsult & xcolor & $RepoStr & xorder
+      Endif
+      res = modDatabase.$myConn.Exec(sql, "Planned", cmbdept.Text)
+    Endif
+  Endif
+  Return res
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+
+  Dim xxx As Variant
+  Dim i As Integer
+
+  If Column = 1 Then
+    xxx = modPatient.GetPatientColor(xVariable)
+  Else If Column = 3 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn) & "<br>" & "<small>" & modPatient.ShowDiscountCategEnc(xVariable) & "</small>"
+  Else If Column = 4 Then
+    xxx = modPatient.GetPatientAgeString(xVariable, Now()) & "/" & modPatient.GetPatientSex(xVariable, modDatabase.$syConn)    ''
+  Else If Column = 5 Then
+    If xVariable = True Then
+      xxx = "icons/coll5.png"
+    Else
+      xxx = "icons/checked.png"
+    Endif
+  Else If Column = 6 Then
+    xxx = modPatient.PatientDiagnoCurrentList(xVariable).Join(gb.NewLine)
+  Else If Column = 7 Then
+    If chkshowdepart.Value = True Then
+      If $sTable = "tblconsult" Then
+        xxx = modGeneral.GetUserFullName(xVariable)
+      Else If $sTable = "tblopvisit" Then
+        xxx = modGeneral.GetUserFullName(modPatient.GetAttendingConsultant(xVariable))
+      Endif
+    Else
+      xxx = ""
+    Endif
+  Else If Column = 9 Then
+    If chkshowdepart.Value = True Then
+      If chkdate.Value = True Then
+        xxx = modReportVar.GetDateTimeReport(xVariable, gb.MediumTime)
+      Else
+        xxx = modReportVar.GetDateTimeReport(xVariable, gb.MediumDate)
+      Endif
+    Else
+      xxx = ""
+    Endif
+  Else
+    xxx = xVariable
+  Endif
+
+  If $newColumn.Count Then
+    For i = 0 To $newColumn.Count - 1
+      If Column = $ColCount + i Then
+        xxx = modCustPatient.NewColValue(Me.Tag, $newColumn[i], xVariable)
+      Endif
+    Next
+  Endif
+
+  Return xxx
+
+End
+
+Private Sub ResizeGrid()
+
+  Dim i As Integer
+
+  Dim xvismode As String
+  Dim noCols As Integer[]
+  Dim Column As Integer
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  $ColCount = $SSQLFields.Count
+
+  With GridView1
+    .Rows.Height = 40 * modBasic.$AppWidthRatio
+    .Columns[0].Width = 1
+    .Columns[1].Width = 15 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 30 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 175 * modBasic.$AppWidthRatio
+    If chkshowdepart.Value = True Then
+      .Columns[7].Width = 150 * modBasic.$AppWidthRatio
+      .Columns[8].Width = 125 * modBasic.$AppWidthRatio
+      .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+    Else
+      .Columns[7].Width = 1
+      .Columns[8].Width = 1
+      .Columns[9].Width = 1
+    Endif
+    .Columns[10].Width = 1
+
+    .Columns[2].Text = "EncID"
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Age/Sex"
+    .Columns[6].Text = "Diagnosis"
+    If chkshowdepart.Value = True Then
+      .Columns[7].Text = "Consult"
+      .Columns[8].Text = "Depart"
+      .Columns[9].Text = "DateTime"
+    Endif
+
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        .Columns[$ColCount + i].Text = $newColumn[i]
+        .Columns[$ColCount + i].Width = 150 * modBasic.$AppWidthRatio
+      Next
+    Endif
+  End With
+
+  xvismode = modSettings.ShowSettingFromFIle("ReportColumnVisibility/VisibilityMode")
+  If xvismode = "Yes" Then
+    noCols = modCHTMLReport.HideColumnExport()
+    For Column = 0 To GridView1.Columns.Count - 1
+      If noCols.Exist(Column) = True Then
+        GridView1.Columns[Column].Text = ""
+        GridView1.Columns[Column].Width = 1
+      Endif
+    Next
+  Endif
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = ""
+    GridView1.Data.Background = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+  Else If Column = 3 Then
+    GridView1.Data.RichText = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+  Else If Column = 4 Then
+    GridView1.Data.RichText = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+  Else If Column = 5 Then
+    GridView1.Data.Picture = Picture[GetGridViewValue(Column, $rData[$aMyFields[Column]])]
+  Else
+    If Column > $SSQLFields.Count - 1 Then
+      GridView1.Data.RichText = modString.TextToHTML(GetGridViewValue(Column, $rData[$aMyFields[Column]]))
+    Else
+      GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+    Endif
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.RichText, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    If GridView1.Column = 5 Then
+      If GridView1[GridView1.Row, 5].Picture = Picture["icons/coll5.png"] Then
+        modPatientSub.UnMarkConsultVisitFlag(GridView1[GridView1.Row, 0].Text, $sTable)
+      Else If GridView1[GridView1.Row, 5].Picture = Picture["icons/checked.png"] Then
+        modPatientSub.MarkConsultVisitFlag(GridView1[GridView1.Row, 0].Text, $sTable)
+      Endif
+      FillBedGrid()
+    Else
+      SHowPatIndicators(GridView1[GridView1.Row, 2].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_DblClick()
+
+  Dim xx As Integer
+  Dim yy As Integer
+
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+
+End
+
+Public Sub mnurepoupload_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    If Message.Question("Are you sure to upload this patient data to Data Repository ?", "NO", "YES") = 2 Then
+      Inc Application.Busy
+      modDataRepo.GetRepoUploadEncounterData(GridView1[GridView1.Row, 2].Text)
+      Dec Application.Busy
+    Endif
+  Endif
+
+Catch
+  Dec Application.Busy
+
+End
+
+' ' Public Sub GridView1_Click()
+' '
+' '   If GridView1.Column = 7 Then
+' '     GridView1.Enabled = False
+' '     If modHelpVariable.$LogInCategory = "Clinician" Then
+' '       OpenPatientForms()
+' '     Endif
+' '     GridView1.Enabled = True
+' '   Endif
+' '
+' ' End
+
+' ' Public Sub GridView1_KeyRelease()
+' '
+' '   If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+' '     If modHelpVariable.$LogInCategory = "Clinician" Then
+' '       OpenPatientForms()
+' '     Endif
+' '   Endif
+' '
+' ' End
+
+Public Sub cmbdept_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdept)
+  modFillContainer.RestrictComboToContent(cmbdept)
+
+End
+
+Public Sub btnexpo_Click()
+
+  Dim xHeader As String[]
+  Dim xhide As Integer[]
+  Dim Column As Integer
+  Dim xCollRow As Collection
+  Dim xColum As Integer
+
+  Dim $hGridExportTable As CExportResult
+  Dim xparam1 As String
+  Dim xparam2 As String
+  Dim encColumn As Integer
+
+  Dim xFldList As String[]
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  xHeader = New String[]
+  xhide = New Integer[]
+  For Column = 0 To GridView1.Columns.Count - 1
+    xHeader.Add(GridView1.Columns[Column].Text)
+    If GridView1.Columns[Column].Width < 5 Then
+      xhide.Add(Column)
+    Endif
+  Next
+  xparam1 = cmbdept.Text
+  xparam2 = modReportVar.GetDateTimeReport(Now(), gb.GeneralDate)
+  encColumn = 1
+  $hGridExportTable = New CExportResult(Me.Tag, xHeader, xhide, xparam1, xparam2, encColumn)
+
+  Inc Application.Busy
+  xFldList = GetSQLColumns()
+
+  For Each $rData
+    xCollRow = New Collection
+    For xColum = 0 To xFldList.Count - 1
+      xCollRow.Add(GetGridViewValue(xColum, $rData[xFldList[xColum]]), CStr(xColum))
+    Next
+    $hGridExportTable.Add($rData.Index, xCollRow)
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Endif
+  Next
+
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  modControlSub.DisplayReportExport($hGridExportTable.HTMLPath())
+
+End
+
+''================= REPORTS ==========================
+Public Sub mnuaddcolumn_Click()
+
+  Dim hForm As FmAddNewColumn
+
+  hForm = New FmAddNewColumn(Me.Tag)
+  hForm.ShowModal
+
+End
+
+''============================== Mobile apps ===========================
+Public Sub btnmobilevital_Click()
+
+  Dim hForm As FmVItalMobile
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmVItalMobile(GridView1[GridView1.Row, 2].Text)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btnmobilebed_Click()
+
+  Dim hForm As FmOPOutcome
+
+  If GridView1.Rows.Selection.Count Then
+    If modPathoSub.AllowOPOutcomeDiagno(GridView1[GridView1.Row, 2].Text) = True Then
+      If $sTable = "tblconsult" Then
+        hForm = New FmOPOutcome("Consultation", GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 0].Text)
+      Else If $sTable = "tblopvisit" Then
+        hForm = New FmOPOutcome("OP Visit", GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 0].Text)
+      Endif
+      hForm.ShowModal
+      FillBedGrid()
+      Balloon.Info(("Information updated"), btnmobilebed)
+      Balloon.Delay = modBasic.$BalloonDelay
+      GridView1.SetFocus
+    Endif
+  Endif
+
+End
+
+Public Sub btnmobiledemog_Click()
+
+  Dim hForm7 As FmPatdemograph
+
+  If GridView1.Rows.Selection.Count Then
+    hForm7 = New FmPatdemograph(GridView1[GridView1.Row, 2].Text, "Clinical")
+    hForm7.ShowModal
+  Endif
+
+End
+
+Public Sub btnmobilediagno_Click()
+
+  Dim sName As String[]
+
+  If GridView1.Rows.Selection.Count Then
+    If MMain.$Ayurveda = "Yes" Then
+      sName = AyurvedicDiagnosis(modAMISRep.$AyurvedicDiagnosis)
+    Else
+      sName = ICDTree(modDatabase.$icdConn, "Disease", modBasic.$ClinDiagnoSelectGrouped, modBasic.$ClinDiagnoSelectERGroup, modBasic.$ClinDiagnoChapterGrouped, modBasic.$DefaultDiagnoGroup)
+    Endif
+    If sName Then
+      If sName[1] And If sName[0] Then
+        modPatientGeneral.AddPatientFindings("Provisional Diagnosis", GridView1[GridView1.Row, 2].Text, sName[0], sName[1], sName[2])
+        FillBedGrid()
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnobsdiagno_Click()
+
+  Dim xsex As String
+  Dim sName As String[]
+
+  If GridView1.Rows.Selection.Count Then
+    xsex = modPatient.GetPatientSex(GridView1[GridView1.Row, 2].Text, modDatabase.$myConn)
+    If xsex = "Female" Then
+      sName = DiagnoObstetrics(GridView1[GridView1.Row, 2].Text, True)
+      FillBedGrid()
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnIPform_Click()
+
+  Dim hForm As FmPatCliNew
+
+  If GridView1.Rows.Selection.Count Then
+    If $sTable = "tblconsult" Then
+      hForm = New FmPatCliNew(GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 0].Text, "Consultation", True)
+    Else If $sTable = "tblopvisit" Then
+      hForm = New FmPatCliNew(GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 0].Text, "OP Visit", True)
+    Endif
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub btnvideo_Click()
+
+  Dim hForm8 As FmPatVideo
+
+  If GridView1.Rows.Selection.Count Then
+    hForm8 = New FmPatVideo("VIDEO", GridView1[GridView1.Row, 2].Text, "")
+    hForm8.ShowModal
+  Endif
+
+End
+
+Public Sub btnlabs_Click()
+
+  Dim hForm10 As FmTestList
+
+  If GridView1.Rows.Selection.Count Then
+    If modNonMedical.AllowEntryWithDeposit(GridView1[GridView1.Row, 2].Text, "Test") = True Then
+      hForm10 = New FmTestList(GridView1[GridView1.Row, 2].Text, modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 2].Text, modBasic.$compID))
+      hForm10.ShowModal
+      SHowPatIndicators(GridView1[GridView1.Row, 2].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub btnradio_Click()
+
+  Dim hForm11 As FmRadioList
+
+  If GridView1.Rows.Selection.Count Then
+    If modNonMedical.AllowEntryWithDeposit(GridView1[GridView1.Row, 2].Text, "Radio") = True Then
+      hForm11 = New FmRadioList(GridView1[GridView1.Row, 2].Text, modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 2].Text, modBasic.$compID))
+      hForm11.ShowModal
+      SHowPatIndicators(GridView1[GridView1.Row, 2].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub btnpharm_Click()
+
+  Dim hForm12 As FmMedOrder
+
+  If GridView1.Rows.Selection.Count Then
+    If modNonMedical.AllowEntryWithDeposit(GridView1[GridView1.Row, 2].Text, "Pharmacy") = True Then
+      If modBasic.$MedRequestForm = "Separate" Then
+      Else
+        hForm12 = New FmMedOrder(GridView1[GridView1.Row, 2].Text, "Registered", modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 2].Text, modBasic.$compID))
+        hForm12.ShowModal
+      Endif
+      SHowPatIndicators(GridView1[GridView1.Row, 2].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub btndiet_Click()
+
+  Dim hForm15 As FmFoodPlan
+
+  If GridView1.Rows.Selection.Count Then
+    hForm15 = New FmFoodPlan(GridView1[GridView1.Row, 2].Text)
+    hForm15.ShowModal
+  Endif
+
+End
+
+Public Sub btndosing_Click()
+
+  Dim hForm4 As FmDoseMobile
+
+  If GridView1.Rows.Selection.Count Then
+    hForm4 = New FmDoseMobile(GridView1[GridView1.Row, 2].Text)
+    hForm4.ShowModal
+  Endif
+
+End
+
+Public Sub mnucomplete_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetSelectedPatientValues(GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub btnopdsheet_Click()
+
+  Dim hCls As CReportCustom
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    If modPathoSub.AllowOPOutcomeDiagno(GridView1[GridView1.Row, 2].Text) = True Then
+      If modPatientSub.GetClearanceForExit(GridView1[GridView1.Row, 2].Text) = True Then
+
+        If modSettings.ShowSettingFromFIle("OPD Sheet/Name") Then
+          If $sTable = "tblconsult" Then
+            hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, "OPD Sheet", "ReportSize", LabUnitForm(), "Consultation|" & CStr(GridView1[GridView1.Row, 0].Text))
+          Else If $sTable = "tblopvisit" Then
+            hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, "OPD Sheet", "ReportSize", LabUnitForm(), "OPVisit|" & CStr(GridView1[GridView1.Row, 0].Text))
+          Endif
+          hCls.Preview()
+        Else
+          Inc Application.Busy
+          xPath = modPatReports.ShowOPatSummary(GridView1[GridView1.Row, 2].Text)
+          Dec Application.Busy
+          modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 2].Text, xPath, "ReportSize")
+        Endif
+
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnall_Click()
+
+  Dim hForm As FmHistoryMobile
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmHistoryMobile(GridView1[GridView1.Row, 2].Text)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btnmobexam_Click()
+
+  Dim hForm As FmEnterGroupExam
+  Dim hForm1 As FmEnterDepartExam
+
+  If GridView1.Rows.Selection.Count Then
+    If modBasic.$ClinOPDExamination Then
+      hForm1 = New FmEnterDepartExam(modBasic.$ClinOPDExamination, GridView1[GridView1.Row, 2].Text, modBasic.$ClinOPDExamination, "Physician Examinations")
+      hForm1.ShowModal
+    Else
+      hForm = New FmEnterGroupExam(GridView1[GridView1.Row, 2].Text, "Physician Examinations", "Group")
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub btnfollowdate_Click()
+
+  Dim res As Result
+  Dim dt As Date
+
+  If GridView1.Rows.Selection.Count Then
+    dt = CTimeConsult("Follow Up", modPatient.GetFollowUpDate(GridView1[GridView1.Row, 2].Text))
+    If dt Then
+      res = modDatabase.$myConn.Edit("tblencounter", "fldencounterval=&1", GridView1[GridView1.Row, 2].Text)
+      res["fldfollowdate"] = dt
+      res["xyz"] = False
+      res.Update
+    Endif
+  Endif
+
+End
+
+Public Sub btnrefer_Click()
+
+  Dim res As Result
+  Dim xrefer As String
+
+  If GridView1.Rows.Selection.Count Then
+    xrefer = InputCombo("Select Refer Location from List", "Refer To", $refList, "", False)
+    If xrefer Then
+      res = modDatabase.$myConn.Edit("tblencounter", "fldencounterval=&1", GridView1[GridView1.Row, 2].Text)
+      res["fldreferto"] = xrefer
+      res["xyz"] = False
+      res.Update
+    Endif
+  Endif
+
+End
+
+Public Sub btnmobprogress_Click()
+
+  Dim hForm As FmMedItemList
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmMedItemList(GridView1[GridView1.Row, 2].Text, "Blood")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btnmobequip_Click()
+
+  Dim hForm6 As FmEquipment
+
+  If GridView1.Rows.Selection.Count Then
+    If modNonMedical.AllowEntryWithDeposit(GridView1[GridView1.Row, 2].Text, "Equipment") = True Then
+      hForm6 = New FmEquipment(GridView1[GridView1.Row, 2].Text, modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 2].Text, modBasic.$compID))
+      hForm6.ShowModal
+      SHowPatIndicators(GridView1[GridView1.Row, 2].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub btnmobevent_Click()
+
+  Dim hForm9 As FmDeviceUse
+
+  If GridView1.Rows.Selection.Count Then
+    hForm9 = New FmDeviceUse(GridView1[GridView1.Row, 2].Text, "Devices")
+    hForm9.ShowModal
+    SHowPatIndicators(GridView1[GridView1.Row, 2].Text)
+  Endif
+
+End
+
+Public Sub btnmobimage_Click()
+
+  Dim hForm8 As FmPatImage
+
+  If GridView1.Rows.Selection.Count Then
+    hForm8 = New FmPatImage("IMAGE", GridView1[GridView1.Row, 2].Text, "")
+    hForm8.ShowModal
+  Endif
+
+End
+
+Public Sub btnmobpacs_Click()
+
+  Dim hForm As FmPacsFind
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmPacsFind(GridView1[GridView1.Row, 2].Text, "Visit")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btnmobivfl_Click()
+
+  Dim hForm18 As FmIVInfusion
+
+  If GridView1.Rows.Selection.Count Then
+    hForm18 = New FmIVInfusion(GridView1[GridView1.Row, 2].Text)
+    hForm18.ShowModal
+  Endif
+
+End
+
+Public Sub btnmobminor_Click()
+
+  Dim hForm5 As FmMiniProcedure
+
+  If GridView1.Rows.Selection.Count Then
+    If modNonMedical.AllowEntryWithDeposit(GridView1[GridView1.Row, 2].Text, "Procedure") = True Then
+      hForm5 = New FmMiniProcedure(GridView1[GridView1.Row, 2].Text, modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 2].Text, modBasic.$compID))
+      hForm5.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub btnmobbill_Click()
+
+  Dim hForm14 As FmMiniService
+  Dim xmode As String
+
+  If GridView1.Rows.Selection.Count Then
+    xmode = modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 2].Text, modBasic.$compID)
+    hForm14 = New FmMiniService(GridView1[GridView1.Row, 2].Text, xmode, xmode, xmode)
+    hForm14.ShowModal
+  Endif
+
+End
+
+Public Sub btndraw_Click()
+
+  Dim sPath As String
+  Dim xxx As String[]
+  Dim xval As String
+
+  If GridView1.Rows.Selection.Count Then
+    xxx = CustomDraw()
+    If xxx Then
+      sPath = xxx[0]
+      If sPath Then
+        xval = modImage.SaveClinicScreenDraw(GridView1[GridView1.Row, 2].Text, xxx[1], sPath)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btntriage_Click()
+
+  Dim xcol As String
+
+  If GridView1.Rows.Selection.Count Then
+    xcol = InputColor("Triage", GridView1[GridView1.Row, 0].Background)
+    If xcol Then
+      modPatient.SetPatientColor(GridView1[GridView1.Row, 2].Text, xcol)
+      GridView1[GridView1.Row, 0].Background = xcol
+    Endif
+  Endif
+
+End
+
+''------------------------------------ custom menus -----------------------------------
+Private Sub FillCustomMenu()
+
+  Dim xform1 As String
+  Dim xform2 As String
+  Dim xform3 As String
+  Dim xform4 As String
+  Dim xform5 As String
+  Dim xform6 As String
+  Dim xform7 As String
+  Dim xform8 As String
+  Dim xform9 As String
+  Dim xform10 As String
+
+  xform1 = modSettings.ShowSettingFromFIle("CustomReport1/Name")
+  xform2 = modSettings.ShowSettingFromFIle("CustomReport2/Name")
+  xform3 = modSettings.ShowSettingFromFIle("CustomReport3/Name")
+  xform4 = modSettings.ShowSettingFromFIle("CustomReport4/Name")
+  xform5 = modSettings.ShowSettingFromFIle("CustomReport5/Name")
+  xform6 = modSettings.ShowSettingFromFIle("CustomReport6/Name")
+  xform7 = modSettings.ShowSettingFromFIle("CustomReport7/Name")
+  xform8 = modSettings.ShowSettingFromFIle("CustomReport8/Name")
+  xform9 = modSettings.ShowSettingFromFIle("CustomReport9/Name")
+  xform10 = modSettings.ShowSettingFromFIle("CustomReport10/Name")
+
+  If xform1 Then
+    mnucust1.Caption = xform1
+    mnucust1.Tag = "CustomReport1"
+    mnucust1.Enabled = True
+  Endif
+
+  If xform2 Then
+    mnucust2.Caption = xform2
+    mnucust2.Tag = "CustomReport2"
+    mnucust2.Enabled = True
+  Endif
+
+  If xform3 Then
+    mnucust3.Caption = xform3
+    mnucust3.Tag = "CustomReport3"
+    mnucust3.Enabled = True
+  Endif
+
+  If xform4 Then
+    mnucust4.Caption = xform4
+    mnucust4.Tag = "CustomReport4"
+    mnucust4.Enabled = True
+  Endif
+
+  If xform5 Then
+    mnucust5.Caption = xform5
+    mnucust5.Tag = "CustomReport5"
+    mnucust5.Enabled = True
+  Endif
+
+  If xform6 Then
+    mnucust6.Caption = xform6
+    mnucust6.Tag = "CustomReport6"
+    mnucust6.Enabled = True
+  Endif
+
+  If xform7 Then
+    mnucust7.Caption = xform7
+    mnucust7.Tag = "CustomReport7"
+    mnucust7.Enabled = True
+  Endif
+
+  If xform8 Then
+    mnucust8.Text = xform8
+    mnucust8.Tag = "CustomReport8"
+    mnucust8.Enabled = True
+  Endif
+
+  If xform9 Then
+    mnucust9.Caption = xform9
+    mnucust9.Tag = "CustomReport9"
+    mnucust9.Enabled = True
+  Endif
+
+  If xform10 Then
+    mnucust10.Caption = xform10
+    mnucust10.Tag = "CustomReport10"
+    mnucust10.Enabled = True
+  Endif
+
+End
+
+''''------------------------------- custom report menu ---------------------------------------------------
+Public Sub mnucust1_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust1.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust2_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust2.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust3_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust3.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust4_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust4.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust5_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust5.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust6_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust6.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust7_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust7.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust8_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust8.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust9_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust9.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust10_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 2].Text, mnucust10.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Private Sub FillCustomFormMenu()
+
+  Dim xform1 As String
+  Dim xform2 As String
+  Dim xform3 As String
+  Dim xform4 As String
+  Dim xform5 As String
+  Dim xform6 As String
+  Dim xform7 As String
+  Dim xform8 As String
+  Dim xform9 As String
+  Dim xform10 As String
+
+  xform1 = modSettings.ShowSettingForReport("CustomForm1/Form_Name")
+  xform2 = modSettings.ShowSettingForReport("CustomForm2/Form_Name")
+  xform3 = modSettings.ShowSettingForReport("CustomForm3/Form_Name")
+  xform4 = modSettings.ShowSettingForReport("CustomForm4/Form_Name")
+  xform5 = modSettings.ShowSettingForReport("CustomForm5/Form_Name")
+  xform6 = modSettings.ShowSettingForReport("CustomForm6/Form_Name")
+  xform7 = modSettings.ShowSettingForReport("CustomForm7/Form_Name")
+  xform8 = modSettings.ShowSettingForReport("CustomForm8/Form_Name")
+  xform9 = modSettings.ShowSettingForReport("CustomForm9/Form_Name")
+  xform10 = modSettings.ShowSettingForReport("CustomForm10/Form_Name")
+
+  If xform1 Then
+    mnucustform1.Caption = xform1
+    mnucustform1.Tag = "CustomForm1"
+    mnucustform1.Enabled = True
+  Endif
+
+  If xform2 Then
+    mnucustform2.Caption = xform2
+    mnucustform2.Tag = "CustomForm2"
+    mnucustform2.Enabled = True
+  Endif
+
+  If xform3 Then
+    mnucustform3.Caption = xform3
+    mnucustform3.Tag = "CustomForm3"
+    mnucustform3.Enabled = True
+  Endif
+
+  If xform4 Then
+    mnucustform4.Caption = xform4
+    mnucustform4.Tag = "CustomForm4"
+    mnucustform4.Enabled = True
+  Endif
+
+  If xform5 Then
+    mnucustform5.Caption = xform5
+    mnucustform5.Tag = "CustomForm5"
+    mnucustform5.Enabled = True
+  Endif
+
+  If xform6 Then
+    mnucustform6.Caption = xform6
+    mnucustform6.Tag = "CustomForm6"
+    mnucustform6.Enabled = True
+  Endif
+
+  If xform7 Then
+    mnucustform7.Caption = xform7
+    mnucustform7.Tag = "CustomForm7"
+    mnucustform7.Enabled = True
+  Endif
+
+  If xform8 Then
+    mnucustform8.Caption = xform8
+    mnucustform8.Tag = "CustomForm8"
+    mnucustform8.Enabled = True
+  Endif
+
+  If xform9 Then
+    mnucustform9.Caption = xform9
+    mnucustform9.Tag = "CustomForm9"
+    mnucustform9.Enabled = True
+  Endif
+
+  If xform10 Then
+    mnucustform10.Caption = xform10
+    mnucustform10.Tag = "CustomForm10"
+    mnucustform10.Enabled = True
+  Endif
+
+End
+
+Public Sub mnuessenexam_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = modClinic.GetFullVitalList(GridView1[GridView1.Row, 2].Text)
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform1_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform1.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform1.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform2_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform2.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform2.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform3_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform3.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform3.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform4_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform4.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform4.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform5_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform5.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform5.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform6_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform6.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform6.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform7_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform7.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform7.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform8_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform8.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform8.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform9_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform9.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform9.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnucustform10_Click()
+
+  Dim xx As String[]
+  Dim yy As String[]
+  Dim hForm As FmMultiChart
+
+  If GridView1.Rows.Selection.Count Then
+    xx = Split(modSettings.ShowSettingForReport(mnucustform10.Tag & "/" & "Form_Exam"), ";")
+    yy = Split(modSettings.ShowSettingForReport(mnucustform10.Tag & "/" & "Form_Test"), ";")
+    hForm = New FmMultiChart(GridView1[GridView1.Row, 2].Text, xx, yy, LabUnitForm())
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+''========================= Indicators ================
+Private Function GetLabTestPending(encid As String) As Boolean
+
+  Dim sql As String
+  Dim res As Result
+  Dim xval As Boolean
+
+  sql = "select fldid from tblpatbilling where fldencounterval=&1 and flditemtype=&2 and fldsave=&3 and (fldstatus=&4 or fldstatus=&5) and fldsample=&6"
+  res = modDatabase.$myConn.Exec(sql, encid, "Diagnostic Tests", True, "Done", "Cleared", "Waiting")
+  xval = res.Available
+
+  Return xval
+
+End
+
+Private Function GetRadioTestPending(encid As String) As Boolean
+
+  Dim sql As String
+  Dim res As Result
+  Dim xval As Boolean
+
+  sql = "select fldid from tblpatbilling where fldencounterval=&1 and flditemtype=&2 and fldsave=&3 and (fldstatus=&4 or fldstatus=&5) and fldsample=&6"
+  res = modDatabase.$myConn.Exec(sql, encid, "Radio Diagnostics", True, "Done", "Cleared", "Waiting")
+  xval = res.Available
+
+  Return xval
+
+End
+
+Private Function GetPharmacyPending(encid As String) As Boolean
+
+  Dim sql As String
+  Dim res As Result
+  Dim xval As Boolean
+
+  sql = "select fldid from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and (fldstatus=&3 or fldstatus=&4) and fldorder=&5 and fldcurval=&6"                                                   ''
+  res = modDatabase.$myConn.Exec(sql, encid, False, "Recorded", "Registered", "Request", "Continue")
+  xval = res.Available
+
+  Return xval
+
+End
+
+Private Function GetEquipmentPending(encid As String) As Boolean
+
+  Dim res1 As Result
+  Dim xval As Boolean
+
+  res1 = modDatabase.$myConn.Exec("select fldid from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4", encid, "Equipment", True, False)
+  xval = res1.Available
+
+  Return xval
+
+End
+
+Private Function GetDevicePending(encid As String) As Boolean
+
+  Dim res As Result
+  Dim xval As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldid from tblpatevents where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4", encid, "Devices", True, False)
+  xval = res.Available
+
+  Return xval
+
+End
+
+Private Sub SHowPatIndicators(encid As String)
+
+  Dim xlab As Boolean
+  Dim xradio As Boolean
+  Dim xpharm As Boolean
+  Dim xequip As Boolean
+  Dim xevent As Boolean
+
+  xlab = GetLabTestPending(encid)
+  If xlab = True Then
+    btnlabs.Foreground = Color.Red
+  Else
+    btnlabs.Foreground = Color.Default
+  Endif
+
+  xradio = GetRadioTestPending(encid)
+  If xradio = True Then
+    btnradio.Foreground = Color.Red
+  Else
+    btnradio.Foreground = Color.Default
+  Endif
+
+  xpharm = GetPharmacyPending(encid)
+  If xpharm = True Then
+    btnpharm.Foreground = Color.Red
+  Else
+    btnpharm.Foreground = Color.Default
+  Endif
+
+  xequip = GetEquipmentPending(encid)
+  If xequip = True Then
+    btnmobequip.Foreground = Color.Red
+  Else
+    btnmobequip.Foreground = Color.Default
+  Endif
+
+  xevent = GetDevicePending(encid)
+  If xevent = True Then
+    btnmobevent.Foreground = Color.Red
+  Else
+    btnmobevent.Foreground = Color.Default
+  Endif
+
+End
+
+Public Sub mnucurarchive_Click()
+
+  Dim xxx As String[]
+
+  If GridView1.Rows.Selection.Count Then
+    xxx = AddReports(GridView1[GridView1.Row, 2].Text, False)
+  Endif
+
+End
+
+Public Sub mnulabview_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    Inc Application.Busy
+    xPath = modCHTMLPatient.ShowPatientLaboratoryReport(GridView1[GridView1.Row, 2].Text, LabUnitForm())
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 2].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuexamview_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    Inc Application.Busy
+    xPath = modCHTMLPatient.ShowPatientExaminationgReport(GridView1[GridView1.Row, 2].Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 2].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuvitalexam_Click()
+
+  ' Dim hForm As FmTPR
+  Dim hForm As FmVitalTable
+
+  If GridView1.Rows.Selection.Count Then
+    ' hForm = New FmTPR(GridView1[GridView1.Row, 2].Text, modBasic.$ClinEssentialComp)
+    hForm = New FmVitalTable(GridView1[GridView1.Row, 2].Text)
+    hForm.ShowModal()
+  Endif
+
+End
+
+Public Sub mnuradioview_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    Inc Application.Busy
+    xPath = modCHTMLPatient.ShowPatRadioReportbyEncID(GridView1[GridView1.Row, 2].Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 2].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnumedview_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    Inc Application.Busy
+    xPath = modCHTMLPatient.ShowNursingDosing(GridView1[GridView1.Row, 2].Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 2].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuexpense_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    Inc Application.Busy
+    xPath = modCHTMLInvoice.ShowTotalExpensebyPatient(modDatabase.$syConn, GridView1[GridView1.Row, 2].Text, "Complete")
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 2].Text, xPath, "ReportSize")
+  Endif
+
+End
+
+Private Sub GetComboItemList()
+
+  If $UserRestrict.Exist("Patient History") = False Then
+    btnall.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Provisional Diagnosis") = False Then
+    btnmobilediagno.Enabled = True
+    btnobsdiagno.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Demographics") = False Then
+    btnmobiledemog.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Essential Examinations") = False Then
+    btnmobilevital.Enabled = True
+    btntriage.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Medicine Dosing") = False Then
+    btndosing.Enabled = True
+  Endif
+  If $UserRestrict.Exist("IV Infusion") = False Then
+    btnmobivfl.Enabled = True
+  Endif
+  If $UserRestrict.Exist("General Services") = False Then
+    btnmobbill.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Minor Procedure") = False Then
+    btnmobminor.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Equipments Used") = False Then
+    btnmobequip.Enabled = True
+  Endif
+  If $UserRestrict.Exist("General Images") = False Then
+    btnmobimage.Enabled = True
+    btndraw.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Video Data") = False Then
+    btnvideo.Enabled = True
+  Endif
+  If $UserRestrict.Exist("PACS Images") = False Then
+    btnmobpacs.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Devices Used") = False Then
+    btnmobevent.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Clinical Findings") = False Then
+    btnmobexam.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Products Request") = False Then
+    btnmobprogress.Enabled = True
+  Endif
+
+  If $UserRestrict.Exist("Laboratory Request") = False Then
+    btnlabs.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Radiology Request") = False Then
+    btnradio.Enabled = True
+  Endif
+  If $UserRestrict.Exist("Pharmacy Request") = False Then
+    btnpharm.Enabled = True
+  Endif
+  If $UserRestrict.Exist("PO Intake Plan") = False Then
+    btndiet.Enabled = True
+  Endif
+
+End
+
+''===================== Structured exams==========================
+Private Sub FillExamMenu()
+
+  If $ExamLst.Count > 0 Then
+    mnurec1.Text = $ExamLst[0]
+    mnurec1.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 1 Then
+    mnurec2.Text = $ExamLst[1]
+    mnurec2.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 2 Then
+    mnurec3.Text = $ExamLst[2]
+    mnurec3.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 3 Then
+    mnurec4.Text = $ExamLst[3]
+    mnurec4.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 4 Then
+    mnurec5.Text = $ExamLst[4]
+    mnurec5.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 5 Then
+    mnurec6.Text = $ExamLst[5]
+    mnurec6.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 6 Then
+    mnurec7.Text = $ExamLst[6]
+    mnurec7.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 7 Then
+    mnurec8.Text = $ExamLst[7]
+    mnurec8.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 8 Then
+    mnurec9.Text = $ExamLst[8]
+    mnurec9.Enabled = True
+  Endif
+
+  If $ExamLst.Count > 9 Then
+    mnurec10.Text = $ExamLst[9]
+    mnurec10.Enabled = True
+  Endif
+
+End
+
+Public Sub mnurec1_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec1.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec2_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec2.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec3_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec3.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec4_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec4.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec5_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec5.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec6_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec6.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec7_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec7.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec8_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec8.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec9_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec9.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnurec10_Click()
+
+  Dim hForm As FmWardHistory
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmWardHistory(mnurec10.Text, GridView1[GridView1.Row, 2].Text, "Physician Examinations")
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub mnustruct_Click()
+
+  Dim hForm As FmExamReporting
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmExamReporting(GridView1[GridView1.Row, 2].Text, True)
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+  Endif
+
+End
+
+Public Sub btnpersonal_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  If chkdate.Value Then
+    xPath = modCHTMLPatSummary.GetDoctorClearConsultReport($sTable, modBasic.$lbluser, cmbdept.Text, dtsort.Value)
+  Else
+    xPath = modCHTMLPatSummary.GetDoctorClearConsultReport($sTable, modBasic.$lbluser, cmbdept.Text)
+  Endif
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+''------------------------- Services ---------------
+Public Sub mnugenviolence_Click()
+
+  Dim hForm As FmGenViolence
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmGenViolence(GridView1[GridView1.Row, 2].Text)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnumaternal_Click()
+
+  Dim hForm As FmMaternalMobile
+  Dim xsex As String
+
+  If GridView1.Rows.Selection.Count Then
+    xsex = modPatient.GetPatientSex(GridView1[GridView1.Row, 2].Text, modDatabase.$myConn)
+    If xsex = "Female" Then
+      hForm = New FmMaternalMobile(GridView1[GridView1.Row, 2].Text)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub mnuvaccination_Click()
+
+  Dim hForm As FmVaccine
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmVaccine(GridView1[GridView1.Row, 2].Text)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnureqconsult_Click()
+
+  Dim hForm As FmMiniConsult
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmMiniConsult(GridView1[GridView1.Row, 2].Text, modNonMedical.DefaultBillingScheme(GridView1[GridView1.Row, 2].Text, modBasic.$compID))
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuscanner_Click()
+
+  Dim hForm As FmScanForm
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmScanForm(GridView1[GridView1.Row, 2].Text, "Scanned Images", "")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuconsultant_Click()
+
+  Dim xMedUser As String[]
+  Dim xuser As String
+
+  If GridView1.Rows.Selection.Count Then
+    xMedUser = MedicalSelectedValue(("Select Consultant"), modBasic.$OPConsulUserList)
+    If xMedUser And If xMedUser.Count Then
+      xuser = xMedUser[0]
+    Endif
+
+    If xuser And If GridView1[GridView1.Row, 2].Text Then
+      If Not GridView1[GridView1.Row, 7].Text Then
+        If $sTable = "tblconsult" Then
+          modPatientSub.UpdateConsultConsultant(GridView1[GridView1.Row, 0].Text, xuser)
+          FillBedGrid()
+        Else If $sTable = "tblopvisit" Then
+          modPatientSub.UpdateAttendingConsultant(GridView1[GridView1.Row, 2].Text, xuser)
+          FillBedGrid()
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Public Sub mnucountuni_Click()
+
+  Dim Column As Integer
+  Dim xFieColm As String
+  Dim res As Result
+  Dim yval As Variant
+  Dim xList As String[]
+
+  Dim xVar As Variant[]
+  Dim xFldList As String[]
+  Dim xPath As String
+
+  Column = ListIndex("Column Index", modGridView.GetGridViewColumns(GridView1))
+  If Column + 1 > 0 Then
+    xFldList = GetSQLColumns()
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+      $ProgressBar1.Visible = True
+      $ProgressBar1.Value = 0
+    Endif
+
+    Inc Application.Busy
+    xFieColm = xFldList[Column]
+    res = ExecuteQuery([xFieColm])
+    xList = New String[]
+    If res.Available Then
+      For Each res
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If yval Then
+          xList.Add(yval)
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    If xList.Count Then
+      xVar = modString.GetUnivariateSummary(xList)
+      xPath = modCHTMLReport.CreateHTMLReportFromArray(["Variable", "Count"], xVar, GridView1.Columns[Column].Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+    Endif
+    Dec Application.Busy
+
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+''------------ History ---------------
+Public Sub mnuexamlocal_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetPatHistoryLocalResult("Examination", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnuexamrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoHistoryLocalResult("Examination", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnulabhist_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetPatHistoryLocalResult("Laboratory", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnulabviewrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoHistoryLocalResult("Laboratory", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnuarchlab_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetArchiveReportResult("Diagnostic Tests", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnuarchlabrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoArchiveReportResult("Diagnostic Tests", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnuradiohist_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetPatHistoryLocalResult("Radiology", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnuradioviewrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoHistoryLocalResult("Radiology", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnuarchradio_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetArchiveReportResult("Radio Diagnostics", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnuarchradiorepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoArchiveReportResult("Radio Diagnostics", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnumedhist_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetPatHistoryLocalResult("Medicines", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnumedviewrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoHistoryLocalResult("Medicines", GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnugenhistory_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetSelectHistoryResult(GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnugenhistrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoSelectHistoryResult(GridView1[GridView1.Row, 2].Text, LabUnitForm())
+  Endif
+
+End
+
+Public Sub mnuarchgenerl_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetArchiveReportResult("General Reports", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnuarchgenerlrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoArchiveReportResult("General Reports", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnuscannedimg_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetArchiveReportResult("Scanned Images", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnuscannedimgrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoArchiveReportResult("Scanned Images", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnupastdocs_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetArchiveReportResult("Past Documents", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnupastdocsrepo_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    modPatReports.GetRepoArchiveReportResult("Past Documents", modPatient.GetPatientNoByEnc(GridView1[GridView1.Row, 2].Text))
+  Endif
+
+End
+
+Public Sub mnupacshist_Click()
+
+  Dim hForm As FmPacsFind
+
+  If GridView1.Rows.Selection.Count Then
+    hForm = New FmPacsFind(GridView1[GridView1.Row, 2].Text, "History")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuexpocolumn_Click()
+
+  Dim hForm As FmCustColumnSet
+
+  hForm = New FmCustColumnSet(Me.Tag)
+  hForm.ShowModal
+
+End

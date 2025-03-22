@@ -1,0 +1,277 @@
+' Gambas class file
+
+Private $PACS As String
+Private $encid As String
+Private $studyID As String
+Private $seriesID As String
+
+Private $sFind As String
+Private $sGet As String
+Private $ssL As String
+
+Public Sub _New(sPacs As String, encid As String, studyID As String, seriesID As String)
+
+  $PACS = sPacs
+  $encid = encid
+  $studyID = studyID
+  $seriesID = seriesID
+
+End
+
+Public Sub Form_Open()
+
+  Dim xfind As String
+  Dim xget As String
+  Dim xssl As String
+
+  rbdicom.Value = True
+  If $PACS Then
+    If $PACS = "REPO" Then
+      modRepository.ReadRepoConfig()
+      modPACS.GetRemotePacsSetting()
+      xfind = modSettings.ShowSettingFromFIle("Repository/FindCommand")
+      xget = modSettings.ShowSettingFromFIle("Repository/GetCommand")
+      xssl = modSettings.ShowSettingFromFIle("Repository/UseSSL")
+      If xfind Then
+        $sFind = xfind
+      Else
+        $sFind = "dcmtk"
+      Endif
+      If xget Then
+        $sGet = xget
+      Else
+        $sGet = "Orthanc"
+      Endif
+      If xssl Then
+        $ssL = xssl
+      Else
+        $ssL = "Disable"
+      Endif
+    Else
+      MMain.InitialAppMode()
+      modPACS.GetPacsSetting($PACS)
+      $sFind = modSettings.ShowSettingFromFIle($PACS & "/" & "FindCommand")
+      $sGet = modSettings.ShowSettingFromFIle($PACS & "/" & "GetCommand")
+      $ssL = modSettings.ShowSettingFromFIle($PACS & "/" & "UseSSL")
+    Endif
+
+    If modPACS.$sHost And If modPACS.$sAET And If modPACS.$sPPort Then
+      FillGridViewData()
+    Endif
+  Endif
+  BlockButton()
+
+End
+
+Private Sub BlockButton()
+
+  Dim xx As Boolean
+
+  xx = modPatient.EnableClinicForm(modPatient.CurrentAdmissionStatus($encid))
+  btndowb.Enabled = xx
+
+End
+
+Public Sub btncopy_Click()
+
+  Clipboard.Copy(TextBox1.Text)
+
+End
+
+Private Sub FillGridViewData()
+
+  Dim Row As Integer
+  Dim xcoll As Collection
+  Dim aList As Variant[]
+
+  GridView3.Clear
+  GridView3.Columns.Count = 1
+  If $sFind = "Orthanc" Then
+    xcoll = modPACS.GetOrthancValueJSON("series", $seriesID)
+    If xcoll And If xcoll.Count Then
+      aList = xcoll["Instances"]
+      GridView3.Rows.Count = aList.Count
+      For Row = 0 To aList.Count - 1
+        GridView3[Row, 0].Text = aList[Row]
+      Next
+    Endif
+
+  Else If $sFind = "Dicomweb" Then
+    aList = modPACS.GetWADOFindInstanceJSON($encid, $studyID, $seriesID)
+    If aList And If aList.Count Then
+      GridView3.Rows.Count = aList.Count
+      For Row = 0 To aList.Count - 1
+        GridView3[Row, 0].Text = aList[Row]["00080018"]["Value"][0]
+      Next
+    Endif
+
+  Else
+    aList = modPACS.GetCFindInstanceValue($encid, $studyID, $seriesID)
+    If aList And If aList.Count Then
+      GridView3.Rows.Count = aList.Count
+      For Row = 0 To aList.Count - 1
+        GridView3[Row, 0].Text = aList[Row]["SOPInstanceUID"]    ''GetDicomValue(FileList[Row], "SOPInstanceUID")
+      Next
+    Endif
+
+  Endif
+
+  SpinBox1.MinValue = 0
+  SpinBox1.MaxValue = GridView3.Rows.Count - 1
+  With GridView3
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Text = "SOPInstanceUID"
+  End With
+  GridView3.Row = 0
+
+End
+
+''===================== Buttons ======================
+Public Sub btnsave_Click()
+
+  Dim xPath As String
+  Dim xsave As String
+
+  If GridView3.Rows.Selection.Count Then
+    If Dialog.SelectDirectory() Then Return
+    xsave = Dialog.Path
+    Inc Application.Busy
+    xPath = modPACS.DicomInstanceDicomDownload($sFind, $sGet, $encid, $studyID, $seriesID, GridView3[GridView3.Row, 0].Text, chkanony.Value)
+    Dec Application.Busy
+    If Exist(xsave &/ File.Name(xPath)) Then
+      Kill xsave &/ File.Name(xPath)
+    Endif
+    Copy xPath To xsave &/ File.Name(xPath)
+  Endif
+
+End
+
+Public Sub btnexec_Click()
+
+  Dim xPath As String
+
+  If GridView3.Rows.Selection.Count Then
+    If rbdicom.Value = True Then
+      Inc Application.Busy
+      xPath = modPACS.DicomInstanceDicomDownload($sFind, $sGet, $encid, $studyID, $seriesID, GridView3[GridView3.Row, 0].Text, chkanony.Value)
+      Dec Application.Busy
+      If Exist(xPath) Then
+        modDevice.ViewDicomFile(xPath)
+      Endif
+    Else If rbimage.Value = True Then
+      xPath = pictimage.Tag
+      If Exist(xPath) Then
+        modDevice.DesktopOpenFile(xPath)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btndowb_Click()
+
+  Dim xPath As String
+  Dim hForm As FmPatImage
+
+  If GridView3.Rows.Selection.Count Then
+    If rbdicom.Value = True Then
+      Inc Application.Busy
+      xPath = modPACS.DicomInstanceDicomDownload($sFind, $sGet, $encid, $studyID, $seriesID, GridView3[GridView3.Row, 0].Text, chkanony.Value)
+      Dec Application.Busy
+      If Exist(xPath) Then
+        hForm = New FmPatImage("DICOM", $encid, xPath)
+        hForm.ShowModal
+      Endif
+    Else If rbimage.Value = True Then
+      xPath = pictimage.Tag
+      If Exist(xPath) Then
+        hForm = New FmPatImage("IMAGE", $encid, xPath)
+        hForm.ShowModal
+      Endif
+    Endif
+  Endif
+
+End
+
+''================= Image on right ===============
+Public Sub Slider1_Change()
+
+  pictimage.Zoom = Slider1.Value / 100
+
+End
+
+Private Sub ShowImageView(sUID As String)
+
+  Dim xPath As String
+  Dim sLink As String
+
+  ClearImage()
+  Inc Application.Busy
+  xPath = Temp() & ".png"
+  sLink = modPACS.DicomInstanceImageDownload($sFind, $sGet, $encid, $studyID, $seriesID, sUID)
+  If sLink Then
+    modDevAll.GetWgetDownload(sLink, xPath, modPACS.$sHTTPUser, modPACS.$sHTTPPass)
+  Endif
+  Dec Application.Busy
+
+  If Exist(xPath) Then
+    pictimage.Tag = xPath
+    pictimage.Image = Image.Load(xPath)
+    pictimage.Zoom = Slider1.Value / 100
+  Endif
+
+End
+
+Private Sub ClearImage()
+
+  If pictimage.Tag Then
+    pictimage.Image.Clear()
+    pictimage.Refresh()
+    Wait
+  Endif
+
+End
+
+Public Sub GridView3_Click()
+
+  SpinBox1.Value = GridView3.Row
+  TextBox1.Text = GridView3[GridView3.Row, 0].Text
+  ShowImageView(TextBox1.Text)
+
+End
+
+Public Sub btnnext_Click()
+
+  Dim Row As Integer
+
+  If GridView3.Row < GridView3.Rows.Count - 1 Then
+    Row = GridView3.Row
+    GridView3.Row = Row + 1
+    SpinBox1.Value = Row + 1
+    TextBox1.Text = GridView3[GridView3.Row, 0].Text
+    ShowImageView(TextBox1.Text)
+  Endif
+
+End
+
+Public Sub btnprev_Click()
+
+  Dim Row As Integer
+
+  If GridView3.Row > 0 Then
+    Row = GridView3.Row
+    GridView3.Row = Row - 1
+    SpinBox1.Value = Row - 1
+    TextBox1.Text = GridView3[GridView3.Row, 0].Text
+    ShowImageView(TextBox1.Text)
+  Endif
+
+End
+
+Public Sub SpinBox1_Change()
+
+  GridView3.Row = SpinBox1.Value
+  TextBox1.Text = GridView3[GridView3.Row, 0].Text
+  ShowImageView(TextBox1.Text)
+
+End

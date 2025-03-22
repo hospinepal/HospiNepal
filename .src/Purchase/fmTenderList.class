@@ -1,0 +1,311 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub Form_Open()
+
+  Dim xList As String[]
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  cmbtype.List = ["Generic", "Brand"]
+  cmbroute.List = modMedicine.ComboRoute()
+  xList = modSupplier.FillVendorNameCombo("Active")
+  If xList Then
+    cmbvendor.List = xList.Sort()
+  Endif
+  cmbvendor.Add("All Vendors")
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  rbnew.Value = True
+  rbgeneric.Value = True
+  cmbvendor.SetFocus
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub cmbvendor_Click()
+
+  txtvendor.Text = modSupplier.GetAddFromSuppName(cmbvendor.Text)
+
+End
+
+Public Sub cmbvendor_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbvendor)
+  modFillContainer.RestrictComboToContent(cmbvendor)
+
+End
+
+''--------------------------------------- show grid -------------------------------------
+Public Sub btnrefresh_Click()
+
+  If cmbvendor.Text Then
+    SHowItemList()
+  Endif
+
+End
+
+Private Sub SHowItemList()
+
+  Dim xx As Boolean
+
+  If rbnew.Value Then
+    xx = False
+  Else If rbsaved.Value Then
+    xx = True
+  Endif
+
+  $rData = modDatabase.$myConn.Exec("select fldid,flditemtype,fldfromdate,fldtodate,fldcategory,fldstockid,fldmaxcost,fldtotalqty from tbltenderlist where fldsuppname=&1 and fldsav=&2", cmbvendor.Text, xx)                                                                       ''
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[2].Text = "FromDate"
+    .Columns[3].Text = "ToDate"
+    .Columns[4].Text = "Category"
+    .Columns[5].Text = "Particulars"
+    .Columns[6].Text = "MaxCost"
+    .Columns[7].Text = "MaxQTY"
+
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 2 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldfromdate"], gb.MediumDate)
+  Else If Column = 3 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldtodate"], gb.MediumDate)
+  Else If Column = 6 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData["fldmaxcost"], gb.Currency)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+''------------------------------------ med entry --------------------------------------------
+Private Sub ClearAll()
+
+  cmbroute.Text = ""
+  cmbmedicine.Text = ""
+  txtqty.Value = 0
+  txtrate.Value = 0
+
+End
+
+Public Sub mnuclear_Click()
+
+  EnableVendorDetail(True)
+
+End
+
+Private Sub EnableVendorDetail(sEnable As Boolean)
+
+  cmbvendor.Enabled = sEnable
+  cmbtype.Enabled = sEnable
+  dtfir.Enabled = sEnable
+  dtlast.Enabled = sEnable
+
+End
+
+Public Sub cmbroute_Click()
+
+  chksave.Value = False
+  cmbmedicine.Clear
+  cmbmedicine.Text = ""
+  rbnew.Value = True
+  EnableVendorDetail(False)
+
+End
+
+Public Sub chksave_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    chksave.Value = True
+    chksave_Click()
+  Endif
+
+End
+
+Public Sub cmbroute_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbroute)
+  modFillContainer.RestrictComboToContent(cmbroute)
+
+End
+
+Public Sub cmbmedicine_GotFocus()
+
+  Dim brandOrGeneric As String
+  Dim res As Result
+
+  If rbrand.Value = True Then
+    brandOrGeneric = "Brand"
+  Else
+    brandOrGeneric = "Generic"
+  Endif
+
+  If cmbroute.Text Then
+    If Not cmbmedicine.Text Then
+      txtrate.Tag = "Auto"
+      res = modStock.ItemListForPurchaseResult(cmbroute.Text, brandOrGeneric)
+      cmbmedicine.Text = GridViewNew("Select Particulars", modControlSub.GetDirectFillresult(res), False, cmbmedicine)
+      txtrate.SetFocus
+    Endif
+  Endif
+
+End
+
+Public Sub txtrate_GotFocus()
+
+  If cmbmedicine.Text Then
+    If modStockSub.GetComboStockControl(cmbroute.Text, cmbmedicine.Text, rbgeneric, rbrand) = False Then
+      cmbmedicine.Text = ""
+      Balloon.Warning(("Item not listed"), cmbmedicine)
+      Balloon.Delay = modBasic.$BalloonDelay
+      cmbroute.SetFocus
+    Else
+
+      If cmbroute.Text = "suture" Or cmbroute.Text = "msurg" Or cmbroute.Text = "ortho" Or cmbroute.Text = "extra" Then
+      Else
+        If rbrand.Value = True Then
+          cmbmedicine.Text = modMedConstant.ConvertBrandToGeneric(cmbroute.Text, cmbmedicine.Text)
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub chksave_Click()
+
+  Dim res As Result
+
+  If chksave.Value Then
+    If cmbroute.Text And If cmbmedicine.Text Then
+      If txtrate.Value Or If txtqty.Value
+        res = modDatabase.$myConn.Create("tbltenderlist")
+        res["fldsuppname"] = cmbvendor.Text
+        res["flditemtype"] = cmbtype.Text
+        res["fldfromdate"] = dtfir.Value
+        res["fldtodate"] = dtlast.Value
+        res["fldcategory"] = modNonMedical.GetBillItemCategoryFromCombo(cmbroute.Text)
+        res["fldstockid"] = cmbmedicine.Text
+        res["fldtotalqty"] = txtqty.Value
+        res["fldmaxcost"] = txtrate.Value
+        res["flduserid"] = modBasic.$lbluser
+        res["fldtime"] = Now()
+        res["fldcomp"] = modBasic.$compID
+        res["fldsav"] = False
+        res["xyz"] = False
+        res.Update
+        SHowItemList()
+        ClearAll()
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnexpo_Click()
+
+  Dim xx As String
+
+  If rbnew.Value Then
+    xx = "Saved"
+  Else If rbsaved.Value Then
+    xx = "Entered"
+  Endif
+  modCHTMLReport.ExportGridToHTML(GridView1, "VENDOR NAME: " & cmbvendor.Text, xx & " : " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate))                                                 ''
+
+End
+
+Public Sub rbnew_Click()
+
+  If cmbvendor.Text Then
+    SHowItemList()
+  Endif
+
+End
+
+Public Sub rbsaved_Click()
+
+  If cmbvendor.Text Then
+    SHowItemList()
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  If rbnew.Value Then
+    mnufile.Popup
+  Endif
+
+End
+
+Public Sub mnudel_Click()
+
+  If rbnew.Value Then
+    If GridView1.Rows.Selection.Count > 0 Then
+      modDatabase.$myConn.Delete("tbltenderlist", "fldid=&1 and fldsav=&2", GridView1[GridView1.Row, 0].Text, False)
+      SHowItemList()
+      ClearAll()
+      Balloon.Delete(("Information deleted"), GridView1)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub mnusave_Click()
+
+  Dim res As Result
+
+  If rbnew.Value Then
+    res = modDatabase.$myConn.Edit("tbltenderlist", "fldsuppname=&1 and fldsav=&2", cmbvendor.Text, False)
+    res["fldsav"] = True
+    res["xyz"] = False
+    res.Update
+    SHowItemList()
+  Endif
+
+End
+
+Public Sub txtrate_KeyRelease()
+
+  txtrate.Tag = ""
+
+End

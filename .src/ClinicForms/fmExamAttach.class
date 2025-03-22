@@ -1,0 +1,589 @@
+' Gambas class file
+
+Private $focus As Boolean
+Private $sType As String
+Private $DataType As String
+Private $UserRestrict As String[]
+Private $sTatus As String
+
+Private $billModeTest As String
+Private $billModeRadio As String
+Private $billModePharmacy As String
+Private $billModeProcedure As String
+Private $billModeEquipment As String
+Private $billModeService As String
+Private $billModeOthers As String
+
+Public Sub _new(encid As String, sType As String, DataType As String, Focus As Boolean)
+
+  txtencid.Text = encid
+  $sType = sType
+  $DataType = DataType
+  $focus = Focus
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  cmbpatheightunit.List = ["cm", "inch", "foot"]
+  $UserRestrict = modBasic.$ClinicDisableCompo
+
+  If txtencid.Text Then
+    GetEncounterValue()
+  Else
+    modGeneralMain.SetEncIDPrefix(txtencid)
+    txtencid.SetFocus
+  Endif
+
+End
+
+Private Sub LoadSpecializedForms(sType As String)
+
+  Dim hForm1 As FmNeuroExam
+  ' Dim hForm2 As FmOptometry
+  Dim hForm2 As FmRefraction
+
+  If sType = "Neurology" Then
+    hForm1 = New FmNeuroExam(Trim(txtencid.Text), sType, $DataType, Panel2)
+    Panel2.Height = hForm1.Height
+    Panel2.Width = hForm1.Width + 25 * modBasic.$AppWidthRatio
+  Else If sType = "Optometry" Then
+    ' hForm2 = New FmOptometry(Trim(txtencid.Text), $DataType, Panel2)
+    hForm2 = New FmRefraction(Trim(txtencid.Text), sType, $DataType, Panel2)
+    Panel2.Height = hForm2.Height
+    Panel2.Width = hForm2.Width + 25 * modBasic.$AppWidthRatio
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  If txtencid.Text Then
+    modPatientSub.ReleaseLockEncounter(Trim(txtencid.Text), modHelpVariable.$LogInCategory)
+  Endif
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Activate()
+
+  Me.Icon = Picture["icons/coll4.png"]
+  If $focus = True Then
+    txtencid.SetFocus
+  Endif
+
+End
+
+Public Sub Form_Deactivate()
+
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+End
+
+''-------------------------------------- patient profile ----------------------------------------------
+Public Sub mnulastenc_Click()
+
+  txtencid.Text = modSettings.ShowLogValues("LastValue/Encounter")
+
+End
+
+Public Sub mnupatlock_Click()
+
+  If txtencid.Text Then
+    modPatientSub.LockPatientActivity(Me.Name, Trim(txtencid.Text))
+  Endif
+
+End
+
+Public Sub txtencid_LostFocus()
+
+  GetEncounterValue()
+
+End
+
+Private Sub GetEncounterValue()
+
+  Dim res As Result
+  Dim xallow As Boolean
+
+  If Not txtpatientname.Text Then
+    If Not txtencid.Text Then Return
+    If modBasic.$EncIdPrefix And If txtencid.Text = modBasic.$EncIdPrefix Then
+      txtencid.SetFocus
+      Return
+    Endif
+
+    ' If modPatientSub.LockEncounterDesk(Trim(txtencid.Text)) = False Then
+    '   txtencid.Text = ""
+    '   Balloon.Warning(("Encounter Locked"), txtencid)
+    '   Balloon.Delay = modBasic.$BalloonDelay
+    '   txtencid.SetFocus
+    ' Endif
+
+    dtdob.Value = ""
+    If txtencid.Text Then
+      Me.Title = "ENC: " & txtencid.Text
+      If txtencid.Text = modBasic.$EncIdPrefix Then
+      Else
+        modSettings.SaveValuesToLog("LastValue/Encounter", Trim(txtencid.Text))
+      Endif
+      res = modDatabase.$myConn.Exec("select fldpatientval,flduserid from tblencounter where fldencounterval=&1", Trim(txtencid.Text))
+      If res.Available = False Then
+        modLinkDB.CheckEncDataRemote(Trim(txtencid.Text))
+        txtencid.SetFocus
+      Else
+        If modBasic.$LockToOwnConsultant = "Yes" Then
+          If res["flduserid"] = modBasic.$lbluser Then
+            xallow = True
+          Else
+            xallow = False
+          Endif
+        Else
+          xallow = True
+        Endif
+        If xallow = True Then
+          txtpatientname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
+          If txtpatientname.Text Then
+            txtgender.Text = modPatient.GetPatientSex(Trim(txtencid.Text))
+            txtpatientaddress.Text = modPatient.GetPatientAddressByEnc(Trim(txtencid.Text))
+            dtdob.Value = modPatient.GetPatientBirthDay(Trim(txtencid.Text))
+            modDateSub.GetAgeControlFromDate(dtdob.Value, txtpatage, cmbpatageunit)
+
+            $sTatus = modPatient.CurrentAdmissionStatus(Trim(txtencid.Text))
+            txtnow.Text = $sTatus
+            txtbedno.Text = modPatient.GetLocationSetting(Trim(txtencid.Text), $sTatus)
+            txtpatdoa.Text = modReportVar.GetDateTimeReport(modPatient.GetRecordDate(Trim(txtencid.Text)), gb.GeneralDate)
+            txtpatweight.Value = modClinic.GetBodyWeight(Trim(txtencid.Text))
+            btnconsult.Tag = modPatient.GetAttendingConsultant(Trim(txtencid.Text))
+            btnconsult.Text = modGeneral.GetUserFullName(btnconsult.Tag)
+            modClinSub.GetPatientHeight(Trim(txtencid.Text), txtpatheight, cmbpatheightunit)
+            modAppSupport.RecordPatientActivity("Patient Data", Me.Name, "EncounterID", Trim(txtencid.Text))
+            txtcolor.Background = modPatient.GetPatientColor(Trim(txtencid.Text))
+            LoadSpecializedForms($sType)
+            Wait
+            If modPatientSub.AllowEncIDHistory(Trim(txtencid.Text), modDatabase.$myConn) = True Then
+              GetDefaultBillingmodes()
+              BlockDCButton()
+              ButtonControl()
+              txtencid.ReadOnly = True
+              modImage.ShowPhotoSplash("Patient", modPatient.GetPatientNoByEnc(Trim(txtencid.Text)))
+              $focus = False
+            Else
+              Me.Enabled = False
+            Endif
+          Else
+            Balloon.Warning(("Encounter ID not found"), txtencid)
+            Balloon.Delay = modBasic.$BalloonDelay
+            txtencid.SetFocus
+          Endif
+        Else
+          Message.Warning("Not authorized", ("OK"))
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Sub GetDefaultBillingmodes()
+
+  Dim xpackage As String
+
+  Select $sTatus
+    Case "Admitted", "Discharged", "LAMA", "Death", "Refer", "Absconder"
+      $billModeTest = modNonMedical.GetAutoIPBillingPack("Test", Trim(txtencid.Text))
+      $billModeRadio = modNonMedical.GetAutoIPBillingPack("Radio", Trim(txtencid.Text))
+      $billModePharmacy = modNonMedical.GetAutoIPBillingPack("Pharmacy", Trim(txtencid.Text))
+      $billModeEquipment = modNonMedical.GetAutoIPBillingPack("Equipment", Trim(txtencid.Text))
+      $billModeProcedure = modNonMedical.GetAutoIPBillingPack("Procedure", Trim(txtencid.Text))
+      $billModeService = modNonMedical.GetAutoIPBillingPack("Service", Trim(txtencid.Text))
+      $billModeOthers = modNonMedical.GetAutoIPBillingPack("Others", Trim(txtencid.Text))
+    Case Else
+      xpackage = modNonMedical.DefaultBillingScheme(Trim(txtencid.Text), modBasic.$compID)
+      $billModeTest = xpackage
+      $billModeRadio = xpackage
+      $billModePharmacy = xpackage
+      $billModeEquipment = xpackage
+      $billModeProcedure = xpackage
+      $billModeService = xpackage
+      $billModeOthers = xpackage
+  End Select
+
+End
+
+Private Sub BlockDCButton()
+
+  Dim xx As Boolean
+
+  xx = modPatient.EnableClinicForm(txtnow.Text)
+  tlbtnadd1.Enabled = xx
+  tlbtnaddbed.Enabled = xx
+  tlbtnadwt.Enabled = xx
+  dtdob.Enabled = xx
+  btnpic.Enabled = xx
+  btnconsult.Enabled = xx
+  mnulab.Enabled = xx
+  mnuradioreq.Enabled = xx
+  Mnuinput.Enabled = xx
+
+End
+
+Public Sub txtpatweight_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    tlbtnadwt_Click()
+  Endif
+
+End
+
+Public Sub cmbpatheightunit_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    tlbtnadd1_Click()
+  Else
+    modFillContainer.AutoFillComboBox(cmbpatheightunit)
+    modFillContainer.RestrictComboToContent(cmbpatheightunit)
+  Endif
+
+End
+
+Public Sub txtpatweight_GotFocus()
+
+  If modBasic.$TabletModeEnable = "Yes" Then
+    txtpatweight.Enabled = False
+    txtpatweight.Value = InputValue(("Set Patient Body Weight"), txtencid.Text, txtpatweight.Value)
+    txtpatweight.Enabled = True
+  Endif
+
+End
+
+Public Sub txtpatheight_GotFocus()
+
+  If modBasic.$TabletModeEnable = "Yes" Then
+    txtpatheight.Enabled = False
+    txtpatheight.Value = InputValue(("Set Patient Body Height"), txtencid.Text, txtpatheight.Value)
+    txtpatheight.Enabled = True
+  Endif
+
+End
+
+Public Sub tlbtnadwt_Click()
+
+  If txtencid.Text Then
+    If txtpatweight.Value Then
+      modClinSub.AddGeneralParametersQuanti(Trim(txtencid.Text), "Body Weight", txtpatweight.Value)
+      tlbtnadwt.Enabled = False
+      Balloon.Info(("Information saved"), tlbtnadwt)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub tlbtnadd1_Click()
+
+  If txtencid.Text Then
+    If txtpatheight.Value Then
+      If cmbpatheightunit.Text Then
+        modClinSub.UpdatePatientHeight(Trim(txtencid.Text), txtpatheight.Value, cmbpatheightunit.Text)
+        tlbtnadd1.Enabled = False
+        Balloon.Info(("Information updated"), tlbtnadd1)
+        Balloon.Delay = modBasic.$BalloonDelay
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub dtdob_Click()
+
+  If txtencid.Text Then
+    If dtdob.Value Then
+      modPatientSub.UpdatePatDOB(Trim(txtencid.Text), dtdob.Value)
+      modDateSub.GetAgeControlFromDate(dtdob.Value, txtpatage, cmbpatageunit)
+      Balloon.Info(("Information updated"), dtdob)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpatageunit_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpatageunit)
+  modFillContainer.RestrictComboToContent(cmbpatageunit)
+
+End
+
+Public Sub btnconsult_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Consultant"), modBasic.$IPConsultUserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult.Tag = xMedUser[0]
+    btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
+  Endif
+  If btnconsult.Tag And If txtencid.Text Then
+    modPatientSub.UpdateAttendingConsultant(Trim(txtencid.Text), btnconsult.Tag)
+    Balloon.Info(("Information saved"), btnconsult)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub btnwebcam_Click()
+
+  If txtencid.Text Then
+    GetEncounterValue()
+  Else
+    txtencid.Text = modDevice.ChooseBarCodeSource()
+    txtencid.SetFocus
+    txtencid.Pos = Len(txtencid.Text)
+  Endif
+
+End
+
+Public Sub tlbtnaddbed_Click()
+
+  Dim hForm As FmBedManage
+
+  If txtencid.Text Then
+    If txtnow.Text = "Admitted" Then
+      hForm = New FmBedManage(Trim(txtencid.Text), txtbedno)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub tlbtnpayment_Click()
+
+  If txtencid.Text Then
+    modNonMedical.CurrentPayStatusMsg(Trim(txtencid.Text))
+  Endif
+
+End
+
+Public Sub btnpic_Click()
+
+  Dim hForm As FmPersonImage
+
+  If txtencid.Text Then
+    hForm = New FmPersonImage("Patient", modPatient.GetPatientNoByEnc(Trim(txtencid.Text)), False)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btnprofile_Click()
+
+  Dim hForm As FmMinProfile
+
+  hForm = New FmMinProfile(Trim(txtencid.Text))
+  hForm.ShowModal()
+
+End
+
+Public Sub btnsms_Click()
+
+  Dim xval As String
+
+  If btnconsult.Tag Then
+    xval = modDevice.SendSMSToInpatDoc(Trim(txtencid.Text), modGeneral.GetUserContact(btnconsult.Tag))
+    If xval Then
+      Balloon.Info(xval, btnsms)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+''--------------------------------------------------- General -------------------------------------------------------
+Private Sub ButtonControl()
+
+  Dim xx As Boolean
+
+  xx = modPatient.EnableClinicForm(txtnow.Text)
+  Panel2.Enabled = xx
+  If $UserRestrict Then
+    UserAccessRestrict()
+  Endif
+
+End
+
+Private Sub UserAccessRestrict()
+
+  If $UserRestrict.Exist("Bed Assignment") Then
+    tlbtnaddbed.Enabled = False
+  Endif
+  If $UserRestrict.Exist("Body Weight") Then
+    tlbtnadwt.Enabled = False
+  Endif
+  If $UserRestrict.Exist("Body Height") Then
+    tlbtnadd1.Enabled = False
+  Endif
+  If $UserRestrict.Exist("Complete Examination") Then
+    Panel2.Enabled = False
+  Endif
+
+End
+
+Public Sub mnublank_Click()
+
+  Dim hForm As FmExamAttach
+
+  hForm = New FmExamAttach("", $sType, $DataType, True)
+  Me.Close
+  modWorkSpace.Add(hForm)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["O"] And If Key.Control Then
+    btnwebcam_Click()
+  Else If Key.Code = Key["F"] And If Key.Control Then
+    txtencid.Text = GetEncid()
+  Else If Key.Code = Key["X"] And If Key.Control Then
+    Me.Close()
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub btnconsult_Change()
+
+  If btnconsult.Text = "" Then
+    btnconsult.Tag = ""
+  Endif
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If Not txtencid.Text Then
+      txtencid.Text = PatSearch("Encounter")
+      txtencid.SetFocus
+    Else
+      If modBasic.$AutoEncSuffix = "Yes" Then
+        txtencid.Text = txtencid.Text & modBasic.$HospCode
+      Endif
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub mnulab_Click()
+
+  Dim hForm As FmTestList
+
+  If txtencid.Text Then
+    If modNonMedical.AllowEntryWithDeposit(Trim(txtencid.Text), "Test") = True Then
+      hForm = New FmTestList(Trim(txtencid.Text), $billModeTest)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub mnuradioreq_Click()
+
+  Dim hForm As FmRadioList
+
+  If txtencid.Text Then
+    If modNonMedical.AllowEntryWithDeposit(Trim(txtencid.Text), "Radio") = True Then
+      hForm = New FmRadioList(Trim(txtencid.Text), $billModeRadio)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub mnupharm_Click()
+
+  Dim hForm As FmMedOrder
+
+  If txtencid.Text Then
+    If modNonMedical.AllowEntryWithDeposit(Trim(txtencid.Text), "Pharmacy") = True Then
+      If modBasic.$MedRequestForm = "Separate" Then
+      Else
+        hForm = New FmMedOrder(Trim(txtencid.Text), $Status, $billModePharmacy)
+        hForm.ShowModal
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub mnudemo_Click()
+
+  Dim hForm As FmPatdemograph
+
+  If txtencid.Text Then
+    hForm = New FmPatdemograph(Trim(txtencid.Text), "Clinical")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnupacsimage_Click()
+
+  Dim hForm As FmPacsFind
+
+  If txtencid.Text Then
+    hForm = New FmPacsFind(Trim(txtencid.Text), "Visit")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuminorproc_Click()
+
+  Dim hForm As FmMiniProcedure
+
+  If txtencid.Text Then
+    If modNonMedical.AllowEntryWithDeposit(Trim(txtencid.Text), "Procedure") = True Then
+      hForm = New FmMiniProcedure(Trim(txtencid.Text), $billModeProcedure)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub mnunote_Click()
+
+  Dim hForm As FmNoteMobile
+
+  If txtencid.Text Then
+    hForm = New FmNoteMobile(Trim(txtencid.Text))
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnugroupexam_Click()
+
+  Dim hForm As FmEnterGroupExam
+
+  If txtencid.Text Then
+    hForm = New FmEnterGroupExam(Trim(txtencid.Text), "Physician Examinations", "Group")
+    hForm.ShowModal
+  Endif
+
+End

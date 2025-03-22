@@ -1,0 +1,183 @@
+' Gambas class file
+
+Private $encid As String
+Private $RegType As String
+
+Public Sub _new(encid As String)
+
+  Dim res As Result
+
+  $encid = encid
+
+  res = modDatabase.$myConn.Exec("select fldvisit from tblencounter where fldencounterval=&1", $encid)
+  If res.Available Then
+    If res!fldvisit Then
+      If res!fldvisit = "OLD" Then
+        $RegType = "RegistrationLaterSlip"
+      Else
+        $RegType = "RegistrationSlip"
+      Endif
+    Else
+      $RegType = "RegistrationSlip"
+    Endif
+  Else
+    $RegType = "RegistrationSlip"
+  Endif
+
+End
+
+Public Function RegistLabelPath() As String
+
+  Return GetLabelForSlip()
+
+End
+
+Private Function GetLabelForSlip() As String
+
+  Dim htmPath As String
+  Dim strAll As String
+  Dim stPath As String
+  Dim itemList As String[]
+  Dim sPath As String
+
+  Dim xfix As String
+  Dim xstart As String
+  Dim xend As String
+
+  Dim startBlank As Integer
+  Dim endBlank As Integer
+
+  htmPath = modSettings.ShowSettingFromFIle($RegType & "/SlipPath")
+  If htmPath And If Exist(htmPath) Then
+    strAll = File.Load(htmPath)
+    strAll = modReportVar.GetReportVarTitle(strAll)
+    strAll = modReportVar.GetReportVarPatient($encid, strAll)
+    strAll = modReportVar.GetReportVarEncounter($encid, strAll)
+    strAll = modReportVar.GetReportLastConsult($encid, strAll)
+    strAll = modReportVar.GetPatientSMSVAr($encid, strAll)
+    If (String.InStr(strAll, "barcodelink") > 0) Then                    ''
+      strAll = Replace(strAll, "{barcodelink}", modReportVar.GetBarcodeImage($encid))
+    Endif
+    If modBasic.$CustomSQLQuery = "Yes" Then
+      While (String.InStr(strAll, "$SQLValue[") > 0)
+        strAll = modReportVar.GetReporQueryCustom(strAll)
+      Wend
+      While (String.InStr(strAll, "$SQLArray[") > 0)
+        strAll = modReportVar.GetReporQueryArrayCustom(strAll)
+      Wend
+      While (String.InStr(strAll, "$SQLTable[") > 0)
+        strAll = modReportVar.GetReporQueryTableCustom(strAll)
+      Wend
+      While (String.InStr(strAll, "$SQLAutoTable[") > 0)
+        strAll = modReportVar.GetReporQuerySerialTableCustom(strAll)
+      Wend
+    Endif
+    If (String.InStr(strAll, "$InvoiceData[") > 0) Then
+      strAll = modReportVar.GetInvoiceDetailSpcificPrint(strAll)
+    Endif
+    If modBasic.$CustomExec = "Yes" Then
+      While (String.InStr(strAll, "$Exec[") > 0)
+        strAll = modReportVar.GetReportExecArgs(strAll)
+      Wend
+      While (String.InStr(strAll, "$Format[") > 0)
+        strAll = modReportVar.GetCustFormatValue(strAll)
+      Wend
+    Endif
+    If modBasic.$CustomScript = "Yes" Then
+      strAll = modReportVar.GetReportScript(strAll)
+    Endif
+    If modBasic.$CustomCalc = "Yes" Then
+      While (String.InStr(strAll, "$Calc[") > 0)
+        strAll = modReportVar.GetReportCalculation(strAll)
+      Wend
+    Endif
+    If modBasic.$CustomImage = "Yes" Then
+      While (String.InStr(strAll, "$BarCode[") > 0)
+        strAll = modReportVar.GetBarCodeCustom(strAll)
+      Wend
+      While (String.InStr(strAll, "$QRCode[") > 0)
+        strAll = modReportVar.GetQRCodeCustom(strAll)
+      Wend
+      While (String.InStr(strAll, "$PatImage[") > 0)
+        strAll = modReportVar.GetPatImageCustom(strAll)
+      Wend
+    Endif
+    If modBasic.$CustomUser = "Yes" Then
+      While (String.InStr(strAll, "$UserProfile[") > 0)
+        strAll = modReportVar.GetUserProfileCustom(strAll)
+      Wend
+    Endif
+
+    stPath = Temp() & ".html"
+
+  Else
+    itemList = GetRegstLineList()
+    If itemList.Count Then
+
+      startBlank = 0
+      endBlank = 0
+      xfix = modSettings.ShowSettingFromFIle("Label/FixLines")
+      If xfix And If CInt(xfix) > 0 Then
+        startBlank = CInt(Floor((CInt(xfix) - itemList.Count) / 2))
+        endBlank = CInt(Ceil((CInt(xfix) - itemList.Count) / 2))
+      Else
+        xstart = modSettings.ShowSettingFromFIle("Label/StartLines")
+        If xstart Then
+          If CInt(xstart) > 0 Then
+            startBlank = CInt(xstart)
+          Endif
+        Endif
+        xend = modSettings.ShowSettingFromFIle("Label/EndLines")
+        If xend Then
+          If CInt(xend) > 0 Then
+            endBlank = CInt(xend)
+          Endif
+        Endif
+      Endif
+
+      strAll = ""
+      If startBlank Then
+        strAll = strAll & modString.BlankLines(startBlank).Join(gb.NewLine) & gb.NewLine
+      Endif
+      strAll = strAll & itemList.Join(gb.NewLine) & gb.NewLine
+
+      strAll = modReportVar.GetReportVarTitle(strAll)
+      strAll = modReportVar.GetReportVarPatient($encid, strAll)
+      strAll = modReportVar.GetReportVarEncounter($encid, strAll)
+      strAll = modReportVar.GetReportLastConsult($encid, strAll)
+      strAll = modReportVar.GetPatientSMSVAr($encid, strAll)
+
+      If endBlank Then
+        strAll = strAll & modString.BlankLinesLast(endBlank).Join(gb.NewLine)
+      Endif
+      stPath = Temp() & ".txt"
+
+    Endif
+  Endif
+
+  If stPath Then
+    File.Save(stPath, strAll)
+    sPath = modControlSub.PrePrintFormatting(stPath, "LabelSize")
+  Endif
+
+  Return sPath
+
+End
+
+Private Function GetRegstLineList() As String[]
+
+  Dim xxx As String[]
+  Dim xline As String
+  Dim i As Integer
+
+  xxx = New String[]
+  For i = 1 To 20
+    xline = modSettings.ShowSettingFromFIle($RegType & "/Line" & CStr(i))
+    If xline Then
+      xxx.Add(xline)
+    Endif
+  Next
+
+  Return xxx
+
+End

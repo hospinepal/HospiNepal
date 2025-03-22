@@ -1,0 +1,955 @@
+' Gambas class file
+
+Private $resLabel As Result
+Private $rData As Result
+Private $aMyFields As String[]
+Private $totalrec As Long
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  If modHelpVariable.$LogInCategory = "Medical" Then
+    btndrugeditall.Enabled = True
+    btnstockeditall.Enabled = True
+  Endif
+  txtcodename.List = modMedicine.GetGenericMedList()
+  cmbdoseunit.List = ["mg", "IU", "mL"]
+  cmbdosageform.List = modMedicine.GetDosageFormsList()
+  cmbmanufacture.List = modMedicine.GetManufacturerList()
+
+  txtpatientinfo.DictionaryPath = modBasic.$dictPathList
+  cmbtaxgroup.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldgroup as col from tbltaxgroup"))
+
+  txtspinval.Value = 0
+  FillUnitCombo()
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Down Then
+    TreeView1.SetFocus
+  Else If Key.Code = Key["R"] And If Key.Control Then
+    btnload_Click()
+  Else If Key.Code = Key["F"] And If Key.Control Then
+    btnserach_Click()
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub TreeView1_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    TreeView1_Click()
+  Endif
+
+End
+
+Public Sub TreeView1_Click()
+
+  BlankMedStrength()
+  ClearSubMedicine()
+  BlankAllBrandItem()
+
+  If TreeView1.Selection.Count Then
+    Inc Application.Busy
+    If TreeView1.Current.Picture = Picture["icons/coll1.png"] Then
+      txtcodename.Text = TreeView1.Current.Text
+      modFillContainer.ExpandClickTreeView(TreeView1)
+      btnmedOK.Text = "Add"
+      btnmedChange.Text = "Edit"
+      btnsubOK.Text = "Add"
+      btnsubChange.Text = "Edit"
+    Else If TreeView1.Current.Picture = Picture["icons/coll2.png"] Then
+      TabStrip1.Index = 0
+      FillMedStrInfo()
+      modFillContainer.ExpandClickTreeView(TreeView1)
+    Else If TreeView1.Current.Picture = Picture["icons/coll3.png"] Then
+      TabStrip1.Index = 1
+      ShowAllBrand()
+      modFillContainer.ExpandClickTreeView(TreeView1)
+    Endif
+    Dec Application.Busy
+  Endif
+
+End
+
+Private Sub FillUnitCombo()
+
+  cmbnarcotic.List = ["Yes", "No"]
+  cmbtabbreak.List = ["Yes", "No"]
+  cmbcurrentuse.List = ["Active", "Inactive"]
+  cmblabelprint.List = ["Brand", "Generic", "Both"]
+  cmbmedform.List = modMedicine.RouteMedicine()
+
+End
+
+Private Function TotalRecordNo() As Integer
+
+  Dim res As Result
+  Dim totalrec As Integer
+
+  res = modDatabase.$medConn.Exec("select distinct(fldcodename) as fldparent from tbldrug")
+  If res.Available Then
+    totalrec = res.Count
+  Else
+    totalrec = 0
+  Endif
+  Return totalrec
+
+End
+
+Public Sub btnload_Click()
+
+  TabStrip1.Enabled = True
+  $totalrec = TotalRecordNo()
+  CompleteMedicineTree(TreeView1, 100 * txtspinval.Value)
+  If $totalrec Then
+    txtspinval.MaxValue = Ceil($totalrec / 100)
+    lbltotal.Text = modMisc.RecordNumberLabel(100 * txtspinval.Value, 100, $totalrec)  '
+  Endif
+
+End
+
+Public Sub btnback_Click()
+
+  TabStrip1.Enabled = True
+  txtspinval.Value = txtspinval.Value - 1
+  CompleteMedicineTree(TreeView1, 100 * txtspinval.Value)
+  lbltotal.Text = modMisc.RecordNumberLabel(100 * txtspinval.Value, 100, $totalrec)
+
+End
+
+Public Sub btnfront_Click()
+
+  TabStrip1.Enabled = True
+  txtspinval.Value = txtspinval.Value + 1
+  CompleteMedicineTree(TreeView1, 100 * txtspinval.Value)
+  lbltotal.Text = modMisc.RecordNumberLabel(100 * txtspinval.Value, 100, $totalrec)
+
+End
+
+Public Sub btnserach_Click()
+
+  Dim xx As String
+
+  TabStrip1.Enabled = True
+  xx = InputBox(("Search Generic Names starting with .."), ("Generic List"), "")
+  CompleteMedicineTree(TreeView1, 100 * txtspinval.Value, xx)
+  lbltotal.Text = ""
+
+End
+
+''''''--------------------  for generic info ------------------''''
+Public Sub txtcodename_KeyRelease()
+  ''already called on form open
+  ' modPharmSub.GenericMedicineList(txtcodename)
+
+End
+
+Public Sub btnaddgeneric_Click()
+
+  Dim hForm As FmAddVariableGrid
+
+  hform = New FmAddVariableGrid("fldcodename", "tblcode")
+  hform.ShowModal
+
+End
+
+''''''----------------------  for medicine strength -------------------''''
+Private Sub BlankMedStrength()
+
+  txtdrug.text = ""
+  cmbmedform.Text = ""
+  txtmedstr.Value = 0
+  txtmedstrunit.Text = ""
+  txtmedminage.Value = 0
+  txtmedref.Text = ""
+  txtmedhelpPage.Text = ""
+  cmbdoseunit.Text = ""
+
+End
+
+Public Sub btnmedhelp_Click()
+
+  modControlSub.OpenBrowser(Trim(txtmedhelpPage.Text))
+
+End
+
+Public Sub txtmedhelpPage_Click()
+
+  Dialog.Title = "Select document file"
+  Dialog.Filter = ["*.odt;*.html;*.txt;*.pdf", "Document files"]
+  If Dialog.OpenFile() Then Return
+  Try txtmedhelpPage.Text = Dialog.Path
+
+End
+
+Public Sub txtmedstrunit_LostFocus()
+
+  Dim aa As String
+
+  aa = txtmedstrunit.Text
+  If Left(aa, 1) = "%" Then
+    If cmbmedform.Text = "oral" Or cmbmedform.Text = "liquid" Or cmbmedform.Text = "injection" Or cmbmedform.Text = "resp" Then
+      txtmedstr.Value = txtmedstr.Value * 10
+      txtmedstrunit.Text = "mg/mL"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbmedform_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbmedform)
+  modFillContainer.RestrictComboToContent(cmbmedform)
+
+End
+
+Public Sub txtmedstrunit_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End
+
+Public Sub cmbdoseunit_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdoseunit)
+  modFillContainer.RestrictComboToContent(cmbdoseunit)
+
+End
+
+Private Sub FillMedStrInfo()
+
+  Dim sql As String
+  Dim res As Result
+
+  sql = "select flddrug,fldcodename,fldstrength,fldstrunit,fldroute,fldhelppage,fldciyear,fldreference,flddoseunit from tbldrug where flddrug=&1"   '''''''''''''''''
+  res = modDatabase.$medConn.Exec(sql, TreeView1.Current.Text)
+  If res.Available Then
+    txtdrug.Text = TreeView1.Current.Text
+    txtcodename.Text = res["fldcodename"]
+    cmbmedform.Text = res["fldroute"]
+    txtmedstr.Value = res["fldstrength"]
+    txtmedstrunit.Text = res["fldstrunit"]
+    If res["fldciyear"] Then
+      txtmedminage.Value = res["fldciyear"]
+    Else
+      txtmedminage.Value = 0
+    Endif
+    cmbdoseunit.Text = res["flddoseunit"]
+    txtmedref.Text = res["fldreference"]
+    txtmedhelpPage.Text = res["fldhelppage"]
+    btnmedOK.Text = "Add"
+    btnmedChange.Text = "Edit"
+    MedLabels()
+  Endif
+
+End
+
+Public Sub btnmedOK_Click()
+
+  Dim res As Result
+
+  If btnmedOK.Text = "Add" And If btnmedChange.Text = "Edit" Then
+    btnmedOK.Text = "Save"
+    BlankMedStrength()
+    ClearSubMedicine()
+
+  Else If btnmedOK.Text = "Save" And If btnmedChange.Text = "Edit" Then
+    If txtcodename.Text And If txtmedstr.Text And If txtmedstrunit.Text Then
+      res = modDatabase.$medConn.Create("tbldrug")
+      txtdrug.Text = Trim(txtcodename.text) & " -" & txtmedstr.Text & Trim(txtmedstrunit.Text)
+      res["flddrug"] = Trim(txtcodename.text) & " -" & txtmedstr.Text & Trim(txtmedstrunit.Text)
+      res["fldcodename"] = Trim(txtcodename.text)
+      res["fldstrength"] = txtmedstr.Value
+      res["fldstrunit"] = Trim(txtmedstrunit.text)
+      res["fldroute"] = cmbmedform.Text
+      res["fldhelppage"] = Trim(txtmedhelpPage.Text)
+      res["fldciyear"] = txtmedminage.Value
+      res["flddoseunit"] = cmbdoseunit.Text
+      res["fldreference"] = Trim(txtmedref.Text)
+      If MMain.$IsDrugInfo = True Then
+        res["flduserid"] = modBasic.$lbluser
+        res["fldtime"] = Now()
+        res["fldcomp"] = modBasic.$compID
+        res["fldverifyid"] = ""
+        res["fldverifytime"] = ""
+        res["fldnote"] = ""
+      Endif
+      res.Update()
+      btnmedOK.Text = "Add"
+      ' CompleteMedicineTree(TreeView1, 100 * SpinBox1.Value, Trim(txtcodename.text))
+      Balloon.Info(("Information saved"), btnmedOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub btnmedCancel_Click()
+
+  Dim res As Result
+
+  If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+    res = modDatabase.$medConn.Exec("select fldbrandid from tblmedbrand where flddrug=&1", txtdrug.Text)
+    If res.Available = False Then
+      modDatabase.$medConn.Delete("tbldrug", "flddrug=&1", txtdrug.Text)
+      CompleteMedicineTree(TreeView1, 100 * txtspinval.Value)
+      BlankMedStrength()
+    Else
+      Message.Warning(("Deletion not allowed"), ("OK"))
+    Endif
+  Endif
+
+End
+
+Public Sub btnmedChange_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+
+  If btnmedChange.Text = "Edit" And If btnmedOK.Text = "Add" Then
+    btnmedChange.Text = "Update"
+
+  Else If btnmedChange.Text = "Update" And If btnmedOK.Text = "Add" Then
+    If txtcodename.Text And If txtdrug.Text Then
+
+      res = modDatabase.$medConn.Edit("tbldrug", "flddrug=&1", txtdrug.Text)
+      If res.Available Then
+        res1 = modDatabase.$medConn.Edit("tbllabel", "flddrug=&1", txtdrug.Text)
+        If res1.Available Then
+          For Each res1
+            res1["fldroute"] = cmbmedform.Text
+            res1.Update
+          Next
+        Endif
+
+        res["fldroute"] = cmbmedform.Text
+        res["fldhelppage"] = Trim(txtmedhelpPage.Text)
+        res["fldciyear"] = txtmedminage.Value
+        res["flddoseunit"] = cmbdoseunit.Text
+        res["fldreference"] = Trim(txtmedref.Text)
+        If MMain.$IsDrugInfo = True Then
+          res["flduserid"] = modBasic.$lbluser
+          res["fldtime"] = Now()
+          res["fldcomp"] = modBasic.$compID
+          res["fldverifyid"] = ""
+          res["fldverifytime"] = ""
+          res["fldnote"] = ""
+        Endif
+        res.Update()
+        btnmedChange.Text = "Edit"
+        Balloon.Info(("Information saved"), btnmedChange)
+        Balloon.Delay = modBasic.$BalloonDelay
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btndrugeditall_Click()
+
+  If modBasic.$SuperUser = True Then
+    If Message.Question(("This process will affect multiple tables. Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modPharmChange.RecodeMedicineDrug(txtdrug.Text, txtcodename.Text, txtmedstr.Value, Trim(txtmedstrunit.Text))
+    Endif
+  Endif
+
+End
+
+Public Sub btncompatdrug_Click()
+
+  Dim hForm As FmListDOuble
+
+  If txtdrug.Text Then
+    If cmbmedform.Text = "injection" Then
+      hForm = New FmListDOuble(txtdrug.Text, "Compatible Drugs", "Incompatible Drugs", "Drug Compatibility", True)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub btncompatfluid_Click()
+
+  Dim hForm As FmListDOuble
+
+  If txtdrug.Text Then
+    If cmbmedform.Text = "injection" Then
+      hForm = New FmListDOuble(txtdrug.Text, "Compatible Fluids", "Incompatible Fluids", "Fluid Compatibility", True)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+''''''-------------------  for Label Info --------------------------''''
+Public Sub txtopinfo_GotFocus()
+
+  If txtlocalfont.Value Then
+    txtopinfo.Font = Font[txtlocalfont.Value]
+  Endif
+
+End
+
+Private Sub ClearSubMedicine()
+
+  txtsubmedid.Text = ""
+  txtopinfo.text = ""
+  txtipinfo.text = ""
+  txtasepinfo.Text = ""
+  txtpatientinfo.RichText = ""
+  cmbmedsubroute.Text = ""
+  txtfinalinjstr.Value = 0
+  txtosmlo.Value = 0
+  txtenergy.Value = 0
+
+End
+
+Private Sub MedLabels()
+
+  Dim sql As String
+
+  If txtdrug.Text Then
+    sql = "select fldlabel,flddrug,fldroute,fldopinfo,fldipinfo,fldasepinfo,fldmedinfo,fldsubroute,fldfinalstr,fldopfont,fldosmolality,fldenergy from tbllabel where flddrug=&1"
+    $resLabel = modDatabase.$medConn.Exec(sql, txtdrug.Text)
+    If $resLabel.Count Then
+      ShowSubMedLabels()
+      btnsubOK.Text = "Add"
+      btnsubChange.Text = "Edit"
+    Endif
+
+  Else If txtdrug.Text = "" Then
+    btnsubOK.Text = "Save"
+    ClearSubMedicine()
+    cmbmedsubroute.List = modMedicine.InjSubRouteList()
+  Endif
+
+End
+
+Private Sub ShowSubMedLabels()
+
+  Try txtlocalfont.Text = $resLabel["fldopfont"]
+  If txtlocalfont.Value Then
+    txtopinfo.Font = Font[txtlocalfont.Value]
+  Endif
+  txtsubmedid.Text = $resLabel["fldlabel"]
+  txtdrug.Text = $resLabel["flddrug"]
+  cmbmedsubroute.Text = $resLabel["fldroute"]
+  txtopinfo.text = $resLabel["fldopinfo"]
+  txtipinfo.text = $resLabel["fldipinfo"]
+  txtasepinfo.Text = $resLabel["fldasepinfo"]
+  txtpatientinfo.RichText = $resLabel["fldmedinfo"]
+  cmbmedsubroute.Text = $resLabel["fldsubroute"]
+  txtfinalinjstr.Value = $resLabel["fldfinalstr"]
+  txtosmlo.Value = $resLabel["fldosmolality"]
+  txtenergy.Value = $resLabel["fldenergy"]
+
+End
+
+Private Sub FillsubrouteList()
+
+  If btnsubOK.Text = "Save" Or btnsubChange.Text = "Update" Then
+    cmbmedsubroute.Clear
+    cmbmedsubroute.List = modMedicine.InjSubRouteList()
+  Endif
+
+  If cmbmedform.Text <> "injection" Then
+    cmbmedsubroute.Clear
+    cmbmedsubroute.Text = cmbmedform.Text
+    txtfinalinjstr.Value = txtmedstr.Value
+  Endif
+
+End
+
+Public Sub btnsubOK_Click()
+
+  Dim res As Result
+
+  If btnsubOK.Text = "Add" And If btnsubChange.Text = "Edit" Then
+    btnsubOK.Text = "Save"
+    ClearSubMedicine()
+    FillsubrouteList()
+
+  Else If btnsubOK.Text = "Save" And If btnsubChange.Text = "Edit" Then
+    If txtdrug.Text And If cmbmedsubroute.Text Then
+      txtsubmedid.Text = txtdrug.Text & "-" & cmbmedsubroute.Text
+      res = modDatabase.$medConn.Create("tbllabel")
+      res["fldlabel"] = txtdrug.Text & "-" & cmbmedsubroute.Text
+      res["flddrug"] = txtdrug.Text
+      res["fldroute"] = cmbmedform.Text
+      res["fldopinfo"] = txtopinfo.text
+      res["fldipinfo"] = txtipinfo.text
+      res["fldasepinfo"] = txtasepinfo.Text
+      res["fldmedinfo"] = txtpatientinfo.RichText
+      res["fldsubroute"] = cmbmedsubroute.Text
+      res["fldfinalstr"] = txtfinalinjstr.Value
+      res["fldopfont"] = txtlocalfont.Value
+      res["fldosmolality"] = txtosmlo.Value
+      res["fldenergy"] = txtenergy.Value
+      If MMain.$IsDrugInfo = True Then
+        res["flduserid"] = modBasic.$lbluser
+        res["fldtime"] = Now()
+        res["fldcomp"] = modBasic.$compID
+        res["fldverifyid"] = ""
+        res["fldverifytime"] = ""
+        res["fldnote"] = ""
+      Endif
+      res.Update()
+      btnsubOK.Text = "Add"
+      MedLabels()
+      Balloon.Info(("Information saved"), btnsubOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub btnsubCancel_Click()
+
+  If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+    modDatabase.$medConn.Delete("tbllabel", "fldlabel=&1", txtsubmedid.Text)
+    ClearSubMedicine()
+  Endif
+
+End
+
+Public Sub btnsubChange_Click()
+
+  Dim res As Result
+
+  If btnsubChange.Text = "Edit" And If btnsubOK.Text = "Add" Then
+    btnsubChange.Text = "Update"
+    FillsubrouteList()
+
+  Else If btnsubChange.Text = "Update" And If btnsubOK.Text = "Add" Then
+    If txtdrug.Text And If cmbmedsubroute.Text And If txtsubmedid.Text Then
+      res = modDatabase.$medConn.Edit("tbllabel", "fldlabel=&1", txtsubmedid.Text)
+      res["fldopinfo"] = txtopinfo.text
+      res["fldipinfo"] = txtipinfo.text
+      res["fldasepinfo"] = txtasepinfo.Text
+      res["fldmedinfo"] = txtpatientinfo.RichText
+      res["fldsubroute"] = cmbmedsubroute.Text
+      res["fldfinalstr"] = txtfinalinjstr.Value
+      res["fldopfont"] = txtlocalfont.Value
+      res["fldosmolality"] = txtosmlo.Value
+      res["fldenergy"] = txtenergy.Value
+      If MMain.$IsDrugInfo = True Then
+        res["flduserid"] = modBasic.$lbluser
+        res["fldtime"] = Now()
+        res["fldcomp"] = modBasic.$compID
+        res["fldverifyid"] = ""
+        res["fldverifytime"] = ""
+        res["fldnote"] = ""
+      Endif
+      res.Update()
+      btnsubChange.Text = "Edit"
+      Balloon.Info(("Information saved"), btnsubChange)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub btnprev_Click()
+
+  If $resLabel.Index = 0 Then
+    $resLabel.MoveFirst
+  Else
+    $resLabel.MovePrevious
+  Endif
+  ShowSubMedLabels()
+
+End
+
+Public Sub btnnext_Click()
+
+  If $resLabel.Index = $resLabel.Count - 1 Then
+    $resLabel.MoveLast
+  Else
+    $resLabel.MoveNext
+  Endif
+  ShowSubMedLabels()
+
+End
+
+Public Sub btnaddinj_Click()
+
+  Dim hForm As FmInjection
+
+  If cmbmedform.Text = "injection" And If txtsubmedid.Text Then
+    hForm = New FmInjection(cmbmedsubroute.Text, txtsubmedid.Text)
+    hForm.ShowModal
+  Endif
+
+End
+
+''''''--------------------  for Brand Info ------------------------'''''''''
+Public Sub txtbrandname_LostFocus()
+
+  txtbrandname.Text = UCase$(txtbrandname.Text)
+
+End
+
+Public Sub btnadddosform_Click()
+
+  Dim hForm As FmAddVariableGrid
+
+  hform = New FmAddVariableGrid("flforms", "tbldosageforms")
+  hform.ShowModal
+  cmbdosageform.List = modMedicine.GetDosageFormsList()
+
+End
+
+Public Sub btnaddmfg_Click()
+
+  Dim hForm As FmAddVariableGrid
+
+  hform = New FmAddVariableGrid("flditem", "tblmanufacturer")
+  hform.ShowModal
+  cmbmanufacture.List = modMedicine.GetManufacturerList()
+
+End
+
+Public Sub cmbdosageform_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdosageform)
+  modFillContainer.RestrictComboToContent(cmbdosageform)
+
+End
+
+Public Sub cmbmanufacture_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbmanufacture)
+  modFillContainer.RestrictComboToContent(cmbmanufacture)
+
+End
+
+Public Sub cmbnarcotic_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbnarcotic)
+  modFillContainer.RestrictComboToContent(cmbnarcotic)
+
+End
+
+Public Sub cmbtabbreak_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbtabbreak)
+  modFillContainer.RestrictComboToContent(cmbtabbreak)
+
+End
+
+Public Sub cmblabelprint_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmblabelprint)
+  modFillContainer.RestrictComboToContent(cmblabelprint)
+
+End
+
+Public Sub cmbcurrentuse_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcurrentuse)
+  modFillContainer.RestrictComboToContent(cmbcurrentuse)
+
+End
+
+Public Sub txtbrandname_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End
+
+Public Sub cmbtaxgroup_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbtaxgroup)
+  modFillContainer.RestrictComboToContent(cmbtaxgroup)
+
+End
+
+Private Sub BlankAllBrandItem()
+
+  txtbrandid.Text = ""
+  cmbdosageform.Text = ""
+  txtbrandname.Text = ""
+  cmbmanufacture.Text = ""
+  txtbranddetail.Text = ""
+  txtstandard.Text = ""
+  txtpackvol.Value = 0
+  txtpackvolunit.Text = ""
+  txtpacksize.Value = 0
+  lblcurrstock.Text = 0
+  txtmaxstock.Value = 0
+  txtminstock.Value = 0
+  txtleadtime.Value = 0
+  cmbpreservative.Text = ""
+  cmbnarcotic.Text = ""
+  cmbtabbreak.Text = ""
+  cmbcurrentuse.Text = ""
+  cmblabelprint.Text = ""
+  cmbtaxgroup.Text = ""
+
+End
+
+Private Sub ShowAllBrand()
+
+  Dim sql As String
+  Dim sxl As String
+  Dim res As Result
+
+  sql = "select fldbrandid,flddrug,flddosageform,fldbrand,fldmanufacturer,flddetail,fldstandard,fldpackvol,fldvolunit,fldpacksize,fldmaxqty,fldminqty,fldleadtime,fldpreservative,fldnarcotic,fldtabbreak,fldactive,flddeflabel,fldtaxcode from tblmedbrand where fldbrandid=&1"
+  res = modDatabase.$medConn.Exec(sql, TreeView1.Current.Text)
+  If res.Available Then
+    txtbrandid.Text = TreeView1.Current.Text
+    txtdrug.Text = res["flddrug"]
+    cmbdosageform.Text = res["flddosageform"]
+    txtbrandname.Text = res["fldbrand"]
+    cmbmanufacture.Text = res["fldmanufacturer"]
+    txtbranddetail.Text = res["flddetail"]
+    txtstandard.Text = res["fldstandard"]
+    If res["fldpackvol"] Then
+      txtpackvol.Value = res["fldpackvol"]
+    Else
+      txtpackvol.Value = 0
+    Endif
+    txtpackvolunit.Text = res["fldvolunit"]
+    If res["fldpacksize"] Then
+      txtpacksize.Value = res["fldpacksize"]
+    Endif
+    If res["fldmaxqty"] Then
+      txtmaxstock.Value = res["fldmaxqty"]
+    Endif
+    If res["fldminqty"] Then
+      txtminstock.Value = res["fldminqty"]
+    Endif
+    If res["fldleadtime"] Then
+      txtleadtime.Value = res["fldleadtime"]
+    Endif
+    cmbpreservative.Text = res["fldpreservative"]
+    cmbnarcotic.Text = res["fldnarcotic"]
+    cmbtabbreak.Text = res["fldtabbreak"]
+    cmbcurrentuse.Text = res["fldactive"]
+    cmblabelprint.Text = res["flddeflabel"]
+    cmbtaxgroup.Text = res["fldtaxcode"]
+    lblcurrstock.Text = modStock.TotalQTYbyBrand(txtbrandid.Text, "%")
+    btnBrOK.Text = "Add"
+    btnBrChange.Text = "Edit"
+  Endif
+
+  If modBasic.$ViewLockInventory = "Location" Then
+    sxl = "select tblentry.fldstockno,tblmedbrand.fldbrand,tblentry.fldbatch,tblentry.fldexpiry,tblentry.fldsellpr,tblentry.fldqty,tblentry.fldstatus,tblentry.fldcomp from tblentry inner join tblmedbrand on tblentry.fldstockid=tblmedbrand.fldbrandid  where tblentry.fldstockid=&1 and tblentry.fldqty>&2 and tblentry.fldcomp=&3"                ''
+  Else
+    sxl = "select tblentry.fldstockno,tblmedbrand.fldbrand,tblentry.fldbatch,tblentry.fldexpiry,tblentry.fldsellpr,tblentry.fldqty,tblentry.fldstatus,tblentry.fldcomp from tblentry inner join tblmedbrand on tblentry.fldstockid=tblmedbrand.fldbrandid  where tblentry.fldstockid=&1 and tblentry.fldqty>&2"
+  Endif
+  $rData = modDatabase.$myConn.Exec(sxl, txtbrandid.Text, 0, modBasic.$compID)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(tblbrand, $rData, $aMyFields)
+  With tblbrand
+    .Columns[0].Text = "Code"
+    .Columns[2].Text = "Batch"
+    .Columns[3].Text = "Expiry"
+    .Columns[4].Text = "SellP"
+    .Columns[5].Text = "QTY"
+    .Columns[6].Text = "Stat"
+    .Columns[7].Text = "Comp"
+
+    .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 1
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+  End With
+
+End
+
+Public Sub tblbrand_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(tblbrand, Row)
+  If Column = 3 Then
+    tblbrand.Data.Text = modReportVar.GetDateTimeReport($rData["fldexpiry"], gb.MediumDate)
+  Else
+    tblbrand.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Private Sub BrandRecord(strCmd As String)
+
+  Dim res As Result
+
+  If strCmd = "Add" Then
+    txtbrandname.Text = UCase(txtbrandname.Text)
+    txtbrandid.Text = txtdrug.Text & " (" & Trim(txtbrandname.Text) & ")"
+    res = modDatabase.$medConn.Create("tblmedbrand")
+    res["fldbrandid"] = txtbrandid.Text
+    res["flddrug"] = txtdrug.Text
+    res["fldbrand"] = txtbrandname.Text
+  Else If strCmd = "Edit" Then
+    res = modDatabase.$medConn.Edit("tblmedbrand", "fldbrandid=&1", txtbrandid.Text)
+  Endif
+
+  res["flddosageform"] = cmbdosageform.Text
+  res["fldmanufacturer"] = cmbmanufacture.Text
+  res["flddetail"] = txtbranddetail.Text
+  res["fldstandard"] = txtstandard.Text
+  res["fldpackvol"] = txtpackvol.Value
+  res["fldvolunit"] = txtpackvolunit.Text
+  res["fldpacksize"] = txtpacksize.Value
+  res["fldmaxqty"] = txtmaxstock.Value
+  res["fldminqty"] = txtminstock.Value
+  res["fldleadtime"] = txtleadtime.Value
+  res["fldpreservative"] = cmbpreservative.Text
+  res["fldnarcotic"] = cmbnarcotic.Text
+  res["fldtabbreak"] = cmbtabbreak.Text
+  res["flddeflabel"] = cmblabelprint.Text
+  res["fldactive"] = cmbcurrentuse.Text
+  res["fldtaxcode"] = cmbtaxgroup.Text
+  If MMain.$IsDrugInfo = True Then
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldverifyid"] = ""
+    res["fldverifytime"] = ""
+    res["fldnote"] = ""
+  Endif
+  res.Update()
+
+End
+
+Public Sub btnBrOK_Click()
+
+  If btnBrOK.Text = "Add" And If btnBrChange.Text = "Edit" Then
+    btnBrOK.Text = "Save"
+    BlankAllBrandItem()
+
+  Else If btnBrOK.Text = "Save" And If btnBrChange.Text = "Edit" Then
+    If txtdrug.Text And If txtbrandname.Text Then
+      BrandRecord("Add")
+      btnBrOK.Text = "Add"
+      ' CompleteMedicineTree(TreeView1, 100 * SpinBox1.Value)
+      Balloon.Info(("Information saved"), btnBrOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnBrCancel_Click()
+
+  Dim res As Result
+
+  If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+    res = modDatabase.$medConn.Exec("select fldstockno from tblentry where fldstockid=&1", txtbrandid.Text)
+    If res.Available = False Then
+      modDatabase.$medConn.Delete("tblmedbrand", "fldbrandid=&1", txtbrandid.Text)
+      CompleteMedicineTree(TreeView1, 100 * txtspinval.Value)
+      BlankAllBrandItem()
+    Else
+      Message.Warning(("Deletion not allowed. You should make item Inactive."), ("OK"))
+    Endif
+  Endif
+
+End
+
+Public Sub btnBrChange_Click()
+
+  If btnBrChange.Text = "Edit" And If btnBrOK.Text = "Add" Then
+    btnBrChange.Text = "Update"
+
+  Else If btnBrChange.Text = "Update" And If btnBrOK.Text = "Add" Then
+    If txtdrug.Text And If txtbrandid.Text Then
+      BrandRecord("Edit")
+      btnBrChange.Text = "Edit"
+      Balloon.Info(("Information saved"), btnBrChange)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnBrOK_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    If btnBrOK.Text = "Save" Then
+      btnBrOK_Click()
+    Endif
+  Endif
+
+End
+
+Public Sub btnmedOK_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    If btnmedOK.Text = "Save" Then
+      btnmedOK_Click()
+    Endif
+  Endif
+
+End
+
+Public Sub btnstockeditall_Click()
+
+  If modBasic.$SuperUser = True Then
+    If Message.Question(("This process will affect multiple tables. Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modPharmChange.RecodeMedicineStock(txtbrandid.Text, Trim(txtbrandname.Text))
+    Endif
+  Endif
+
+End
+
+''------------------------ Treeview ----------------------------------
+Private Sub CompleteMedicineTree(xTreeView1 As TreeView, stint As Integer, Optional txtsearch As String)
+
+  Dim sstr1 As String
+  Dim sstr2 As String
+  Dim sstr3 As String
+
+  Inc Application.Busy
+  If txtsearch Then
+    sstr1 = "select distinct(fldcodename) as fldparent from tblcode where lower(fldcodename) like &1"
+  Else
+    sstr1 = Subst("select distinct(fldcodename) as fldparent from tbldrug ORDER BY fldcodename LIMIT 100 OFFSET &1", stint)
+  Endif
+  sstr2 = "select distinct(flddrug) as fldparent from tbldrug where fldcodename=&1"
+  sstr3 = "select distinct(fldbrandid) as fldparent from tblmedbrand where flddrug=&1"
+  If txtsearch Then
+    modFillContainer.FillTreeView(modDatabase.$medConn, xTreeView1, "", sstr1, "", sstr2, "", sstr3, "", "", LCase(txtsearch) & "%", "", "", "")
+  Else
+    modFillContainer.FillTreeView(modDatabase.$medConn, xTreeView1, "", sstr1, "", sstr2, "", sstr3, "", "", "", "", "", "")
+  Endif
+  Dec Application.Busy
+
+End
+
+Public Sub btnexpotree_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modCHTMLReport.CreateHTMLReportFromTree(TreeView1, 3, "Medicine Coding", modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End

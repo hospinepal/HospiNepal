@@ -1,0 +1,333 @@
+' Gambas module file
+
+Public $ExecValueColl As Collection
+Private hKeyBoardExe As Process
+
+'NOTE: -------------------------- SHELL FUNCTION --------------------------
+Public Sub RunRootCmdAsRoot(sCommand As String, sPass As String)
+
+  Dim sEPass As String
+  Dim arcmd As String
+
+  sEPass = "echo \"" & sPass & "\" | "
+  arcmd = sEPass & "sudo -S " & sCommand
+  modBasic.DebugString("Execute " & sCommand)
+  Shell arcmd Wait
+
+End
+
+Public Sub CopyFileAsRoot(sFromFile As String, sToFolder As String, sPass As String)
+
+  If sPass Then
+    RunRootCmdAsRoot("cp " & sFromFile & Space(1) & sToFolder, sPass)
+  Endif
+
+End
+
+Public Sub ReplaceFileAsRoot(sPath1 As String, sFolder2 As String, sPass As String)
+
+  If sPass Then
+    If Not Exist(sFolder2) Then
+      RunRootCmdAsRoot("mkdir " & sFolder2, sPass)
+    Endif
+    If Exist(sFolder2 &/ File.Name(sPath1)) Then
+      RunRootCmdAsRoot("rm " & sFolder2 &/ File.Name(sPath1), sPass)
+    Endif
+    If Not Exist(sFolder2 &/ File.Name(sPath1)) Then
+      RunRootCmdAsRoot("mv " & sPath1 & Space(1) & sFolder2 &/ File.Name(sPath1), sPass)
+    Endif
+  Endif
+
+End
+
+Public Sub CopyFromFolderToFolder(fromDir As String, toDir As String)
+
+  Dim Directory As String
+  Dim DirectoryList As String[]
+  Dim sFile As String
+  Dim FileList As String[]
+  Dim DirList As String[]
+  Dim xDirect As String
+
+  Dim aDirList As String[]
+  Dim aDir As String
+  Dim iFileList As String[]
+
+  ''copy files
+  FileList = Dir(fromDir, Null, gb.File)
+  For Each sFile In FileList
+    If Not Exist(toDir &/ sFile) Then
+      Copy fromDir &/ sFile To toDir &/ sFile
+    Endif
+  Next
+  FileList.Clear
+
+  ''copy folders (eg html)
+  DirectoryList = Dir(fromDir, Null, gb.Directory)
+  For Each Directory In DirectoryList
+    If Not Exist(toDir &/ Directory) Then
+      Mkdir toDir &/ Directory
+
+      ''copy files (eg headet.tpl)
+      FileList = Dir(fromDir &/ Directory, Null, gb.File)
+      For Each sFile In FileList
+        If Not Exist(toDir &/ Directory &/ sFile) Then
+          Copy fromDir &/ Directory &/ sFile To toDir &/ Directory &/ sFile
+        Endif
+      Next
+      FileList.Clear
+
+      ''copy folders (eg. custom)
+      DirList = Dir(fromDir &/ Directory, Null, gb.Directory)
+      For Each xDirect In DirList
+        If Not Exist(toDir &/ Directory &/ xDirect) Then
+          Mkdir toDir &/ Directory &/ xDirect
+
+          ''copy files
+          FileList = Dir(fromDir &/ Directory &/ xDirect, Null, gb.File)
+          For Each sFile In FileList
+            If Not Exist(toDir &/ Directory &/ xDirect &/ sFile) Then
+              Copy fromDir &/ Directory &/ xDirect &/ sFile To toDir &/ Directory &/ xDirect &/ sFile
+            Endif
+          Next
+          FileList.Clear
+
+          ''copy folders (eg. purchase_entry)
+          aDirList = Dir(fromDir &/ Directory &/ xDirect, Null, gb.Directory)
+          For Each aDir In aDirList
+            If Not Exist(toDir &/ Directory &/ xDirect &/ aDir) Then
+              Mkdir toDir &/ Directory &/ xDirect &/ aDir
+
+              ''copy files (eg. translation)
+              iFileList = Dir(fromDir &/ Directory &/ xDirect &/ aDir, Null, gb.File)
+              For Each sFile In iFileList
+                If Not Exist(toDir &/ Directory &/ xDirect &/ aDir &/ sFile) Then
+                  Copy fromDir &/ Directory &/ xDirect &/ aDir &/ sFile To toDir &/ Directory &/ xDirect &/ aDir &/ sFile
+                Endif
+              Next
+              iFileList.Clear
+
+            Endif
+          Next
+
+        Endif
+      Next
+
+    Endif
+  Next
+
+End
+
+Public Sub CreateNewCacheFile(sFolder As String, sName As String)
+
+  Dim xfile As String
+
+  xfile = sFolder &/ sName
+  If Exist(xfile) Then
+    Kill xfile
+  Endif
+  If Not Exist(sFolder) Then
+    Mkdir sFolder
+  Endif
+
+End
+
+Public Sub DeleteFolderRecursive(sFolder As String)
+
+  Dim arcmd As String
+
+  arcmd = "rm -r " & sFolder
+  modBasic.DebugString("Execute " & arcmd)
+  Shell arcmd Wait
+
+End
+
+Public Function GerScriptValue(ScriptPath As String, ShellName As String, sArgument As Variant) As Variant
+
+  Dim xfinal As Variant
+  Dim arcmd As String[]
+  Dim xexc As String
+  Dim xval As String
+
+  xval = ShellName & "@" & ScriptPath & "@" & CStr(sArgument)
+  If Exist(ScriptPath) Then
+    xfinal = modHelpVariable.GetCollectionValue($ExecValueColl, xval, modBasic.$AppCacheScriptOutputs)                             ''
+    If Not xfinal Then
+      If ShellName Then
+        arcmd = [ShellName, ScriptPath, sArgument]
+      Else
+        arcmd = [ScriptPath, sArgument]
+      Endif
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd To xexc
+      xfinal = Trim(xexc)
+      If modBasic.$AppCacheScriptOutputs = "Yes" Then
+        $ExecValueColl.Add(xfinal, xval)
+      Endif
+    Endif
+
+  Else
+    If TypeOf(sArgument) = gb.String Then
+      xfinal = Trim(sArgument)
+    Else
+      xfinal = sArgument
+    Endif
+  Endif
+
+  Return xfinal
+
+End
+
+Public Function GerScriptValueNoCache(ScriptPath As String, ShellName As String, sArgument As Variant) As Variant
+
+  Dim xfinal As Variant
+  Dim arcmd As String[]
+  Dim xexc As String
+
+  If Exist(ScriptPath) Then
+    If ShellName Then
+      arcmd = [ShellName, ScriptPath, sArgument]
+    Else
+      arcmd = [ScriptPath, sArgument]
+    Endif
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd To xexc
+    xfinal = Trim(xexc)
+
+  Else
+    If TypeOf(sArgument) = gb.String Then
+      xfinal = Trim(sArgument)
+    Else
+      xfinal = sArgument
+    Endif
+  Endif
+
+  Return xfinal
+
+End
+
+'NOTE: ------------------------- Private Scripts ------------------------
+Public Sub ExecBeforePrint()
+
+  Dim arcmd As String[]
+  Dim xscript As String
+  Dim xexec As String
+
+  arcmd = New String[]
+  xscript = modSettings.ShowSettingFromFIle("GeneralSettings/BeforePrintScript")
+  If xscript Then
+    If Exist(xscript) Then
+
+      xexec = modSettings.ShowSettingFromFIle("GeneralSettings/BeforePrintShell")
+      If xexec Then
+        arcmd.Add(xexec)
+      Endif
+      arcmd.Add(xscript)
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+
+    Endif
+  Endif
+
+End
+
+Public Sub ExecAfterPrint()
+
+  Dim arcmd As String[]
+  Dim xscript As String
+  Dim xexec As String
+
+  arcmd = New String[]
+  xscript = modSettings.ShowSettingFromFIle("GeneralSettings/AfterPrintScript")
+  If xscript Then
+    If Exist(xscript) Then
+
+      xexec = modSettings.ShowSettingFromFIle("GeneralSettings/AfterPrintShell")
+      If xexec Then
+        arcmd.Add(xexec)
+      Endif
+      arcmd.Add(xscript)
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+
+    Endif
+  Endif
+
+End
+
+''-------------------------- Extrenal App ------------------------------
+Public Sub RunKeyBoardScript()
+
+  Dim xscript As String
+  Dim xexec As String
+  Dim arcmd As String[]
+
+  xscript = modSettings.ShowSettingFromFIle("GeneralSettings/KeyBoard_Path")
+  If xscript Then
+    xexec = modSettings.ShowSettingFromFIle("GeneralSettings/KeyBoard_Shell")
+    If xexec Then
+      arcmd = [xexec, xscript]
+    Else
+      arcmd = [xscript]
+    Endif
+  Else
+    If System.Exist("onboard") Then
+      arcmd = ["onboard"]
+    Else
+      arcmd = New String[]
+    Endif
+  Endif
+  If arcmd.Count Then
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    hKeyBoardExe = Exec arcmd
+  Endif
+
+End
+
+Public Sub KillKeyBoardScript()
+
+  Try hKeyBoardExe.Kill()
+
+End
+
+Public Sub RunExternalFixScript()
+
+  Dim xscript As String
+  Dim xexec As String
+  Dim arcmd As String[]
+
+  xscript = modSettings.ShowSettingFromFIle("GeneralSettings/ExtApp_Path")
+  If xscript Then
+    xexec = modSettings.ShowSettingFromFIle("GeneralSettings/ExtApp_Shell")
+    If xexec Then
+      arcmd = [xexec, xscript]
+    Else
+      arcmd = [xscript]
+    Endif
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd
+  Endif
+
+End
+
+Public Function RunTextHelpScript(sRead As String) As String
+
+  Dim xscript As String
+  Dim xexec As String
+  Dim xx As String
+  Dim arcmd As String[]
+
+  xscript = modSettings.ShowSettingFromFIle("GeneralSettings/TextHelpScript")
+  If xscript Then
+    xexec = modSettings.ShowSettingFromFIle("GeneralSettings/TextHelpShell")
+    If xexec Then
+      arcmd = [xexec, xscript, sRead]
+    Else
+      arcmd = [xscript, sRead]
+    Endif
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd To xx
+  Endif
+  Return Trim(xx)
+
+End

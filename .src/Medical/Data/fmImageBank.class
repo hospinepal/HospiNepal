@@ -1,0 +1,229 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  GetCategory()
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub GetCategory()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select distinct(fldcateg) as col from tblmedimage")
+  cmbcategory.List = modControlSub.GetDirectFillresult(res)
+
+End
+
+Public Sub btnrefresh_Click()
+
+  ShowGridImage()
+
+End
+
+Private Sub ShowGridImage()
+
+  Dim sql As String
+
+  sql = "select fldid,fldname from tblmedimage where fldcateg=&1 order by fldname ASC"
+  $rData = modDatabase.$myConn.Exec(sql, cmbcategory.Text)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(dgimage, $rData, $aMyFields)
+  dgimage.Columns[0].Width = 1
+  dgimage.Columns[1].Width = 275 * modBasic.$AppWidthRatio
+
+End
+
+Public Sub dgimage_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(dgimage, Row)
+  dgimage.Data.Text = $rData[$aMyFields[Column]]
+
+End
+
+Public Sub dgimage_Click()
+
+  DisplayBlobData(dgimage[dgimage.Row, 0].Text)
+
+End
+
+Private Sub DisplayBlobData(serial As Integer)
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  sql = "select fldname,fldpic,fldlink,flddet from tblmedimage where fldid=&1"
+  res = modDatabase.$myConn.Exec(sql, serial)
+  If res.Available Then
+    tempFile = Temp() & ".jpg"
+    If res!fldlink Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res!fldlink)
+      If Exist(aFile) Then
+        Copy aFile To tempFile
+      Endif
+      Dec Application.Busy
+    Else
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(tempFile, hFile.Data)
+      Endif
+      PictureBox1.Tag = tempFile
+    Endif
+
+    PictureBox1.Image = Image.Load(tempFile)
+    txtdetail.Text = res!flddet
+    txttitle.Text = res!fldname
+    PictureBox1.Zoom = Slider1.Value / 100
+  Endif
+
+End
+
+Public Sub dgimage_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    dgimage_Click()
+  Endif
+
+End
+
+''''XXXXXXXXXXXXXXXXXXXXXXXXXXXX
+''''
+Public Sub btnOpen_Click()
+
+  Dialog.Filter = ["*.jpg;*.jpeg;*.png;*.bmp", "Picture files"]
+  If Dialog.OpenFile() Then Return
+  PictureBox1.Tag = Dialog.Path
+  PictureBox1.Image = Image.Load(Dialog.Path)
+
+End
+
+Public Sub btnwebcam_Click()
+
+  PictureBox1.Tag = modImage.GetWebCamValue(modDevice.WebCamDevice())
+  If PictureBox1.Tag Then
+    PictureBox1.Image = Image.Load(PictureBox1.Tag)
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim res As Result
+  Dim sPath As String
+  Dim xblobfile As String
+
+  If txttitle.Text Then
+    sPath = PictureBox1.Tag
+    If modMisc.BlobTarget("MedicalImages") = "FTP" Then
+      xblobfile = modFTPSub.SendBlobToFTP(sPath, cmbcategory.Text, "MedicalImages")
+    Else
+      xblobfile = File.Load(sPath)
+    Endif
+    If xblobfile Then
+      res = modDatabase.$myConn.Create("tblmedimage")
+      res["fldcateg"] = cmbcategory.Text
+      res["fldname"] = Trim(txttitle.Text)
+      If modMisc.BlobTarget("MedicalImages") = "FTP" Then
+        res["fldpic"] = ""
+        res["fldlink"] = xblobfile
+      Else
+        res["fldpic"] = xblobfile
+        res["fldlink"] = ""
+      Endif
+      res["flddet"] = txtdetail.Text
+      res.Update
+      ShowGridImage()
+      Balloon.Info(("Information saved"), btnOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub cmbcategory_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcategory)
+
+End
+
+Public Sub btnCancel_Click()
+
+  If dgimage.Rows.Selection.Count > 0 Then
+    If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblmedimage", "fldid=&1", dgimage[dgimage.Row, 0].Text)
+      ShowGridImage()
+      Balloon.Delete(("Information deleted"), btnCancel)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+
+  If dgimage.Rows.Selection.Count > 0 Then
+    res = modDatabase.$myConn.Edit("tblmedimage", "fldid=&1", dgimage[dgimage.Row, 0].Text)              ''
+    res["fldcateg"] = cmbcategory.Text
+    res["fldname"] = Trim(txttitle.Text)
+    res["flddet"] = txtdetail.Text
+    res.Update()
+    ShowGridImage()
+    Balloon.Info(("Information deleted"), btnChange)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub btnimgedit_Click()
+
+  If PictureBox1.Tag Then
+    modDevice.DesktopOpenFile(PictureBox1.Tag)
+  Endif
+
+End
+
+Public Sub btnclear_Click()
+
+  If PictureBox1.Tag Then
+    PictureBox1.Image.Clear()
+    PictureBox1.Refresh()
+    Wait
+  Endif
+
+End
+
+Public Sub Slider1_Change()
+
+  PictureBox1.Zoom = Slider1.Value / 100
+
+End
+
+Public Sub txttitle_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End

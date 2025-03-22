@@ -1,0 +1,1322 @@
+' Gambas module file
+
+'NOTE: ----------------- INSERT for tblpatbilling and tblpatbilldetail --------------------------------------
+''ONLY FOR IRD REQUIREMENT
+Public Sub InsertBillLog($con As Connection, encid As String, billno As String, itemAmt As Float, taxAmt As Float, discountAmt As Float)
+
+  Dim res As Result
+
+  res = $con.Create("tblfiscal")
+  res["fldfiscal"] = modDate.GetNepaliFiscalYear(Now())
+  res["fldbillno"] = billno
+  res["fldpatname"] = modPatient.GetPatientNameByEnc(encid)
+  res["fldpan"] = modPatient.GetPatientExtCOdebyEnc(encid)
+  res["flddate"] = Now()
+  res["flditemamt"] = itemAmt
+  res["flddiscountamt"] = discountAmt
+  res["fldtaxable"] = modNonMedical.TaxableAmountInvoice(billno)     ''itemAmt - discountAmt
+  res["fldtaxamt"] = taxAmt
+  res["fldtotamt"] = (itemAmt + taxAmt) - discountAmt
+  res["fldsync"] = "No"
+  res["fldprinted"] = "Printed"
+  res["fldactive"] = "Active"
+  ' res["fldtime"] = Time()
+  res["fldpunch"] = modBasic.$lbluser
+  res["fldprint"] = modBasic.$lbluser
+  res["xyz"] = False
+  res.Update
+
+End
+
+Public Sub AddPaymentCashSource(encid As String, sInvoice As String, sVendor As String, sReference As String, sAmt As Float)
+
+  Dim res As Result
+  Dim xIntVal As String
+
+  If encid And If sInvoice Then
+    res = modDatabase.$myConn.Create("tblcashsources")
+    res["fldbillno"] = sInvoice
+    res["fldencounterval"] = encid
+    res["fldvendor"] = sVendor
+    res["fldreference"] = sReference
+    res["fldcashamt"] = sAmt
+
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["fldsave"] = False
+    res["fldhostmac"] = modHelpVariable.$MACAddress
+    res["xyz"] = False
+    If MMain.$WebEntry = True Then
+      xIntVal = modString.GetDateString(Now())
+      res["fldid"] = CLong(xIntVal)
+      res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+      res["fldrepodate"] = Now()
+      res["fldrepomac"] = modHelpVariable.$MACAddress
+      res["fldhospcode"] = modBasic.$HospCode
+    Endif
+    res.Update()
+  Endif
+
+End
+
+Public Sub AddCreditLimits($con As Connection, encid As String, sDiscType As String, sValidDate As Date, sCredit As Float, sCharity As Float)
+
+  Dim res As Result
+
+  res = $con.Create("tblcreditlimit")
+  res["fldencounterval"] = encid
+  res["flddisctype"] = sDiscType
+  res["fldcashcredit"] = sCredit
+  res["fldcharity"] = sCharity
+  res["fldvalidity"] = sValidDate
+  res["fldstatus"] = "Active"
+
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub InsertAdvRecptDetail($con As Connection, encid As String, billno As String, biltype As String, itemAmt As Float, taxAmt As Float, discountAmt As Float, chargedAmt As Float, receivedAmt As Float, sReference As String, sLedger As String, xState As String, xPayer As String, xOutput As String, Optional xInvoice As String)
+
+  Dim res As Result
+  Dim xpay As String
+
+  If xPayer Then
+    xpay = xPayer
+  Else
+    xpay = ""
+  Endif
+
+  res = $con.Create("tbladvreceiptdetail")
+  res["fldbillno"] = billno
+  res["fldencounterval"] = encid
+  res["flditemamt"] = itemAmt
+  res["fldtaxamt"] = taxAmt
+  res["flddiscountamt"] = discountAmt
+  res["fldchargedamt"] = chargedAmt
+  res["fldreceivedamt"] = receivedAmt
+  res["fldbilltype"] = biltype
+  res["fldchequeno"] = sReference
+  res["fldbankname"] = sLedger
+  res["fldpatstate"] = xState
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["fldhostmac"] = modHelpVariable.$MACAddress
+  res["fldreference"] = ""
+  res["fldcashpay"] = xpay
+  If xOutput Then
+    res["fldstatus"] = xOutput
+  Else
+    res["fldstatus"] = "Pending"
+  Endif
+  res["fldverify"] = ""
+  If xInvoice Then
+    res["fldinvoice"] = xInvoice
+  Else
+    res["fldinvoice"] = ""
+  Endif
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub InsertAdvRecptDeposit($con As Connection, encid As String, billno As String, xamt As Float, xState As String)
+
+  InsertAdvRecptDetail($con, encid, billno, "CashDeposit", 0, 0, 0, 0, xamt, "", "Cash Deposit", xState, "QR Scan", "Pending")
+
+End
+
+Public Sub InsertAdvRecptDepositOnError($con As Connection, encid As String, billno As String, xamt As Float, xState As String, xInvoice As String)
+
+  InsertAdvRecptDetail($con, encid, billno, "CashDeposit", 0, 0, 0, 0, xamt, "", "Cash Deposit", xState, "QR Scan", "Completed", xInvoice)
+
+End
+
+Public Sub InsertTempraryDetail($con As Connection, encid As String, billno As String, biltyp As String, itemAmt As Float, taxAmt As Float, discountAmt As Float, chargedAmt As Float, receivedAmt As Float, sReference As String, sLedger As String, taxgroup As String, discgroup As String, xState As Integer)
+
+  Dim res As Result
+  Dim taxcateg As String
+  Dim dsccateg As String
+
+  If taxgroup Then
+    taxcateg = taxgroup
+  Else
+    taxcateg = ""
+  Endif
+  If discgroup Then
+    dsccateg = discgroup
+  Else
+    dsccateg = ""
+  Endif
+
+  res = $con.Create("tbltempbilldetail")
+  res["fldbillno"] = billno
+  res["fldencounterval"] = encid
+  res["flditemamt"] = itemAmt
+  res["fldtaxamt"] = taxAmt
+  res["fldtaxgroup"] = taxcateg
+  res["flddiscountamt"] = discountAmt
+  res["flddiscountgroup"] = dsccateg
+  res["fldchargedamt"] = chargedAmt
+  res["fldreceivedamt"] = receivedAmt
+  res["fldcurdeposit"] = 0
+  res["flddepoadjust"] = 0
+  res["fldbilltype"] = biltyp
+  res["fldchequeno"] = sReference
+  res["fldbankname"] = sLedger
+  res["fldprevdeposit"] = xState
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["fldhostmac"] = ""
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub InsertDepositDetail($con As Connection, encid As String, billno As String, biltyp As String, receivedAmt As Float, sReference As String, sLedger As String, xState As Integer)
+
+  Dim res As Result
+
+  res = $con.Create("tbltempbilldetail")
+  res["fldbillno"] = billno
+  res["fldencounterval"] = encid
+  res["flditemamt"] = 0
+  res["fldtaxamt"] = 0
+  res["fldtaxgroup"] = ""
+  res["flddiscountamt"] = 0
+  res["flddiscountgroup"] = ""
+  res["fldchargedamt"] = 0
+  res["fldreceivedamt"] = 0
+  res["fldcurdeposit"] = receivedAmt
+  res["flddepoadjust"] = 0
+  res["fldbilltype"] = biltyp
+  res["fldchequeno"] = sReference
+  res["fldbankname"] = sLedger
+  res["fldprevdeposit"] = xState
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["fldhostmac"] = "" ''modHelpVariable.$MACAddress
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub InsertDepositAdjustment($con As Connection, encid As String, billno As String, biltyp As String, adjustAmt As Float, sReference As String, sLedger As String, xState As Integer)
+
+  Dim res As Result
+
+  res = $con.Create("tbltempbilldetail")
+  res["fldbillno"] = billno
+  res["fldencounterval"] = encid
+  res["flditemamt"] = 0
+  res["fldtaxamt"] = 0
+  res["fldtaxgroup"] = ""
+  res["flddiscountamt"] = 0
+  res["flddiscountgroup"] = ""
+  res["fldchargedamt"] = 0
+  res["fldreceivedamt"] = 0
+  res["fldcurdeposit"] = 0
+  res["flddepoadjust"] = adjustAmt
+  res["fldbilltype"] = biltyp
+  res["fldchequeno"] = sReference
+  res["fldbankname"] = sLedger
+  res["fldprevdeposit"] = xState
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["fldhostmac"] = "" ''modHelpVariable.$MACAddress
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+''"Done" at saving lab order from clinic, saving pharmacy items, saving cash items, saving return items so requirement fldsave=0 and fldprint=0
+''"Cleared after billing so used after "Done" and "Sampled" so requirement is only fldsave=1 and fldprint=0 so allowed at any step after fldsave=1
+''Sampling allowed for "Done" from clinic,cash and "Cleared" from cash and lead to "Sampled"
+Public Sub InsertBillingDetail($con As Connection, encid As String, billno As String, biltyp As String, itemAmt As Float, taxAmt As Float, discountAmt As Float, chargedAmt As Float, receivedAmt As Float, sReference As String, sLedger As String, taxgroup As String, discgroup As String, xState As Integer)
+
+  Dim res As Result
+  Dim taxcateg As String
+  Dim dsccateg As String
+
+  If taxgroup Then
+    taxcateg = taxgroup
+  Else
+    taxcateg = ""
+  Endif
+  If discgroup Then
+    dsccateg = discgroup
+  Else
+    dsccateg = ""
+  Endif
+
+  res = $con.Create("tblpatbilldetail")
+  res["fldbillno"] = billno
+  res["fldencounterval"] = encid
+  res["flditemamt"] = itemAmt
+  res["fldtaxamt"] = taxAmt
+  res["fldtaxgroup"] = taxcateg
+  res["flddiscountamt"] = discountAmt
+  res["flddiscountgroup"] = dsccateg
+  res["fldchargedamt"] = chargedAmt
+  res["fldreceivedamt"] = receivedAmt
+  res["fldcurdeposit"] = 0
+  res["fldbilltype"] = biltyp
+  res["fldchequeno"] = sReference
+  res["fldbankname"] = sLedger
+  res["fldprevdeposit"] = xState
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["fldhostmac"] = modHelpVariable.$MACAddress
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+''for new App
+Public Sub InsertBlankBillItemNewApp(encid As String, sBilType As String, sBillMode As String, DiscPlan As String, sLedgerAC As String, itemtyp As String, itemNo As Integer, itemname As String, rte As Float, qty As Float, tax As Float, disc As Float, xCashCredit As Float, status As String, parentNo As Long, sav As Boolean, prt As Boolean, Optional target As String, Optional sPayable As String, Optional sRefer As String, Optional sReason As String, Optional ReturnBill As String)                                       ''
+
+  Dim res As Result
+  Dim sPay As String
+  Dim sRef As String
+  Dim sTarg As String
+  Dim sReas As String
+  Dim sRetBill As String
+  Dim sLocation As String
+
+  Dim xtaxamt As Float
+  Dim xdscamt As Float
+  Dim xtotamt As Float
+  Dim xdue As Float
+
+  sLocation = modPatient.GetPatientCurrDepartment(encid)
+  If sPayable Then
+    sPay = sPayable
+  Else
+    sPay = ""
+  Endif
+  If sRefer Then
+    sRef = sRefer
+  Else
+    sRef = ""
+  Endif
+  If target Then
+    sTarg = target
+  Else
+    sTarg = ""
+  Endif
+  If sReason Then
+    sReas = sReason
+  Else
+    sReas = ""
+  Endif
+  If ReturnBill Then
+    sRetBill = ReturnBill
+  Else
+    sRetBill = ""
+  Endif
+
+  xdue = rte * qty
+  xdscamt = xdue * (disc / 100)
+  xtaxamt = xdue * (1 - disc / 100) * (tax / 100)
+  xtotamt = xdue * (1 - disc / 100) * (1 + tax / 100)
+
+  res = modDatabase.$myConn.Create("tblpatbilling")
+  res["fldencounterval"] = encid
+  res["fldbillingmode"] = sBillMode
+  res["flditemtype"] = itemtyp
+  res["flditemno"] = itemNo
+  res["flditemname"] = itemname
+  res["flditemrate"] = rte
+  res["flditemqty"] = qty
+  res["fldtaxper"] = tax
+  res["flddiscper"] = disc
+  res["fldtaxamt"] = xtaxamt
+  res["flddiscamt"] = xdscamt
+  If modBasic.$BillSubsidyMode = "Enable" Then
+    res["fldsubsidy"] = xdscamt
+  Endif
+  res["fldditemamt"] = xtotamt
+  res["fldcashincredit"] = xCashCredit
+  res["fldbillno"] = ""
+  res["fldstatus"] = status
+
+  res["fldorduserid"] = modBasic.$lbluser
+  res["fldordtime"] = Now()
+  res["fldordcomp"] = modBasic.$compID
+
+  If sav = True Then
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["xyz"] = False
+  Else
+    res["flduserid"] = ""
+    res["fldtime"] = ""
+    res["fldcomp"] = ""
+    res["xyz"] = True
+  Endif
+
+  res["fldsave"] = sav
+  res["fldprint"] = prt
+  res["fldalert"] = True
+  res["fldtarget"] = sTarg
+  res["fldparent"] = parentNo
+  res["fldpayto"] = sPay
+  res["fldrefer"] = sRef
+  res["fldreason"] = sReas
+  res["fldretbill"] = sRetBill
+  res["fldretqty"] = 0
+  res["fldsample"] = "Waiting"
+
+  res["fldbilltype"] = sBilType
+  res["flddisctype"] = DiscPlan
+  res["fldacledger"] = sLedgerAC
+  res["fldcurrlocat"] = sLocation
+  res["fldhostmac"] = ""
+  res["fldextracol"] = ""
+  res["fldextrarow"] = ""
+
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub InsertBlankBillClearance($con As Connection, encid As String, sBilType As String, sLedgerAC As String, itemtyp As String, itemname As String, itemAMT As Float, status As String, sav As Boolean, prt As Boolean)
+
+  Dim res As Result
+
+  res = $con.Create("tblduebilling")
+  res["fldencounterval"] = encid
+  res["flditemtype"] = itemtyp
+  res["fldbillitem"] = itemname
+  res["flditemrate"] = itemAMT
+  res["flditemqty"] = 1
+  res["fldtaxper"] = 0
+  res["flddiscper"] = 0
+  res["fldditemamt"] = itemAMT
+  res["fldbillno"] = ""
+  res["fldstatus"] = status
+
+  res["fldorduserid"] = modBasic.$lbluser
+  res["fldordtime"] = Now()
+  res["fldordcomp"] = modBasic.$compID
+
+  If sav = True Then
+    res["flduserid"] = modBasic.$lbluser
+    res["fldtime"] = Now()
+    res["fldcomp"] = modBasic.$compID
+    res["xyz"] = False
+  Else
+    res["flduserid"] = ""
+    res["fldtime"] = ""
+    res["fldcomp"] = ""
+    res["xyz"] = True
+  Endif
+
+  res["fldsave"] = sav
+  res["fldprint"] = prt
+  res["fldalert"] = True
+
+  res["fldbilltype"] = sBilType
+  res["fldacledger"] = sLedgerAC
+  res["fldhostmac"] = ""
+  res["fldextracol"] = ""
+  res["fldextrarow"] = ""
+
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub UpdateGroupBillQTY(sParent As Long, encid As String, itemname As String, sQty As Float)
+
+  Dim res1 As Result
+  Dim xval As Float
+
+  ''update main bill
+  res1 = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1 and fldencounterval=&2 and flditemname=&3", sParent, encid, itemname)
+  If res1.Available Then
+    xval = res1["flditemqty"] + sQty
+    res1["flditemqty"] = xval
+    res1["fldtaxamt"] = res1!flditemrate * xval * (1 - res1!flddiscper / 100) * (res1!fldtaxper / 100)
+    res1["flddiscamt"] = res1!flditemrate * xval * (res1!flddiscper / 100)
+    res1["fldditemamt"] = res1!flditemrate * xval * (1 - res1!flddiscper / 100) * (1 + res1!fldtaxper / 100)
+    res1["xyz"] = False
+    res1.Update
+  Endif
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub UpdateReturnBillQTY(sParent As Long, encid As String, itemname As String, RetQty As Float, Optional sTable As String)
+
+  Dim res1 As Result
+  Dim xtblpatbilling As String
+
+  If sTable Then
+    xtblpatbilling = sTable
+  Else
+    xtblpatbilling = "tblpatbilling"
+  Endif
+  ''update main bill
+  res1 = modDatabase.$myConn.Edit(xtblpatbilling, "fldid=&1 and fldencounterval=&2 and flditemname=&3", sParent, encid, itemname)
+  If res1["fldretqty"] Then
+    res1["fldretqty"] = res1["fldretqty"] - RetQty
+  Else
+    res1["fldretqty"] = 0 - RetQty
+  Endif
+  res1["xyz"] = False
+  res1.Update
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub UpdatewithBillNo(encid As String, did As Long, billno As String, status As String)
+
+  Dim res As Result
+  Dim res1 As Result
+
+  res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", did)
+  res["fldbillno"] = billno
+  res["fldprint"] = True
+  res["fldstatus"] = status
+  res["xyz"] = False
+  res.Update()
+
+  res1 = modDatabase.$myConn.Edit("tblpatbilling", "fldencounterval=&1 and fldparent=&2 and flditemqty<&3", encid, did, 0)
+  If res1.Available Then
+    For Each res1
+      If Not res1["fldretbill"] Then
+        res1["fldretbill"] = billno
+        res1.Update
+      Endif
+    Next
+  Endif
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub UpdatewithDueNo(did As Long, billno As String, status As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblduebilling", "fldid=&1", did)
+  res["fldbillno"] = billno
+  res["fldprint"] = True
+  res["fldstatus"] = status
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+'used in cash billing
+Public Sub ServiceBillBlank(encid As String, sBilType As String, sBillingMode As String, DiscPlan As String, sLedgerAC As String, sRoute As String, itemname As String, sQTY As Float, taxper As Float, discper As Float, status As String, parentNo As Long, sav As Boolean, prt As Boolean, Optional sPayable As String, Optional sRefer As String, Optional sReason As String)
+
+  Dim itemtyp As String
+  Dim itemNo As Integer
+  Dim sRate As Float
+
+  Dim sRef As String
+  Dim sPay As String
+  Dim sReas As String
+  Dim target As String
+
+  Dim res As Result
+  Dim xCshCrd As Float
+
+  If sRefer Then
+    sRef = sRefer
+  Else
+    sRef = ""
+  Endif
+  If sPayable Then
+    sPay = sPayable
+  Else
+    sPay = ""
+  Endif
+  If sReason Then
+    sReas = sReason
+  Else
+    sReas = ""
+  Endif
+
+  itemtyp = modNonMedical.GetBillItemCategoryFromCombo(sRoute)
+  res = modDatabase.$myConn.Exec("select fldid,flditemcost,flditemunit,fldtarget from tblservicecost where flditemname=&1 and flditemtype like &2", itemname, itemtyp)
+  If res.Available Then
+    If res["fldid"] Then
+      itemNo = res["fldid"]
+    Else
+      itemNo = 0
+    Endif
+
+    If res["flditemunit"] Then
+      sRate = modNonMedical.GetCurrConvertAmount(res["flditemcost"], res["flditemunit"])
+    Else
+      sRate = res["flditemcost"]
+    Endif
+
+    If res["fldtarget"] Then
+      target = res["fldtarget"]
+    Else
+      target = ""
+    Endif
+    xCshCrd = modNonMedical.CashInCreditPerForCategory(DiscPlan, itemtyp, itemname, sBillingMode)
+    InsertBlankBillItemNewApp(encid, sBilType, sBillingMode, DiscPlan, sLedgerAC, itemtyp, itemNo, itemname, sRate, sQTY, taxper, discper, xCshCrd, status, parentNo, sav, prt, target, sPay, sRef, sReas)
+    'dont catch error. Error will rollback
+  Endif
+
+End
+
+Public Sub ServiceBillBlankLedgerPack(encid As String, sBilType As String, sBillingMode As String, DiscPlan As String, sLedgerAC As String, sRoute As String, itemname As String, sQTY As Float, status As String, parentNo As Long, sav As Boolean, prt As Boolean, Optional sPayable As String, Optional sRefer As String, Optional sReason As String)
+
+  Dim itemtyp As String
+  Dim itemNo As Integer
+  Dim sRate As Float
+
+  Dim sRef As String
+  Dim sPay As String
+  Dim sReas As String
+  Dim target As String
+
+  Dim res As Result
+  Dim taxper As Float
+  Dim discper As Float
+  Dim xCshCrd As Float
+
+  If sRefer Then
+    sRef = sRefer
+  Else
+    sRef = ""
+  Endif
+  If sPayable Then
+    sPay = sPayable
+  Else
+    sPay = ""
+  Endif
+  If sReason Then
+    sReas = sReason
+  Else
+    sReas = ""
+  Endif
+
+  itemtyp = modNonMedical.GetBillItemCategoryFromCombo(sRoute)
+  discper = modNonMedical.DiscPercentForCategoryValue(encid, DiscPlan, itemtyp, itemname, sBillingMode)
+  xCshCrd = modNonMedical.CashInCreditPerForCategory(DiscPlan, itemtyp, itemname, sBillingMode)
+  res = modDatabase.$myConn.Exec("select fldid,flditemcost,flditemunit,fldtarget,fldtaxcode from tblservicecost where flditemname=&1 and flditemtype like &2", itemname, itemtyp)
+  If res.Available Then
+    If res["fldid"] Then
+      itemNo = res["fldid"]
+    Else
+      itemNo = 0
+    Endif
+
+    If res["flditemunit"] Then
+      sRate = modNonMedical.GetCurrConvertAmount(res["flditemcost"], res["flditemunit"])
+    Else
+      sRate = res["flditemcost"]
+    Endif
+
+    If res["fldtarget"] Then
+      target = res["fldtarget"]
+    Else
+      target = ""
+    Endif
+
+    If res["fldtaxcode"] Then
+      taxper = modNonMedical.GetTaxPerFromCode(res["fldtaxcode"])
+    Else
+      taxper = 0
+    Endif
+
+    InsertBlankBillItemNewApp(encid, sBilType, sBillingMode, DiscPlan, sLedgerAC, itemtyp, itemNo, itemname, sRate, sQTY, taxper, discper, xCshCrd, status, parentNo, sav, prt, target, sPay, sRef, sReas)
+    'dont catch error. Error will rollback
+  Endif
+
+End
+
+''used for autobilling
+Public Sub GetAutoBillingClinic(encid As String, DiscPackage As String, sRoute As String, itemname As String, sQTY As Float, status As String, parentNo As Long, sav As Boolean, prt As Boolean, Optional sPayable As String, Optional sRefer As String, Optional sTarget As String)
+
+  Dim itemtyp As String
+  Dim itemNo As Integer
+
+  Dim sRate As Float
+  Dim taxper As Float
+  Dim discper As Float
+
+  Dim sPay As String
+  Dim sRef As String
+  Dim target As String
+
+  Dim sBilType As String
+  Dim res As Result
+  Dim resx As Result
+
+  Dim LedgerAC As String
+  Dim sBillingMode As String
+  Dim xCshCrd As Float
+
+  If sPayable Then
+    sPay = sPayable
+  Else
+    sPay = ""
+  Endif
+  If sRefer Then
+    sRef = sRefer
+  Else
+    sRef = ""
+  Endif
+
+  resx = modDatabase.$myConn.Exec("select fldmode,fldbillingmode,fldacledger,fldbilltype,fldreference,fldlimit from tbldiscount where fldtype=&1", DiscPackage)
+  If resx.Available Then
+    ''ledger A/C
+    LedgerAC = resx["fldacledger"]
+    ''bilmode
+    If resx["fldbillingmode"] Then
+      sBillingMode = resx["fldbillingmode"]
+    Else
+      sBillingMode = modPatient.GetPatBillingMode(encid)
+    Endif
+    ''BillType
+    sBilType = resx["fldbilltype"]
+    If Not sBilType Then
+      sBilType = "Cash"
+    Endif
+  Endif
+
+  itemtyp = modNonMedical.GetBillItemCategoryFromCombo(sRoute)
+  discper = modNonMedical.DiscPercentForCategoryValue(encid, DiscPackage, itemtyp, itemname, sBillingMode)
+  xCshCrd = modNonMedical.CashInCreditPerForCategory(DiscPackage, itemtyp, itemname, sBillingMode)
+
+  res = modDatabase.$myConn.Exec("select fldid,flditemcost,flditemunit,fldtarget,fldtaxcode from tblservicecost where flditemname=&1 and flditemtype like &2", itemname, itemtyp)
+  If res.Available Then
+    If res["fldid"] Then
+      itemNo = res["fldid"]
+    Else
+      itemNo = 0
+    Endif
+
+    If res["flditemunit"] Then
+      sRate = modNonMedical.GetCurrConvertAmount(res["flditemcost"], res["flditemunit"])
+    Else
+      sRate = res["flditemcost"]
+    Endif
+
+    If sTarget Then
+      target = sTarget
+    Else
+      If res["fldtarget"] Then
+        target = res["fldtarget"]
+      Else
+        target = ""
+      Endif
+    Endif
+
+    If res["fldtaxcode"] Then
+      taxper = modNonMedical.GetTaxPerFromCode(res["fldtaxcode"])
+    Else
+      taxper = 0
+    Endif
+
+    InsertBlankBillItemNewApp(encid, sBilType, sBillingMode, DiscPackage, LedgerAC, itemtyp, itemNo, itemname, sRate, sQTY, taxper, discper, xCshCrd, status, parentNo, sav, prt, target, sPay, sRef)
+
+  Endif
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub GetAutoBillingEntry(encid As String, DiscPackage As String, sRoute As String, itemname As String, sQTY As Float, status As String, parentNo As Long, sav As Boolean, prt As Boolean, Optional sPayable As String, Optional sRefer As String, Optional sTarget As String)
+
+  Dim itemtyp As String
+  Dim itemNo As Integer
+
+  Dim sRate As Float
+  Dim taxper As Float
+  Dim discper As Float
+
+  Dim sPay As String
+  Dim sRef As String
+  Dim target As String
+
+  Dim sBilType As String
+  Dim res As Result
+  Dim resx As Result
+
+  Dim LedgerAC As String
+  Dim sBillingMode As String
+  Dim xCshCrd As Float
+
+  If sPayable Then
+    sPay = sPayable
+  Else
+    sPay = ""
+  Endif
+  If sRefer Then
+    sRef = sRefer
+  Else
+    sRef = ""
+  Endif
+
+  resx = modDatabase.$myConn.Exec("select fldmode,fldbillingmode,fldacledger,fldbilltype,fldreference,fldlimit from tbldiscount where fldtype=&1", DiscPackage)
+  If resx.Available Then
+    ''ledger A/C
+    LedgerAC = resx["fldacledger"]
+    ''bilmode
+    If resx["fldbillingmode"] Then
+      sBillingMode = resx["fldbillingmode"]
+    Else
+      sBillingMode = modPatient.GetPatBillingMode(encid)
+    Endif
+    ''BillType
+    sBilType = resx["fldbilltype"]
+    If Not sBilType Then
+      sBilType = "Cash"
+    Endif
+  Endif
+
+  itemtyp = modNonMedical.GetBillItemCategoryFromCombo(sRoute)
+  discper = modNonMedical.DiscPercentForCategoryValue(encid, DiscPackage, itemtyp, itemname, sBillingMode)
+  xCshCrd = modNonMedical.CashInCreditPerForCategory(DiscPackage, itemtyp, itemname, sBillingMode)
+
+  res = modDatabase.$myConn.Exec("select fldid,flditemcost,flditemunit,fldtarget,fldtaxcode from tblservicecost where flditemname=&1 and flditemtype like &2", itemname, itemtyp)
+  If res.Available Then
+    If res["fldid"] Then
+      itemNo = res["fldid"]
+    Else
+      itemNo = 0
+    Endif
+
+    If res["flditemunit"] Then
+      sRate = modNonMedical.GetCurrConvertAmount(res["flditemcost"], res["flditemunit"])
+    Else
+      sRate = res["flditemcost"]
+    Endif
+
+    If sTarget Then
+      target = sTarget
+    Else
+      If res["fldtarget"] Then
+        target = res["fldtarget"]
+      Else
+        target = ""
+      Endif
+    Endif
+
+    If res["fldtaxcode"] Then
+      taxper = modNonMedical.GetTaxPerFromCode(res["fldtaxcode"])
+    Else
+      taxper = 0
+    Endif
+
+    If modBasic.$AutoBillSaveZero = "Yes" And If sRate = 0 Then
+      InsertBlankBillItemNewApp(encid, sBilType, sBillingMode, DiscPackage, LedgerAC, itemtyp, itemNo, itemname, sRate, sQTY, taxper, discper, xCshCrd, "Done", parentNo, True, prt, target, sPay, sRef)
+    Else If modBasic.$AutoBillSaveZero = "Yes" And If discper = 100 Then
+      InsertBlankBillItemNewApp(encid, sBilType, sBillingMode, DiscPackage, LedgerAC, itemtyp, itemNo, itemname, sRate, sQTY, taxper, discper, xCshCrd, "Done", parentNo, True, prt, target, sPay, sRef)
+    Else If modBasic.$AutoBillSaveFullCredit = "Yes" And If sBilType = "Credit" And If xCshCrd = 0 Then
+      InsertBlankBillItemNewApp(encid, sBilType, sBillingMode, DiscPackage, LedgerAC, itemtyp, itemNo, itemname, sRate, sQTY, taxper, discper, xCshCrd, "Done", parentNo, True, prt, target, sPay, sRef)
+    Else
+      InsertBlankBillItemNewApp(encid, sBilType, sBillingMode, DiscPackage, LedgerAC, itemtyp, itemNo, itemname, sRate, sQTY, taxper, discper, xCshCrd, status, parentNo, sav, prt, target, sPay, sRef)
+    Endif
+
+  Endif
+  'dont catch error. Error will rollback
+
+End
+
+''================================== Billing Procedures ==========================================
+Public Function GetAutoRegistCost(sDept As String, sPackage As String, sBillMode As String, sVisit As String) As Float
+
+  Dim resx As Result
+  Dim xtot As Float
+  Dim itemtyp As String
+
+  Dim res As Result
+  Dim sRate As Float
+  Dim taxper As Float
+  Dim discper As Float
+
+  xtot = 0
+  If MMain.$WebEntry = True And If modBasic.$HospCode Then
+    resx = modDatabase.$myConn.Exec("select flditemtype,flditemname,flditemqty,fldexitemtype,fldcutoff from tblautogroup where fldgroup=&1 and flddisctype=&2 and fldbillingmode=&3 and fldfollow=&4 and fldhospcode like &5", sDept, sPackage, sBillMode, sVisit, modBasic.$HospCode)
+  Else
+    resx = modDatabase.$myConn.Exec("select flditemtype,flditemname,flditemqty,fldexitemtype,fldcutoff from tblautogroup where fldgroup=&1 and flddisctype=&2 and fldbillingmode=&3 and fldfollow=&4", sDept, sPackage, sBillMode, sVisit)
+  Endif
+  If resx.Available Then
+    For Each resx
+      itemtyp = modNonMedical.GetBillItemCategoryFromCombo(resx["flditemtype"])
+
+      discper = modNonMedical.DiscPercentForCategoryAll(sPackage, itemtyp, resx["flditemname"], sBillMode)
+      If MMain.$WebEntry = True And If modBasic.$HospCode Then
+        res = modDatabase.$myConn.Exec("select fldid,flditemcost,flditemunit,fldtarget,fldtaxcode from tblservicecost where flditemname=&1 and flditemtype like &2 and fldhospcode like &3", resx["flditemname"], itemtyp, modBasic.$HospCode)
+      Else
+        res = modDatabase.$myConn.Exec("select fldid,flditemcost,flditemunit,fldtarget,fldtaxcode from tblservicecost where flditemname=&1 and flditemtype like &2", resx["flditemname"], itemtyp)
+      Endif
+      If res.Available Then
+        If res["flditemunit"] Then
+          sRate = modNonMedical.GetCurrConvertAmount(res["flditemcost"], res["flditemunit"])
+        Else
+          sRate = res["flditemcost"]
+        Endif
+        If res["fldtaxcode"] Then
+          taxper = modNonMedical.GetTaxPerFromCode(res["fldtaxcode"])
+        Else
+          taxper = 0
+        Endif
+        xtot = xtot + (sRate * resx["flditemqty"]) * (1 - discper / 100) * (1 + taxper / 100)
+      Endif
+
+    Next
+  Endif
+
+  Return xtot
+
+End
+
+Public Function GetRegistrationCost(encid As String) As Float
+
+  Dim res As Result
+  Dim atot As Float
+
+  res = modDatabase.$myConn.Exec("select fldadmitlocat,flddisctype,fldbillingmode,fldfollow from tblencounter where fldencounterval=&1", encid)
+  If res.Available Then
+    atot = GetAutoRegistCost(res["fldadmitlocat"], res["flddisctype"], res["fldbillingmode"], res["fldfollow"])
+  Else
+    atot = 0
+  Endif
+
+  Return atot
+
+End
+
+'Registration autobilling
+Public Function InsertRegistrationBilling(xMode As String, encid As String, sDept As String, sDisctype As String, sBillMode As String, sVisit As String, Optional sPayable As String) As Boolean
+
+  Dim xx As Boolean
+  Dim res As Result
+  ' Dim res1 As Result
+  Dim sPay As String
+
+  xx = False
+  If xMode Then
+    res = modDatabase.$myConn.Exec("select flditemtype,flditemname,flditemqty,fldexitemtype,fldcutoff,fldpayable from tblautogroup where fldgroup=&1 and flddisctype=&2 and fldbillingmode=&3 and fldfollow=&4", sDept, sDisctype, sBillMode, sVisit)
+    If res.Available Then
+      For Each res
+        If res["fldpayable"] = "Enable" Then
+          sPay = sPayable
+        Else
+          sPay = ""
+        Endif
+
+        If res["fldexitemtype"] Then
+          If res["fldexitemtype"] = "Before" Then
+            If Time(res["fldcutoff"]) > Time() Then
+              If xMode = "Yes" Or If xMode = "Full" Then
+                GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Done", 0, True, False, sPay)
+              Else If xMode = "Partial" Then
+                GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Punched", 0, False, False, sPay)
+              Endif
+            Endif
+          Else If res["fldexitemtype"] = "After" Then
+            If Time(res["fldcutoff"]) < Time() Then
+              If xMode = "Yes" Or If xMode = "Full" Then
+                GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Done", 0, True, False, sPay)
+              Else If xMode = "Partial" Then
+                GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Punched", 0, False, False, sPay)
+              Endif
+            Endif
+          Else
+            If xMode = "Yes" Or If xMode = "Full" Then
+              GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Done", 0, True, False, sPay)
+            Else If xMode = "Partial" Then
+              GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Punched", 0, False, False, sPay)
+            Endif
+          Endif
+
+        Else
+          If xMode = "Yes" Or If xMode = "Full" Then
+            GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Done", 0, True, False, sPay)
+          Else If xMode = "Partial" Then
+            GetAutoBillingEntry(encid, sDisctype, res["flditemtype"], res["flditemname"], res["flditemqty"], "Punched", 0, False, False, sPay)
+          Endif
+
+        Endif
+      Next
+      xx = True
+
+    Endif
+  Endif
+
+  Return xx
+  ''dont catch error. allow rollback
+
+End
+
+'' all to do when a person discharge/LAMA/Death/Refer
+Public Function ExitPatientWithBillingOfBed(encid As String) As String
+
+  Dim res As Result
+  Dim hr As Float
+  Dim bedno As String
+  Dim xitem As String
+  Dim autobil As String
+  Dim unitrate As String
+
+  Dim xrefer As String
+  Dim xpayble As String
+  Dim xmsg As String
+
+  xrefer = modBillings.GetReferralUserSetting("Service", encid)
+  xpayble = modBillings.GetPayableUserSetting("Service", encid)
+
+  bedno = modPatient.GetPatientLocation(encid)
+  res = modDatabase.$myConn.Exec("select fldid,flditem,flddisctype,fldfirsttime,fldfirstreport from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldsecondsave=&4 and fldfirstreport=&5", encid, "General Services", True, False, "Bed")                                                                   ''
+  If res.Available = True Then
+    res.MoveLast
+
+    autobil = modBasic.$AutoBillBed
+    xitem = modNonMedical.GetIPDepartChargeRate(res["flditem"], res["flddisctype"], bedno)
+    modPatientGeneral.UpdatePatientTableSecondTime(res["fldid"], bedno, xitem)
+
+    unitrate = modNonMedical.GetBillingTargeDept(xitem, "General Services")
+    hr = modPatPatho.GetServiceUseDuration(encid, "General Services", res["flditem"], unitrate, res["fldfirsttime"], Now())
+
+    If autobil = "Yes" Or If autobil = "Full" Or If autobil = "Partial" Then
+      If xitem Then
+        modBillings.EnterBillingForInterval(autobil, "Service", encid, res["flddisctype"], xitem, hr, 0, xpayble, xrefer)
+      Else
+        xmsg = "Bed Charge not specified."
+      Endif
+    Endif
+  Endif
+
+  Return xmsg
+
+End
+
+'insert auto billing for equipment and service (for inpatients)
+Public Sub EnterBillingForInterval(autoBilling As String, sType As String, encid As String, DiscType As String, txtitem As String, txthr As Float, id As Long, Optional sPayable As String, Optional sRefer As String)
+
+  Dim rte As Float
+  Dim xx As String
+  Dim yy As String
+
+  If sPayable Then
+    xx = sPayable
+  Else
+    xx = ""
+  Endif
+  If sRefer Then
+    yy = sRefer
+  Else
+    yy = ""
+  Endif
+
+  rte = modNonMedical.GetCashBillItemCost(txtitem, modNonMedical.GetBillItemCategoryFromCombo(sType))
+  If rte Then
+    If autoBilling = "Yes" Or If autoBilling = "Full" Then
+      GetAutoBillingEntry(encid, DiscType, sType, txtitem, txthr, "Done", id, True, False, xx, yy)
+    Else If autoBilling = "Partial" Then
+      GetAutoBillingEntry(encid, DiscType, sType, txtitem, txthr, "Punched", id, False, False, xx, yy)
+    Endif
+  Endif
+  'don't catch error. ALWAYS USED WITH TRABSACTION SAFE MODE
+
+End
+
+''Bulk billing of bed charges and Morning Consultation charge (Round)
+Public Sub GetAutoBillingRegularCharges(sType As String)
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim rsn As Result
+  Dim xitem As String
+  Dim sRate As Float
+  Dim taxper As Float
+  Dim disc As Float
+  Dim itemNo As Integer
+
+  Dim LedgerAC As String
+  Dim sBilType As String
+  Dim res2 As Result
+  Dim resx As Result
+  Dim xCshCrd As Float
+
+  Inc Application.Busy
+  res = modDatabase.$myConn.Exec("select fldencounterval,fldcurrlocat,fldbillingmode,flddisctype from tblencounter where fldadmission=&1", "Admitted")
+  If res.Available Then
+    modDatabase.$myConn.Begin
+    For Each res
+      res1 = modDatabase.$myConn.Exec("select flddept from tbldepartmentbed where fldencounterval=&1", res["fldencounterval"])
+      If res1.Available Then
+        If sType = "Bed Charge" Then
+          xitem = modNonMedical.GetIPDepartChargeRate(res1!flddept, modNonMedical.GetAutoIPBillingPack("Service", res["fldencounterval"]), res["fldcurrlocat"])
+        Else If sType = "Round Charge" Then
+          xitem = modNonMedical.GetIPDepartConsultRate(res1!flddept, modNonMedical.GetAutoIPBillingPack("Service", res["fldencounterval"]), res["fldcurrlocat"])
+        Endif
+
+        res2 = modDatabase.$myConn.Exec("select fldid,flditemcost,flditemunit,fldtarget,fldtaxcode from tblservicecost where flditemname=&1 and flditemtype like &2", xitem, "General Services")
+        If res2.Available Then
+          If res2["fldid"] Then
+            itemNo = res2["fldid"]
+          Else
+            itemNo = 0
+          Endif
+          If res2["flditemunit"] Then
+            sRate = modNonMedical.GetCurrConvertAmount(res2["flditemcost"], res2["flditemunit"])
+          Else
+            sRate = res2["flditemcost"]
+          Endif
+          If res2["fldtaxcode"] Then
+            taxper = modNonMedical.GetTaxPerFromCode(res2["fldtaxcode"])
+          Else
+            taxper = 0
+          Endif
+
+          disc = modNonMedical.DiscPercentForCategoryValue(res["fldencounterval"], res["flddisctype"], "General Services", xitem, res["fldbillingmode"])
+          xCshCrd = modNonMedical.CashInCreditPerForCategory(res["flddisctype"], "General Services", xitem, res["fldbillingmode"])
+
+          resx = modDatabase.$myConn.Exec("select fldmode,fldbillingmode,fldacledger,fldbilltype,fldreference,fldlimit from tbldiscount where fldtype=&1", res["flddisctype"])
+          If resx.Available Then
+            LedgerAC = resx["fldacledger"]
+            sBilType = resx["fldbilltype"]
+            If Not sBilType Then
+              sBilType = "Cash"
+            Endif
+          Endif
+
+          InsertBlankBillItemNewApp(res["fldencounterval"], sBilType, res["fldbillingmode"], res["flddisctype"], LedgerAC, "General Services", itemNo, xitem, sRate, 1, taxper, disc, xCshCrd, "Done", 0, True, False)
+        Endif
+
+      Endif
+    Next
+
+    rsn = modDatabase.$myConn.Create("tblcronjob")
+    rsn["fldcategory"] = sType
+    rsn["fldhostmac"] = modHelpVariable.$MACAddress
+    rsn["fldscript"] = ""
+    rsn["fldtime"] = Now()
+    rsn["fldstatus"] = False
+    rsn.Update
+    modDatabase.$myConn.Commit
+  Else
+    Message.Warning("No Admitted Patients", "OK")
+  Endif
+  Dec Application.Busy
+  Message.Info("Transaction completed", "OK")
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+  Message.Warning("Transaction Rolled Back", "OK")
+
+End
+
+'NOTE: ------------------------------------ Set Discount Mode ----------------------------
+Public Function GetDefaultDiscountOnRegistration(patno As String, compid As String) As String
+
+  Dim xx As String
+
+  If modBasic.$RegistDiscountType = "Planned" Then
+    xx = modPatient.GetPatientFixDisc(patno)
+  Else If modBasic.$RegistDiscountType = "Scheduled" Then
+    xx = modNonMedical.GetScheduledBillingScheme(compid)
+  Else
+    xx = ""
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetDefaultDiscountFreeRegistration(compid As String) As String
+
+  Dim xx As String
+
+  If modBasic.$RegistDiscountType = "Scheduled" Then
+    xx = modNonMedical.GetScheduledBillingScheme(compid)
+  Else
+    xx = modBasic.$RegistDefaultDisc
+  Endif
+
+  Return xx
+
+End
+
+Public Sub GetDefDiscFixOnRegistration(cmbdisc As ComboBox)
+
+  If cmbdisc.Text Then
+    If modBasic.$RegistDiscountFix = "Yes" Then
+      cmbdisc.Enabled = False
+    Else If modBasic.$RegistDiscountFix = "No" Then
+      cmbdisc.Enabled = True
+    Endif
+  Endif
+
+End
+
+'while punching
+Public Sub SetCashBillingTaxDiscountText(txttax As ValueBox, txtdisc As ValueBox)
+
+  Dim tax As String
+  Dim disc As String
+
+  tax = modBasic.$BillFixTax
+  If tax = "Yes" Then
+    txttax.ReadOnly = True
+  Else If tax = "No" Then
+    txttax.ReadOnly = False
+  Else If tax = "Zero" Then
+    txttax.Value = 0
+    txttax.ReadOnly = True
+  Else
+    txttax.ReadOnly = True
+  Endif
+
+  disc = modBasic.$BillFixDisc
+  If disc = "Yes" Then
+    txtdisc.ReadOnly = True
+  Else If disc = "No" Then
+    If modBasic.$BillSubsidyMode = "Enable" Then
+      txtdisc.ReadOnly = True
+    Else
+      txtdisc.ReadOnly = False
+    Endif
+  Else If disc = "Zero" Then
+    txtdisc.Value = 0
+    txtdisc.ReadOnly = True
+  Else
+    txtdisc.ReadOnly = True
+  Endif
+
+End
+
+'for fmBillentry
+Public Sub SetCashBillingTaxDiscountTextTwo(txttax As ValueBox, txttaxamt As ValueBox, txtdisc As ValueBox, txtdiscamt As ValueBox)
+
+  If modBasic.$BillFixSumTax = "No" Then
+    txttax.ReadOnly = False
+    txttaxamt.ReadOnly = False
+  Else
+    txttax.ReadOnly = True
+    txttaxamt.ReadOnly = True
+  Endif
+
+  If modBasic.$BillFixSumDisc = "No" Then
+    txtdisc.ReadOnly = False
+    txtdiscamt.ReadOnly = False
+  Else
+    txtdisc.ReadOnly = True
+    txtdiscamt.ReadOnly = True
+  Endif
+
+End
+
+''-------------- Lock Billing mode combo -------------------
+Public Function GetPayableUserSetting(sType As String, encid As String) As String
+
+  Dim xx As String
+  Dim xauto As String
+  Dim xuser As String
+
+  xauto = modGlobalSetting.ShowSettingFromDB("FixPayableUser/" & sType)
+  If xauto = "User" Then
+    xuser = modBasic.$lbluser
+  Else If xauto = "Consult" Then
+    xx = modPatient.GetAttendingConsultant(encid)
+    xuser = xx
+  Else
+    xuser = ""
+  Endif
+  Return xuser
+
+End
+
+Public Function GetReferralUserSetting(sType As String, encid As String) As String
+
+  Dim xx As String
+  Dim xauto As String
+  Dim xuser As String
+
+  xauto = modGlobalSetting.ShowSettingFromDB("FixReferralUser/" & sType)
+  If xauto = "User" Then
+    xuser = modBasic.$lbluser
+  Else If xauto = "Consult" Then
+    xx = modPatient.GetAttendingConsultant(encid)
+    xuser = xx
+  Else
+    xuser = ""
+  Endif
+  Return xuser
+
+End
+
+Public Function CheckLastSalesItemDate(xitem As String, xPatientNum As String, xPatientCode As String, sPackage As String) As Date
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim xdate As Date
+
+  If modBasic.$SalesHistoryAlert Then
+    res = modDatabase.$myConn.Limit(2).Exec("select fldtime,(flditemqty-fldretqty) as qty from tblpatbilling where fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&1) and flditemname=&2 and fldsave=&3 and flddisctype like &4 and fldtime IS NOT NULL and flditemqty>fldretqty ORDER BY fldtime DESC", xPatientNum, xitem, True, sPackage)
+    If res.Available Then
+      Select modBasic.$SalesHistoryAlert
+        Case "Patient No", "Patient Code", "Data Repo"
+          res.MoveFirst
+          xdate = res["fldtime"]
+      End Select
+
+    Else
+      Select modBasic.$SalesHistoryAlert
+        Case "Patient Code", "Data Repo"
+          If xPatientCode Then
+            res1 = modDatabase.$myConn.Limit(2).Exec("select fldtime,(flditemqty-fldretqty) as qty from tblpatbilling where fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblpatientinfo where fldptcode=&1)) and flditemname=&2 and fldsave=&3 and flddisctype like &4 and fldtime IS NOT NULL and flditemqty>fldretqty ORDER BY fldtime DESC", xPatientCode, xitem, True, sPackage)
+            If res1.Available Then
+              res1.MoveFirst
+              xdate = res1["fldtime"]
+            Endif
+          Endif
+      End Select
+
+    Endif
+
+    If Not xdate Then
+      If modBasic.$SalesHistoryAlert = "Data Repo" Then
+        If modDatabase.$repoConn.Opened = True Then
+          res2 = modDatabase.$repoConn.Limit(2).Exec("select fldtime,(flditemqty-fldretqty) as qty,fldhospcode from tblpatbilling where fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&1) and flditemname=&2 and fldsave=&3 and flddisctype like &4 and fldtime IS NOT NULL and flditemqty>fldretqty ORDER BY fldtime DESC", xPatientNum, xitem, True, sPackage)
+          If res2.Available Then
+            res2.MoveFirst
+            xdate = res2["fldtime"]
+          Endif
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+  Return xdate
+
+End

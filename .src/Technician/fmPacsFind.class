@@ -1,0 +1,436 @@
+' Gambas class file
+
+Private $encNo As String
+Private $sType As String
+Private $sIndex As Long
+
+Private $encList As String[]
+Private $encid As String
+Private $sFind As String
+Private $sGet As String
+Private $ssL As String
+Private xGridData As Variant[]
+
+Public Sub _new(encid As String, sType As String)
+
+  $encNo = encid
+  $sType = sType
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  cmbserver.List = modMisc.GetPacsServerList()
+  If MMain.$SISHAppMode = "HIS" Then
+    cmbserver.Add("REPO")
+  Endif
+
+  If cmbserver.List.Count = 1 Then
+    cmbserver.Index = 0
+  Endif
+
+End
+
+Private Function GetEncounterList() As String[]
+
+  Dim xxx As String[]
+
+  Dim xpatno As String
+
+  xpatno = modPatient.GetPatientNoByEnc($encNo)
+  If cmbserver.Text = "REPO" Then
+    Inc Application.Busy
+    modRepository.TransferMinRemoConn(xpatno)
+    xxx = modPatient.GetEncListFromEncSetting($encNo, modRepository.$RepoCon)
+    Dec Application.Busy
+  Else
+    xxx = modPatient.GetEncListFromEncSetting($encNo)
+  Endif
+  Return xxx
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim xfind As String
+  Dim xget As String
+  Dim xssl As String
+
+  If cmbserver.Text Then
+    GridView1.Clear()
+    GridView2.Clear()
+    If cmbserver.Text = "REPO" Then
+      modRepository.ReadRepoConfig()
+      modPACS.GetRemotePacsSetting()
+      xfind = modSettings.ShowSettingFromFIle("Repository/FindCommand")
+      xget = modSettings.ShowSettingFromFIle("Repository/GetCommand")
+      xssl = modSettings.ShowSettingFromFIle("Repository/UseSSL")
+      If xfind Then
+        $sFind = xfind
+      Else
+        $sFind = "dcmtk"
+      Endif
+      If xget Then
+        $sGet = xget
+      Else
+        $sGet = "Orthanc"
+      Endif
+      If xssl Then
+        $ssL = xssl
+      Else
+        $ssL = "Disable"
+      Endif
+    Else
+      MMain.InitialAppMode()
+      modPACS.GetPacsSetting(cmbserver.Text)
+      $sFind = modSettings.ShowSettingFromFIle(cmbserver.Text & "/" & "FindCommand")
+      $sGet = modSettings.ShowSettingFromFIle(cmbserver.Text & "/" & "GetCommand")
+      $ssL = modSettings.ShowSettingFromFIle(cmbserver.Text & "/" & "UseSSL")
+    Endif
+
+    lblip.Text = modPACS.$sHost
+    If $sType = "Visit" Then
+      $encList = [$encNo]
+    Else If $sType = "History" Then
+      $encList = GetEncounterList()
+    Else
+      $encList = [$encNo]
+      $sIndex = CStr($sType)
+      If $sIndex Then
+        btnselect.Enabled = True
+      Endif
+    Endif
+    If modPACS.$sHost And If modPACS.$sAET And If modPACS.$sPPort Then
+      FillStudyData()
+    Endif
+  Endif
+
+End
+
+Public Sub btncopy_Click()
+
+  Clipboard.Copy(txtstudycode.Text & "@" & modPACS.$sHost & ":" & modPACS.$sPPort)
+
+End
+
+''=============================== First Grid ============================
+Private Function GetStudyData() As Variant[]
+
+  Dim Row As Integer
+  Dim xcoll As Collection
+  Dim aList As Variant[]
+
+  Dim xVar As Variant[]
+  Dim aColl As Collection
+  Dim encid As String
+
+  xVar = New Variant[]
+  If $sFind = "Orthanc" Then
+    For Each encid In $encList
+      xcoll = modPACS.GetOrthancValueJSON("patients", modPACS.GetOrthancString(encid))
+      If xcoll And If xcoll.Count Then
+        aList = xcoll["Studies"]
+        For Row = 0 To aList.Count - 1
+          aColl = New Collection
+          aColl.Add("", CStr(0))
+          aColl.Add(xcoll["MainDicomTags"]["PatientID"], CStr(1))
+          aColl.Add("", CStr(2))
+          aColl.Add(xcoll["MainDicomTags"]["PatientName"], CStr(3))
+          aColl.Add(xcoll["MainDicomTags"]["PatientSex"], CStr(4))
+          aColl.Add("", CStr(5))
+          aColl.Add(aList[Row], CStr(6))
+          xVar.Add(aColl)
+        Next
+      Endif
+    Next
+
+  Else If $sFind = "Dicomweb" Then
+    For Each encid In $encList
+      aList = modPACS.GetWADOFindStudyJSON(encid)
+      If aList And If aList.Count Then
+        For Row = 0 To aList.Count - 1
+          aColl = New Collection
+          aColl.Add(aList[Row]["00080020"]["Value"][0], CStr(0))
+          aColl.Add(aList[Row]["00100020"]["Value"][0], CStr(1))
+          aColl.Add("", CStr(2))
+          aColl.Add(aList[Row]["00100010"]["Value"][0]["Alphabetic"], CStr(3))
+          aColl.Add(aList[Row]["00100040"]["Value"][0], CStr(4))
+          aColl.Add("", CStr(5))
+          aColl.Add(aList[Row]["0020000D"]["Value"][0], CStr(6))
+          xVar.Add(aColl)
+        Next
+      Endif
+    Next
+
+  Else
+    For Each encid In $encList
+      aList = modPACS.GetCFindStudyValue(encid)
+      If aList And If aList.Count Then
+        For Row = 0 To aList.Count - 1
+          aColl = New Collection
+          aColl.Add(aList[Row]["StudyDate"], CStr(0))
+          aColl.Add(aList[Row]["PatientID"], CStr(1))
+          aColl.Add("", CStr(2))
+          aColl.Add(aList[Row]["PatientName"], CStr(3))
+          aColl.Add(aList[Row]["PatientSex"], CStr(4))
+          aColl.Add("", CStr(5))
+          aColl.Add(aList[Row]["StudyInstanceUID"], CStr(6))
+          xVar.Add(aColl)
+        Next
+      Endif
+    Next
+
+  Endif
+
+  Return xVar
+
+End
+
+Private Sub FillStudyData()
+
+  Dim xFinal As Variant[]
+
+  xFinal = GetStudyData()
+  GridView1.Clear
+  GridView1.Columns.Count = 7
+  GridView1.Rows.Count = xFinal.Count
+  LoadVariableToGrid(xFinal, GridView1)
+  ResizeFirstGrid()
+
+End
+
+Private Sub LoadVariableToGrid(xFinal As Variant[], xGridView As GridView)
+
+  Dim xRowVal As Collection
+  Dim Row As Integer
+  Dim Column As Integer
+
+  xGridData = xFinal
+  For Row = 0 To xFinal.Count - 1
+    xRowVal = xFinal[Row]
+    For Column = 0 To xGridView.Columns.Count - 1
+      xGridView[Row, Column].Text = xRowVal[CStr(Column)]
+    Next
+  Next
+
+End
+
+Private Sub ResizeFirstGrid()
+
+  With GridView1
+    .Rows.Height = 1.25 * modBasic.$AppGridRowHeight
+    .Columns[0].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 250 * modBasic.$AppWidthRatio ''StudyUID
+
+    .Columns[0].Text = "Date"
+    .Columns[1].Text = "EncID"
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Sex"
+    .Columns[6].Text = "StudyInstanceUID"
+  End With
+  GridView1.Row = 0
+
+End
+
+Public Sub btnsavestudy_Click()
+
+  Dim xdir As String
+
+  If GridView1.Rows.Selection.Count Then
+    If Dialog.SelectDirectory() Then Return
+    xdir = Dialog.Path
+    Inc Application.Busy
+    modPACS.DicomStudyDownload(xdir, $sFind, $sGet, $encid, GridView1[GridView1.Row, 6].Text)
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub btnexecstudy_Click()
+
+  Dim xdir As String
+  Dim xdown As String
+  Dim xshow As String
+  Dim arcmd As String[]
+
+  If GridView1.Rows.Selection.Count Then
+    xdir = File.Dir(Temp())
+    xdown = xdir &/ modString.GetNowString() & "down"
+    xshow = xdir &/ modString.GetNowString() & "show"
+    If Exist(xdown) Then
+      Shell "rm -r " & xdown Wait
+    Endif
+    Mkdir xdown
+    If Exist(xshow) Then
+      Shell "rm -r " & xshow Wait
+    Endif
+    Mkdir xshow
+
+    If Exist("/opt/weasis/bin/Weasis") Then
+      Inc Application.Busy
+      modPACS.DicomStudyDownload(xdown, $sFind, $sGet, $encid, GridView1[GridView1.Row, 6].Text)
+      Dec Application.Busy
+      modDevAll.GetZipExtract(xdown &/ GridView1[GridView1.Row, 6].Text, xshow)
+      arcmd = ["/opt/weasis/bin/Weasis", xshow]
+      modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+    Endif
+  Endif
+
+End
+
+''========================== Second Grid ==============================
+Public Sub GridView1_Click()
+
+  Dim Row As Integer
+  Dim xcoll As Collection
+  Dim aList As Variant[]
+
+  GridView2.Clear
+  $encid = GridView1[GridView1.Row, 1].Text
+  txtstudycode.Text = GridView1[GridView1.Row, 6].Text
+  GridView2.Columns.Count = 4
+  If $sFind = "Orthanc" Then
+    xcoll = modPACS.GetOrthancValueJSON("studies", GridView1[GridView1.Row, 6].Text)
+    If xcoll And If xcoll.Count Then
+      aList = xcoll["Series"]
+      GridView2.Rows.Count = aList.Count
+      For Row = 0 To aList.Count - 1
+        GridView2[Row, 0].Text = ""
+        GridView2[Row, 1].Text = GridView1[GridView1.Row, 6].Text
+        GridView2[Row, 2].Picture = Picture["icon:/small/attach"]
+        GridView2[Row, 2].Text = ""
+        GridView2[Row, 3].Text = aList[Row]
+      Next
+    Endif
+
+  Else If $sFind = "Dicomweb" Then
+    aList = modPACS.GetWADOFindSeriesJSON($encid, GridView1[GridView1.Row, 6].Text)
+    If aList And If aList.Count Then
+      GridView2.Rows.Count = aList.Count
+      For Row = 0 To aList.Count - 1
+        GridView2[Row, 0].Text = aList[Row]["00080060"]["Value"][0]
+        GridView2[Row, 1].Text = GridView1[GridView1.Row, 6].Text
+        GridView2[Row, 2].Picture = Picture["icon:/small/attach"]
+        GridView2[Row, 2].Text = ""
+        GridView2[Row, 3].Text = aList[Row]["0020000E"]["Value"][0]
+      Next
+    Endif
+
+  Else
+    aList = modPACS.GetCFindSeriesValue($encid, GridView1[GridView1.Row, 6].Text)
+    If aList And If aList.Count Then
+      GridView2.Rows.Count = aList.Count
+      For Row = 0 To aList.Count - 1
+        GridView2[Row, 0].Text = aList[Row]["Modality"]  ''GetDicomValue(FileList[Row], "Modality")
+        GridView2[Row, 1].Text = GridView1[GridView1.Row, 6].Text
+        GridView2[Row, 2].Picture = Picture["icon:/small/attach"]
+        GridView2[Row, 2].Text = ""
+        GridView2[Row, 3].Text = aList[Row]["SeriesInstanceUID"]  'GetDicomValue(FileList[Row], "SeriesInstanceUID")
+      Next
+    Endif
+
+  Endif
+  ResizeSecondGridView()
+
+End
+
+Private Sub ResizeSecondGridView()
+
+  With GridView2
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 1 ''Study UID
+    .Columns[2].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 500 * modBasic.$AppWidthRatio ''series UID
+
+    .Columns[0].Text = "Modality"
+    .Columns[3].Text = "SeriesInstanceUID"
+  End With
+  GridView2.Row = 0
+
+End
+
+Public Sub GridView2_Click()
+
+  Dim hForm As FmPACSInstance
+
+  If GridView2.Column = 2 Then
+    If cmbserver.Text Then
+      hForm = New FmPACSInstance(cmbserver.Text, $encid, GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 3].Text)
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim xdir As String
+  Dim xVar As Variant[]
+
+  If GridView2.Rows.Selection.Count Then
+    If Dialog.SelectDirectory() Then Return
+    xdir = Dialog.Path
+    Inc Application.Busy
+    If $sGet = "Orthanc" And If chkanonym.Value = False Then
+      modPACS.DicomSeriesDownload(xdir, $sFind, $encid, GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 3].Text)
+    Else
+      xVar = modPACS.GetDicomDIR($sFind, xdir &/ GridView2[GridView2.Row, 3].Text, $encid, GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 3].Text, chkanonym.Value)                ''
+    Endif
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub btndesktop_Click()
+
+  If GridView2.Rows.Selection.Count Then
+    Inc Application.Busy
+    modPACS.DicomSeriesAppView($sFind, $encid, GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 3].Text, chkanonym.Value)
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub btnwebview_Click()
+
+  Dim xLink As String
+
+  If GridView2.Rows.Selection.Count Then
+    xLink = modPACS.DicomSeriesWebView($sFind, $encid, GridView2[GridView2.Row, 1].Text, GridView2[GridView2.Row, 3].Text)
+    modControlSub.OpenBrowser(xLink)
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  MMain.InitialAppMode()
+
+End
+
+Public Sub btnselect_Click()
+
+  Dim res As Result
+
+  If GridView2.Rows.Selection.Count Then
+    res = modDatabase.$myConn.Edit("tblpatradiotest", "fldid=&1", $sIndex)
+    If res.Available Then
+      res["fldpacstudy"] = GridView2[GridView2.Row, 1].Text
+      res["fldpacseries"] = GridView2[GridView2.Row, 3].Text
+      res["fldpacsform"] = $sFind
+      res.Update
+      Balloon.Info(("Information updated"), btnselect)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+
+  Endif
+
+End

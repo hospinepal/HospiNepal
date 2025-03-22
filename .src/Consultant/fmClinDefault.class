@@ -1,0 +1,294 @@
+' Gambas class file
+
+Private $OptionList As Variant[]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  cmbcategory.List = ["History", "Discharge"]
+  cmbformat.List = ["Common", "Format A", "Format B", "Format C", "Claim Code", "Accident SSF", "Medical SSF", "Critical SSF", "Staff List"]
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub cmbcategory_Click()
+
+  If cmbcategory.Text Then
+    txtsubtest.List = GetVariableList()
+  Endif
+
+End
+
+Private Function GetDefTable() As String
+
+  Dim sTable As String
+
+  If cmbcategory.Text = "History" Then
+    sTable = "tblhistory"
+  Else If cmbcategory.Text = "Discharge" Then
+    sTable = "tbldischarge"
+  Endif
+
+  Return sTable
+
+End
+
+Private Function GetVariableList() As String[]
+
+  Dim xxx As String[]
+  Dim xList As String[]
+  Dim xfinal As String[]
+
+  xxx = New String[]
+  If cmbcategory.Text = "History" Then
+    xxx.Add("History of Illness")
+    xList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select flditem as col from tblhistory where fldcomp like &1", modBasic.$compID))
+    If xList.Count Then
+      xxx.Insert(xList)
+    Endif
+
+  Else If cmbcategory.Text = "Discharge" Then
+    xList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select flditem as col from tbldischarge where fldcomp like &1", modBasic.$compID))
+    If xList.Count Then
+      xxx.Insert(xList)
+    Else
+      xxx.Insert(["Condition of Discharge", "Advice on Discharge"])
+    Endif
+  Endif
+
+  xfinal = modString.BinaryDistinctStringArray(xxx)
+  Return xfinal
+
+End
+
+Public Sub btnshow_Click()
+
+  Dim res As Result
+  Dim xVar As Variant[]
+
+  $OptionList = New Variant[]
+  res = modDatabase.$myConn.Exec(Subst("select fldid,flddetail,fldoptions from &1", GetDefTable()) & " where flditem=&1 and fldcomp=&2 and fldformat like &3", txtsubtest.Text, modBasic.$compID, cmbformat.Text)             ''
+  If res.Available Then
+    res.MoveFirst
+    txtdetail.RichText = res["flddetail"]
+    If res["fldoptions"] Then
+      Try xVar = JSON.Decode(res["fldoptions"])
+      If xVar Then
+        $OptionList = xVar
+        SetOptionGrid()
+      Endif
+    Endif
+  Else
+    txtdetail.RichText = ""
+    GridView1.Clear()
+  Endif
+
+End
+
+Public Sub btnBrOK_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+
+  If cmbcategory.Text And If txtsubtest.Text And If cmbformat.Text Then
+    res = modDatabase.$medConn.Edit(GetDefTable(), "flditem=&1 and fldcomp=&2 and fldformat like &3", Trim(txtsubtest.Text), modBasic.$compID, cmbformat.Text)
+    If res.Available Then
+      res["flddetail"] = txtdetail.RichText
+      res["fldoptions"] = JSON.Encode($OptionList)
+      res.Update()
+      Balloon.Info(("Information updated"), btnBrOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Else
+      res1 = modDatabase.$medConn.Create(GetDefTable())
+      res1["flditem"] = Trim(txtsubtest.Text)
+      res1["fldformat"] = cmbformat.Text
+      res1["flddetail"] = txtdetail.RichText
+      res1["fldoptions"] = JSON.Encode($OptionList)
+      res1["fldcomp"] = modBasic.$compID
+      res1.Update()
+      Balloon.Info(("Information saved"), btnBrOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Endif
+  txtsubtest.SetFocus
+
+End
+
+Public Sub btnBrCancel_Click()
+
+  If cmbcategory.Text Then
+    modDatabase.$medConn.Delete(GetDefTable(), "flditem=&1 and fldcomp=&2 and fldformat=&3", Trim(txtsubtest.Text), modBasic.$compID, cmbformat.Text)
+    txtdetail.RichText = ""
+    txtsubtest.Text = ""
+    cmbformat.Text = ""
+    GridView1.Clear()
+    $OptionList = New Variant[]
+    Balloon.Delete(("Information deleted"), btnBrCancel)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub txtsubtest_LostFocus()
+
+  txtsubtest.Text = String.UCaseFirst(txtsubtest.Text)
+
+End
+
+''-------------------------- Options --------------
+Public Sub btnaddoption_Click()
+
+  Dim sColl As Collection
+
+  sColl = New Collection
+  If txtvariable.Text Then
+    sColl.Add(Trim(txtvariable.Text), CStr(0))
+    sColl.Add(Trim(txtoptions.Text), CStr(1))
+    $OptionList.Add(sColl)
+    Balloon.Info(("Information saved"), btnaddoption)
+    Balloon.Delay = modBasic.$BalloonDelay
+    SetOptionGrid()
+  Endif
+
+End
+
+Public Sub btndeloption_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    $OptionList.Remove(GridView1.Row)
+    Balloon.Delete(("Information deleted"), btndeloption)
+    Balloon.Delay = modBasic.$BalloonDelay
+    SetOptionGrid()
+  Endif
+
+End
+
+Private Sub SetOptionGrid()
+
+  GridView1.Clear()
+  If $OptionList.Count Then
+    GridView1.Columns.Count = 2
+    GridView1.Rows.Count = $OptionList.Count
+    LoadVariableToGrid($OptionList, GridView1)
+  Endif
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 200 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Variable"
+    .Columns[1].Text = "Values"
+  End With
+
+End
+
+Private Sub LoadVariableToGrid(xFinal As Variant[], xGridView As GridView)
+
+  Dim xRowVal As Collection
+  Dim Row As Integer
+  Dim Column As Integer
+
+  For Row = 0 To xFinal.Count - 1
+    xRowVal = xFinal[Row]
+    For Column = 0 To xGridView.Columns.Count - 1
+      xGridView[Row, Column].Text = xRowVal[CStr(Column)]
+    Next
+  Next
+
+End
+
+Public Sub btndefaultformats_Click()
+
+  Dim xList As String[] = ["Past History", "Treatment History", "Medication History", "Personal History", "Surgical History", "Occupational History", "Social History", "Family History"]
+  Dim xItem As String
+  Dim yList As String[] = ["Condition of Discharge", "Advice on Discharge"]
+  Dim yItem As String
+  Dim res As Result
+  Dim res1 As Result
+
+  For Each xItem In xList
+    res = modDatabase.$medConn.Edit("tblhistory", "flditem=&1 and fldcomp=&2", xItem, modBasic.$compID)
+    If Not res.Available Then
+      res1 = modDatabase.$medConn.Create("tblhistory")
+      res1["flditem"] = xItem
+      res1["fldformat"] = "Common"
+      res1["flddetail"] = ""
+      res1["fldoptions"] = ""
+      res1["fldcomp"] = modBasic.$compID
+      res1.Update()
+    Endif
+  Next
+
+  For Each yItem In yList
+    res = modDatabase.$medConn.Edit("tbldischarge", "flditem=&1 and fldcomp=&2", yItem, modBasic.$compID)
+    If Not res.Available Then
+      res1 = modDatabase.$medConn.Create("tbldischarge")
+      res1["flditem"] = yItem
+      res1["fldformat"] = "Common"
+      res1["flddetail"] = ""
+      res1["fldoptions"] = ""
+      res1["fldcomp"] = modBasic.$compID
+      res1.Update()
+    Endif
+  Next
+
+  Balloon.Info(("Information saved"), btndefaultformats)
+  Balloon.Delay = modBasic.$BalloonDelay
+
+End
+
+Public Sub btnclaim_Click()
+
+  Dim xList As String[] = ["Co-Morbidity Disease"]
+  Dim xItem As String
+  Dim yList As String[] = ["ICU Note", "Ventilator Note", "BIPAP/CPAP Note", "Operation Description", "Condition of Discharge", "Follow Up Advice"]
+  Dim yItem As String
+  Dim res As Result
+  Dim res1 As Result
+
+  For Each xItem In xList
+    res = modDatabase.$medConn.Edit("tblhistory", "flditem=&1 and fldcomp=&2", xItem, modBasic.$compID)
+    If Not res.Available Then
+      res1 = modDatabase.$medConn.Create("tblhistory")
+      res1["flditem"] = xItem
+      res1["fldformat"] = "Claim Code"
+      res1["flddetail"] = ""
+      res1["fldoptions"] = ""
+      res1["fldcomp"] = modBasic.$compID
+      res1.Update()
+    Endif
+  Next
+
+  For Each yItem In yList
+    res = modDatabase.$medConn.Edit("tbldischarge", "flditem=&1 and fldcomp=&2", yItem, modBasic.$compID)
+    If Not res.Available Then
+      res1 = modDatabase.$medConn.Create("tbldischarge")
+      res1["flditem"] = yItem
+      res1["fldformat"] = "Claim Code"
+      res1["flddetail"] = ""
+      res1["fldoptions"] = ""
+      res1["fldcomp"] = modBasic.$compID
+      res1.Update()
+    Endif
+  Next
+
+  Balloon.Info(("Information saved"), btndefaultformats)
+  Balloon.Delay = modBasic.$BalloonDelay
+
+End

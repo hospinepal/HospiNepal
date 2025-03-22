@@ -1,0 +1,271 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $strType As String
+Private $encid As String
+Private $Status As String
+
+Public Sub _new(strType As String, encid As String, sPath As String)
+
+  $strType = strType
+  $encid = encid
+  If sPath Then
+    MediaView1.Tag = sPath
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  Dim xx As Boolean
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  Me.Title = $strType & " Files"
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  $Status = modPatient.CurrentAdmissionStatus($encid)
+  xx = modPatient.EnableClinicForm($Status)
+  btnOK.Enabled = xx
+  btnChange.Enabled = xx
+  ShowGridImage()
+  DisplaySelectImg()
+  txttitle.Text = $strType & "-" & CStr(dgimage.Rows.Count + 1)
+  txttitle.SelectAll()
+  txttitle.SetFocus
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Private Sub ShowGridImage()
+
+  Dim sql As String
+
+  If MMain.$WebEntry = True Then
+    sql = "select fldrepoid,fldtitle,fldlink from tblpatimagedata where fldcateg=&1 and fldencounterval=&2"
+  Else
+    sql = "select fldid,fldtitle,fldlink from tblpatimagedata where fldcateg=&1 and fldencounterval=&2"
+  Endif
+  $rData = modDatabase.$myConn.Exec(sql, $strType, $encid)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(dgimage, $rData, $aMyFields)
+  dgimage.Columns[0].Width = 1
+  dgimage.Columns[1].Width = 275 * modBasic.$AppWidthRatio
+  dgimage.Columns[2].Width = 1
+
+End
+
+Public Sub dgimage_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(dgimage, Row)
+  dgimage.Data.Text = $rData[$aMyFields[Column]]
+
+End
+
+Public Sub dgimage_Click()
+
+  DisplayBlobData(dgimage[dgimage.Row, 0].Text)
+  DisplaySelectImg()
+
+End
+
+Private Sub DisplaySelectImg()
+
+  If MediaView1.Tag Then
+    If $strType = "VIDEO" Then
+      MediaView1.URL = MediaView1.Tag
+      MediaView1.Play()
+    Endif
+  Endif
+
+End
+
+Private Sub DisplayBlobData(serial As Variant)
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim aFile As String
+
+  If MMain.$WebEntry = True Then
+    sql = "select fldpic,fldtitle,flddetail,fldlink,fldkeyword from tblpatimagedata where fldrepoid=&1"
+  Else
+    sql = "select fldpic,fldtitle,flddetail,fldlink,fldkeyword from tblpatimagedata where fldid=&1"
+  Endif
+  res = modDatabase.$myConn.Exec(sql, serial)
+  If res.Available = True Then
+    If $strType = "VIDEO" Then
+      tempFile = Temp()
+    Endif
+    txttitle.Text = res["fldtitle"]
+    If res["fldlink"] Then
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      If Exist(aFile) Then
+        Copy aFile To tempFile
+      Endif
+      Dec Application.Busy
+    Else
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(tempFile, hFile.Data)
+      Endif
+    Endif
+    MediaView1.Tag = tempFile
+    txtkeyword.Text = res["fldkeyword"]
+    txtdetail.Text = res["flddetail"]
+  Endif
+
+End
+
+Public Sub btnOpen_Click()
+
+  If $strType = "VIDEO" Then
+    Dialog.Filter = ["*.mp4;*.mpeg;*.webm;*.mkv", "Video files"]
+  Endif
+
+  If Dialog.OpenFile() Then Return
+  MediaView1.Tag = Dialog.Path
+  DisplaySelectImg()
+
+End
+
+Public Sub btnplay_Click()
+
+  If MediaView1.Tag Then
+    If $strType = "VIDEO" Then
+      MediaView1.URL = MediaView1.Tag
+      MediaView1.Play()
+    Endif
+  Endif
+
+End
+
+Public Sub btnOK_Click()
+
+  Dim res As Result
+  Dim sPath As String
+  Dim xblobfile As String
+  Dim xIntVal As String
+
+  If txttitle.Text And If MediaView1.Tag Then
+
+    If $strType = "VIDEO" Then
+      sPath = MediaView1.Tag
+    Endif
+
+    If modMisc.BlobTarget("Patient") = "FTP" Then
+      xblobfile = modFTPSub.SendBlobToFTP(sPath, $encid, "Patient")
+    Else
+      xblobfile = File.Load(sPath)
+    Endif
+    If xblobfile Then
+      Inc Application.Busy
+      res = modDatabase.$myConn.Create("tblpatimagedata")
+      res["fldcateg"] = $strType
+      res["fldencounterval"] = $encid
+      res["fldtitle"] = Trim(txttitle.Text)
+      If modMisc.BlobTarget("Patient") = "FTP" Then
+        res["fldpic"] = ""
+        res["fldlink"] = xblobfile
+      Else
+        res["fldpic"] = xblobfile
+        res["fldlink"] = ""
+      Endif
+      res["fldkeyword"] = Trim(txtkeyword.Text)
+      res["flddetail"] = txtdetail.Text
+      res["fldhashcode"] = ""
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = True
+      res["flduptime"] = ""
+      If MMain.$WebEntry = True Then
+        xIntVal = modString.GetDateString(Now())
+        res["fldid"] = CLong(xIntVal)
+        res["fldrepoid"] = modMisc.GetWebIndexStr(xIntVal)
+        res["fldrepodate"] = Now()
+        res["fldrepomac"] = modHelpVariable.$MACAddress
+        res["fldhospcode"] = modBasic.$HospCode
+      Endif
+      res.Update()
+      Dec Application.Busy
+      ShowGridImage()
+      Balloon.Info(("Information saved"), btnOK)
+      Balloon.Delay = modBasic.$BalloonDelay
+      txttitle.Text = ""
+      txtkeyword.Text = ""
+      txtdetail.Text = ""
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+  Dim sPath As String
+  Dim xblobfile As String
+
+  If dgimage.Rows.Selection.Count > 0 Then
+    If txttitle.Text And If MediaView1.Tag Then
+      If MMain.$WebEntry = True Then
+        res = modDatabase.$myConn.Edit("tblpatimagedata", "fldrepoid=&1", dgimage[dgimage.Row, 0].Text)
+      Else
+        res = modDatabase.$myConn.Edit("tblpatimagedata", "fldid=&1", dgimage[dgimage.Row, 0].Text)              ''
+      Endif
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+        If $strType = "VIDEO" Then
+          sPath = MediaView1.Tag
+        Endif
+
+        If modMisc.BlobTarget("Patient") = "FTP" Then
+          xblobfile = modFTPSub.SendBlobToFTP(sPath, $encid, "Patient")
+        Else
+          xblobfile = File.Load(sPath)
+        Endif
+        If xblobfile Then
+          res["fldtitle"] = Trim(txttitle.Text)
+          If modMisc.BlobTarget("Patient") = "FTP" Then
+            res["fldpic"] = ""
+            res["fldlink"] = xblobfile
+          Else
+            res["fldpic"] = xblobfile
+            res["fldlink"] = ""
+          Endif
+          res["fldkeyword"] = Trim(txtkeyword.Text)
+          res["flddetail"] = txtdetail.Text
+          res["flduserid"] = modBasic.$lbluser
+          res["flduptime"] = Now()
+          res.Update()
+          ShowGridImage()
+          Balloon.Delete(("Information updated"), btnChange)
+          Balloon.Delay = modBasic.$BalloonDelay
+        Endif
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub txttitle_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close()
+
+End

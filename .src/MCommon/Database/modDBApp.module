@@ -1,0 +1,581 @@
+' Gambas module file
+
+'NOTE:------------------- Processes -------------------------
+Public Function OpenConnection(DBType As String, DBHost As String, DBName As String, UserName As String, UserPassword As String, Optional sPort As String) As Connection
+
+  Dim conn As Connection
+  Dim xtimeout As String
+
+  xtimeout = modSettings.ShowSettingFromFIle("Application/ConnectionTimeOut")
+  conn = New Connection
+  conn.Type = Lower(DBType)
+  conn.Host = DBHost
+  conn.Name = DBName
+  conn.Login = UserName
+  conn.Password = UserPassword
+  If sPort Then
+    conn.Port = sPort
+  Else
+    conn.Port = ""
+  Endif
+  If modHelpVariable.$SysDisableCharset = "Yes" Then
+    conn.IgnoreCharset = True
+  Endif
+  If xtimeout Then
+    conn.Timeout = CInt(xtimeout)
+  Endif
+  Try conn.Open()
+  If conn.Opened = True Then
+    modBasic.DebugString("Open Connection to " & DBName & " on " & DBHost)
+  Endif
+
+  Return conn
+
+End
+
+Public Sub CreateSQliteDB(sPath As String)
+
+  Dim qlit As Connection
+  Dim dbname As String
+
+  dbname = File.Name(sPath)
+  qlit = modDBApp.OpenConnection("sqlite3", File.Dir(sPath), "", "", "")
+  If qlit.Opened = True Then
+    If Not qlit.Databases.Exist(dbname) Then
+      qlit.Databases.Add(dbname)
+    Endif
+    qlit.Close()
+  Endif
+
+End
+
+Public Function GetDBBackupFile(sType As String, DBHost As String, DBName As String, DBUser As String, DBPass As String, sTable As String) As String
+
+  Dim xx As String
+  Dim sPath As String
+
+  sPath = Temp() & ".sql"
+  If sType = "mysql" Then
+    If System.Exist("mysqldump") = True Then
+      xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " > " & sPath                                                        ''
+      modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+      Shell xx Wait
+    Else
+      Message.Warning("Install mysql-client or mariadb-client", ("OK"))
+    Endif
+  Else If sType = "postgresql" Then
+  Else If sType = "sqlite3" Then
+  Endif
+
+  Return sPath
+
+End
+
+Public Sub RestoreBackup(DBType As String, DBHost As String, DBName As String, UserName As String, UserPassword As String, sFIle As String)
+
+  Dim xx As String
+
+  If DBType = "mysql" Then
+    xx = "mysql" & " --host " & DBHost & " -u " & UserName & " -p" & UserPassword & " -f -D " & DBName & " < " & sFIle
+    modBasic.DebugString("Execute " & Replace(xx, UserPassword, "***"))
+    Shell xx Wait
+  Endif
+
+End
+
+Public Sub CreateTrigger(sConn As Connection, sName As String, sTable As String, sTime As String, sEvent As String)
+
+  Dim xstat As String
+  Dim tabList As String[]
+  Dim nwTblst As String[]
+  Dim xx As String
+
+  tabList = modDBApp.GetFIeldsinTable(sTable, True, sConn)
+  modDBGroup.CreateLogTable(sConn, sTable)
+  If sConn.Type = "mysql" Then
+    nwTblst = New String[]
+    For Each xx In tabList
+      nwTblst.Add("OLD." & xx)
+    Next
+    xstat = "INSERT INTO " & modDBGroup.GetBackTableName(sTable) & "(" & tabList.Join(",") & ") VALUES (" & nwTblst.Join(",") & ")"
+    sConn.MySQL.Trigger.Add(sName, sTable, sTime, sEvent, xstat)
+    modDBApp.CHnageUniFIeldDefaultDateTime(sConn, modDBGroup.GetBackTableName(sTable), "fldcurrtime")
+  Endif
+
+End
+
+'NOTE:-------------------- General Procedures -----------------------------
+Public Sub WarmUpDatabase(sCon As Connection)
+
+  Dim hTable As Table
+  Dim sql As String
+  Dim res As Result
+  Dim xInd As Index
+
+  db.Debug = True
+  For Each hTable In sCon.Tables
+    If hTable.Indexes.Count > 1 Then
+
+      If hTable.PrimaryKey.Count Then
+        sql = Subst("SELECT count(*) FROM &1 ORDER BY &2", hTable.Name, hTable.PrimaryKey[0])
+        res = sCon.Exec(sql)
+      Endif
+      For Each xInd In hTable.Indexes
+        If xInd.Name = "PRIMARY" Then
+        Else
+          sql = Subst("SELECT count(*) FROM &1 FORCE INDEX(&2)", hTable.Name, xInd.Name)
+          res = sCon.Exec(sql)
+        Endif
+      Next
+
+    Endif
+  Next
+
+End
+
+Public Sub GetDropEmptyTables(sCon As Connection)
+
+  Dim hTable As Table
+  Dim res As Result
+
+  db.Debug = True
+  For Each hTable In sCon.Tables
+    res = sCon.Exec(Subst("select *from &1", hTable.Name))
+    If res.Available = False Then
+      sCon.Tables.Remove(hTable.Name)
+    Endif
+  Next
+  Message.Info("Complete", "OK")
+
+End
+
+Public Function DateTimeDiffChecking() As Boolean
+
+  Dim resx As Result
+  Dim xgo As Boolean
+  Dim xtimediff As Integer
+
+  If modHelpVariable.$SysDisableDate = "Yes" Then
+    xgo = True
+  Else
+    If modDatabase.$myConn.Type = "sqlite3" Then
+      xgo = True
+    Else
+      resx = modDatabase.$myConn.Exec("SELECT CURRENT_TIMESTAMP as sdate")
+      xtimediff = DateDiff(resx["sdate"], Now(), gb.Second)
+      If xtimediff < 0 Then
+        xtimediff = 0 - xtimediff
+      Endif
+      If xtimediff < 30 Then
+        xgo = True
+      Else
+        xgo = False
+      Endif
+    Endif
+  Endif
+  Return xgo
+
+End
+
+'NOTE:------------------------------- DB functions ---------------------
+Public Function GetAllDBonServer(sCon As Connection) As String[]
+
+  Dim sDb As String[]
+  Dim xx As Database
+
+  sDb = New String[]
+  For Each xx In sCon.Databases
+    If xx.System Then
+    Else
+      sDb.Add(xx.Name)
+    Endif
+  Next
+  Return sDb
+
+End
+
+Public Function FillDBTables(sCon As Connection, withKeyTable As Boolean) As String[]
+
+  Dim hTable As Table
+  Dim xx As String[]
+
+  xx = New String[]
+  For Each hTable In sCon.Tables
+    If hTable.System = True Then
+    Else If hTable.Name = "tblkey" Then
+      If withKeyTable = True Then
+        xx.Add("tblkey")
+      Endif
+    Else If hTable.Name = "tblnewkey" Then
+      If withKeyTable = True Then
+        xx.Add("tblnewkey")
+      Endif
+    Else If hTable.Name = "tbluser" Then
+      If withKeyTable = True Then
+        xx.Add("tbluser")
+      Endif
+    Else
+      xx.Add(hTable.Name)
+    Endif
+  Next
+  xx.Sort(gb.Ascent)
+  Return xx
+
+End
+
+Public Function GetSecureSQL(sql As String) As String
+
+  sql = Replace(sql, ",fldpassword", "")
+  sql = Replace(sql, "fldpassword", "")
+  sql = Replace(sql, ",fldpass", "")
+  sql = Replace(sql, "fldpass", "")
+
+  Return sql
+
+End
+
+Public Function DBRegularTablesSelField(sCon As Connection, sFieldList As String[]) As String[]
+
+  Dim hTable As Table
+  Dim xx As String[]
+  Dim sField As String
+  Dim i As Integer
+
+  xx = New String[]
+  For Each hTable In sCon.Tables
+    If hTable.System = True Then
+    Else If hTable.Name Like "*" & "_log"
+    Else
+      i = 0
+      For Each sField In sFieldList
+        If hTable.Fields.Exist(sField) Then
+          i = i + 1
+        Endif
+      Next
+      If i = sFieldList.Count Then
+        xx.Add(hTable.Name)
+      Endif
+    Endif
+  Next
+  xx.Sort(gb.Ascent)
+  Return xx
+
+End
+
+Public Function GetFieldsInResult(res As Result) As String[]
+
+  Dim xx As String[]
+  Dim ref As ResultField
+
+  xx = New String[]
+  For Each ref In res.Fields
+    xx.Add(ref.Name)
+  Next
+  Return xx
+
+End
+
+Public Function FirstResultField(res As Result) As String
+
+  Dim xx As String
+  Dim ref As ResultField
+
+  For Each ref In res.Fields
+    xx = ref.Name
+    Break
+  Next
+  Return xx
+
+End
+
+Public Function GetFIeldsinTable(sTable As String, withSerial As Boolean, Optional Conn As Connection) As String[]
+
+  Dim hTable As Table
+  Dim ref As Field
+  Dim tabList As String[]
+  Dim xcon As Connection
+
+  If Conn Then
+    xcon = Conn
+  Else
+    xcon = modDatabase.$myConn
+  Endif
+
+  tabList = New String[]
+  For Each hTable In xcon.Tables
+    If hTable.Name = sTable Then
+
+      For Each ref In hTable.Fields
+        If ref.Type = db.Serial Then
+          If withSerial = True Then
+            tabList.Add(ref.Name)
+          Endif
+        Else
+          tabList.Add(ref.Name)
+        Endif
+      Next
+
+      Break
+    Endif
+  Next
+  Return tabList
+
+End
+
+''NOTE: -------------------------- Repair DB ------------------
+Public Sub CHnageUniFIeldDefaultDateTime($con As Connection, tblname As String, fldname As String)
+
+  Dim res As Result
+  Dim sql As String
+
+  If $con.Type = "mysql" Then
+    sql = Subst("ALTER TABLE `&1` CHANGE `&2` `&2` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP", tblname, fldname)
+    res = $con.Exec(sql)
+  Endif
+
+End
+
+Public Sub CHnageUniFIeldNullDefault($con As Connection, tblname As String, fldname As String)
+
+  Dim res As Result
+  Dim res1 As Result
+
+  If $con.Type = "mysql" Then
+    res = $con.Exec(Subst("ALTER TABLE `&1` ALTER `&2` DROP DEFAULT", tblname, fldname))
+    res1 = $con.Exec(Subst("ALTER TABLE `&1` MODIFY `&2` DATETIME NULL", tblname, fldname))
+  Endif
+
+End
+
+Public Sub RenameTableMysql($con As Connection, sFirTable As String, sNewTable As String)
+
+  Dim res As Result
+
+  If sFirTable And If sNewTable Then
+    res = $con.Exec(Subst("RENAME TABLE `&1` TO `&2`", sFirTable, sNewTable))
+  Endif
+
+End
+
+Public Sub ChangeToLowerCase($con As Connection)
+
+  Dim hTable As Table
+  Dim hField As Field
+  Dim res As Result
+  Dim xx As String
+
+  For Each hTable In $con.Tables
+    For Each hField In hTable.Fields
+      If IsLCase(hField.Name) = False Then
+        If $con.Type = "mysql" Then
+          xx = $con.MySQL.Field.FieldEspecifications(hField.Name, hTable.Name).Datatype()
+          res = $con.Exec(Subst("ALTER TABLE `&1` CHANGE `&2` `&3` &4 NULL", hTable.Name, hField.Name, LCase(hField.Name), xx))
+        Endif
+      Endif
+    Next
+  Next
+
+End
+
+Public Sub CreateIndexOnTable(sCon As Connection, TableName As String, IndexName As String, IndexFields As String[], sUnique As Boolean)
+
+  Dim hTable As Table
+
+  For Each hTable In sCon.Tables
+    If hTable.Name = TableName Then
+      hTable.Indexes.Add(IndexName, IndexFields, sUnique)
+      Break
+    Endif
+  Next
+
+End
+
+Public Sub DeleteAllIndex(sCon As Connection)
+
+  Dim hTable As Table
+  Dim hIndex As Index
+
+  For Each hTable In sCon.Tables
+    For Each hIndex In hTable.Indexes
+      If hIndex.Primary = False Then
+        sCon.Exec(Subst("ALTER TABLE &1 DROP INDEX &2", hTable.Name, hIndex.Name))
+        '         hTable.Indexes.Remove(hIndex.Name)
+      Endif
+    Next
+  Next
+
+End
+
+Public Sub CreateRepositoryIndex(sCon As Connection)
+
+  Dim hTable As Table
+
+  For Each hTable In sCon.Tables
+    If hTable.System = True Then
+    Else
+      If hTable.Fields.Exist("fldhospcode") Then
+        Try hTable.Indexes.Add(hTable.Name & "_fldhospcode", ["fldhospcode"], False)
+      Endif
+    Endif
+  Next
+
+End
+
+'NOTE:------------------------ MySQL Specific variables ----------------
+Public Sub ChangeTableCOllation($con As Connection, sCharset As String, sCollation As String, sTable As String)
+
+  Dim res As Result
+
+  If $con.Type = "mysql" Or If $con.Type = "postgresql" Then
+    Try res = $con.Exec(Subst("ALTER TABLE `&1` CONVERT TO CHARACTER SET `&2` COLLATE `&3`", sTable, sCharset, sCollation))
+  Endif
+  If Error Then
+    Message.Warning(Error.Text, "OK")
+  Endif
+
+End
+
+Public Sub ChangeSingleCOlumnCOllation($con As Connection, TableName As String, FieldName As String, FieldType As String, sCharset As String, sCollation As String)
+
+  Dim res As Result
+
+  If $con.Type = "mysql" Or If $con.Type = "postgresql" Then
+    Try res = $con.Exec(Subst("ALTER TABLE `&1` MODIFY `&2` &3 CHARACTER SET `&4` COLLATE `&5`", TableName, FieldName, FieldType, sCharset, sCollation))
+  Endif
+  If Error Then
+    Message.Warning(Error.Text, "OK")
+  Endif
+
+End
+
+Public Sub AlterMySQLSpecCollationTable($con As Connection, hTabName As String)
+
+  Dim acol As String
+  Dim astx As String[]
+
+  If $con.Type = "mysql" Then
+    acol = modHelpVariable.$SysCollation
+    If acol Then
+      astx = Split(acol, "_")
+      modDBApp.ChangeTableCOllation($con, astx[0], acol, hTabName)
+    Endif
+  Endif
+
+End
+
+Public Sub RemoveMySQLTablePriKey($con As Connection, TableName As String)
+
+  Dim res As Result
+
+  If $con.Type = "mysql" Then
+    Try res = $con.Exec(Subst("ALTER TABLE `&1` DROP PRIMARY KEY", TableName))
+  Endif
+  If Error Then
+    Message.Warning(Error.Text, "OK")
+  Endif
+
+End
+
+Public Sub ChangeMySQLTableEngine($con As Connection, TableName As String, sFormat As String)
+
+  Dim res As Result
+
+  If $con.Type = "mysql" Then
+    Try res = $con.Exec(Subst("ALTER TABLE `&1` ENGINE = &2", TableName, sFormat))
+  Endif
+  If Error Then
+    Message.Warning(Error.Text, "OK")
+  Endif
+
+End
+
+''-------------------- Reports --------------------
+Public Sub CheckMySQLDatabaseError(sType As String, sHost As String, sUser As String, sPass As String, sDatabase As String)
+
+  Dim xx As String
+
+  If sType = "mysql" Then
+    xx = "mysqlcheck" & " --host " & sHost & " -u " & sUser & " -p" & sPass & " -B " & sDatabase
+    Shell xx Wait
+  Endif
+
+End
+
+Public Function MySQLDatabaseReport(sType As String, sHost As String, sUser As String, sPass As String) As String
+
+  Dim xx As String
+  Dim xval As String
+
+  If sType = "mysql" Then
+    xx = "mysqlreport" & " --host " & sHost & " -user " & sUser & " -password " & sPass
+    Shell xx To xval
+  Endif
+
+  Return xval
+
+End
+
+Public Function MysqlAdminValue(sType As String, sHost As String, sUser As String, sPass As String, sPort As String, sName As String) As String
+
+  Dim xx As String
+  Dim xval As String
+
+  If sType = "mysql" Then
+    If sPort Then
+      xx = "mysqladmin" & " --host " & sHost & " -u " & sUser & " -p" & sPass & " -P " & sPort & " " & sName
+    Else
+      xx = "mysqladmin" & " --host " & sHost & " -u " & sUser & " -p" & sPass & " " & sName
+    Endif
+    Shell xx To xval
+  Endif
+
+  Return xval
+
+End
+
+Public Function MySQLDBPerconaReport(sType As String, sHost As String, sUser As String, sPass As String, sDatabase As String) As String
+
+  Dim xx As String
+  Dim xval As String
+
+  If sType = "mysql" Then
+    xx = "pt-mysql-summary" & " --host " & sHost & " --databases " & sDatabase & " --user " & sUser & " --password " & sPass                    ''
+    Shell xx To xval
+  Endif
+
+  Return xval
+
+End
+
+Public Function MySQLTunerReport(sType As String, sHost As String, sUser As String, sPass As String, sPort As String, xRam As Integer, xSwap As Integer) As String
+
+  Dim xx As String
+  Dim xval As String
+  Dim xportstr As String
+  Dim xramstr As String
+  Dim xswapstr As String
+
+  If sPort Then
+    xportstr = " --port " & sPort
+  Else
+    xportstr = ""
+  Endif
+  If xRam Then
+    xramstr = " --forcemem " & xRam
+  Else
+    xramstr = ""
+  Endif
+  If xSwap Then
+    xswapstr = " --forceswap " & xSwap
+  Else
+    xswapstr = ""
+  Endif
+
+  If sType = "mysql" Then
+    xx = "perl " & modHelpVariable.$scriptDirectory &/ "mysqltuner.pl" & " --skipsize --host " & sHost & " --user " & sUser & " --pass " & sPass & xportstr & xramstr & xswapstr
+    Shell xx To xval
+  Endif
+
+  Return xval
+
+End

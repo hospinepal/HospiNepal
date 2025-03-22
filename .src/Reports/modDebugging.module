@@ -1,0 +1,187 @@
+' Gambas module file
+
+Public Sub UpdateSupplierSummary()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim rsx As Result
+  Dim xtot As Float
+  Dim xpaid As Float
+
+  res = modDatabase.$myConn.Exec("select fldsuppname from tblsupplier")
+  If res.Available Then
+    Inc Application.Busy
+    For Each res
+
+      xtot = 0
+      xpaid = 0
+      res1 = modDatabase.$myConn.Exec("select fldpurtype,fldcredit,flddebit from tblpurchasebill where fldsuppname=&1", res["fldsuppname"])
+      If res1.Available Then
+        For Each res1
+          If res1["fldpurtype"] = "Cash Payment" Then
+            xtot = xtot + res1["fldcredit"]
+            xpaid = xpaid + res1["flddebit"]
+          Else If res1["fldpurtype"] = "Credit Payment" Then
+            xtot = xtot + res1["fldcredit"]
+          Endif
+        Next
+      Endif
+
+      res2 = modDatabase.$myConn.Exec("select fldcategory,fldpayamount from tblpayment where fldsuppname=&1 and fldsave=&2", res["fldsuppname"], True)
+      If res2.Available Then
+        For Each res2
+          If res2["fldcategory"] = "Payment" Then
+            xpaid = xpaid + res2["fldpayamount"]
+          Else If res2["fldcategory"] = "Credit Note" Then
+            xpaid = xpaid + res2["fldpayamount"]
+          Endif
+        Next
+      Endif
+
+      rsx = modDatabase.$myConn.Edit("tblsupplier", "fldsuppname=&1", res["fldsuppname"])
+      rsx["fldleftcredit"] = xtot
+      rsx["fldpaiddebit"] = xpaid
+      rsx.Update
+
+    Next
+    Dec Application.Busy
+  Endif
+
+  Message.Info("completed", "OK")
+
+End
+
+Public Sub UpdateStockDebug(stockName As String)
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim xx As Float
+
+  Dim rs1 As Result
+  Dim rs2 As Result
+  Dim rs3 As Result
+  Dim rs4 As Result
+  Dim rs5 As Result
+  Dim rs7 As Result
+
+  Dim bulqty As Float
+  Dim purqty As Float
+  Dim salqty As Float
+  Dim sentqty As Float
+  Dim recvqty As Float
+  Dim adjqty As Float
+
+  res = modDatabase.$myConn.Exec("select fldstockno as col,fldcomp,fldcategory,fldstockid from tblentry where fldstockid=&1", stockName)
+  For Each res
+    modBasic.DebugString(res["col"] & " : " & res["fldstockid"])
+
+    bulqty = 0
+    purqty = 0
+    salqty = 0
+    sentqty = 0
+    recvqty = 0
+    adjqty = 0
+
+    rs1 = modDatabase.$myConn.Exec("select SUM(fldtotalqty-fldreturnqty) as qty from tblpurchase where fldstockno=&1 and fldstockid=&2 and fldsav=&3 and fldcategory=&4", res["col"], res["fldstockid"], False, res["fldcategory"])
+    purqty = 0
+    If rs1.Available = True Then
+      If rs1["qty"] Then
+        purqty = rs1["qty"]
+      Endif
+    Endif
+    modBasic.DebugString("Purchase: " & purqty)
+
+    rs2 = modDatabase.$myConn.Exec("select SUM(fldqtydisp-fldqtyret) as qty from tblbulksale where fldstockno=&1 and fldstockid=&2 and fldsave=&3 and fldcategory=&4", res["col"], res["fldstockid"], True, res["fldcategory"])
+    bulqty = 0
+    If rs2.Available = True Then
+      If rs2["qty"] Then
+        bulqty = rs2["qty"]
+      Endif
+    Endif
+    modBasic.DebugString("Consume: " & bulqty)
+
+    rs3 = modDatabase.$myConn.Exec("select SUM(flditemqty) as qty from tblpatbilling where flditemno=&1 and flditemno in(select fldstockno from tblentry where fldstockid=&2) and fldsave=&3 and flditemtype=&4", res["col"], res["fldstockid"], True, res["fldcategory"])
+    salqty = 0
+    If rs3.Available = True Then
+      If rs3["qty"] Then
+        salqty = rs3["qty"]
+      Endif
+    Endif
+    modBasic.DebugString("Dispensed: " & salqty)
+
+    ''item sent
+    rs4 = modDatabase.$myConn.Exec("select SUM(fldqty) as qty from tbltransfer where fldoldstockno=&1 and fldstockid=&2 and fldtosav=&3 and fldfromcomp=&4 and fldcategory=&5", res["col"], res["fldstockid"], True, res["fldcomp"], res["fldcategory"])
+    sentqty = 0
+    If rs4.Available Then
+      If rs4["qty"] Then
+        sentqty = rs4["qty"]
+      Endif
+    Endif
+    modBasic.DebugString("Transfer Out: " & sentqty)
+
+    ''item received
+    rs5 = modDatabase.$myConn.Exec("select SUM(fldqty) as qty from tbltransfer where fldstockno=&1 and fldstockid=&2 and fldtosav=&3 and fldtocomp=&4 and fldcategory=&5", res["col"], res["fldstockid"], True, res["fldcomp"], res["fldcategory"])
+    recvqty = 0
+    If rs5.Available Then
+      If rs5["qty"] Then
+        recvqty = rs5["qty"]
+      Endif
+    Endif
+    modBasic.DebugString("Transfer In: " & recvqty)
+
+    ''items adjusted
+    rs7 = modDatabase.$myConn.Exec("select sum(fldcompqty-fldcurrqty) as qty from tbladjustment where fldstockno=&1 and fldstockid=&2 and fldsav=&3 and fldcategory=&4", res["col"], res["fldstockid"], True, res["fldcategory"])
+    If rs7.Available Then
+      If rs7["qty"] Then
+        adjqty = rs7["qty"]
+      Endif
+    Endif
+    modBasic.DebugString("Adjusted: " & adjqty)
+
+    xx = (purqty + recvqty) - (salqty + bulqty + sentqty + adjqty)
+    res1 = modDatabase.$myConn.Edit("tblentry", "fldstockno=&1", res["col"])
+    res1["fldqty"] = xx
+    res1["xyz"] = False
+    res1.Update
+    modBasic.DebugString("Updated: " & xx)
+
+  Next
+
+End
+
+Public Sub InsertClaimCode(sAccount As String)
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim xclaim As String
+
+  modGeneralMain.EnableCollectionCache()
+  res = modDatabase.$myConn.Exec("select fldid,fldencounterval from tblpatbilldetail where fldbankname=&1 and fldchequeno IS NULL and (fldprevdeposit=&2 or fldprevdeposit=&3)", sAccount, 1, 2)
+  If res.Available Then
+    For Each res
+      xclaim = GetClaimCidePatient(sAccount, res["fldencounterval"])
+      res1 = modDatabase.$myConn.Edit("tblpatbilldetail", "fldid=&1", res["fldid"])
+      res1["fldchequeno"] = xclaim
+      res1.Update
+    Next
+  Endif
+  Message.Info("Completed")
+
+End
+
+Private Function GetClaimCidePatient(sAccount As String, encid As String) As String
+
+  Dim xclaim As String
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select fldchequeno from tblpatbilldetail where fldencounterval=&1 and fldbankname=&2 and fldchequeno IS NOT NULL", encid, sAccount)
+  If res.Available Then
+    res.MoveLast
+    xclaim = res["fldchequeno"]
+  Else
+    xclaim = modClaim.GetNewClaimCode(encid)
+  Endif
+  Return xclaim
+
+End

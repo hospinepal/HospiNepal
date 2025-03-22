@@ -1,0 +1,800 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $SSQLFields As String[]
+Private $RepoStr As String
+Private $tblpatreport As String
+
+Public Sub _new(encid As String)
+
+  If encid Then
+    txtencid.Text = encid
+    txtencid.Enabled = False
+    chkmark.Visible = False
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  Dim xoption As String
+  Dim xhospfld As String
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  If MMain.$WebReport = "Multiple" Then
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      Panel6.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+  Else
+    Panel6.Visible = False
+  Endif
+  cmbcategory.List = ["Diagnostic Tests", "Radio Diagnostics", "General Reports", "Scanned Images", "Past Documents", "Diagnostic Tests Log", "Radio Diagnostics Log"]
+  cmbdepart.List = modBasic.$IPDDepartmentsAll
+  cmbdepart.Add("%")
+  cmbdepart.Text = "%"
+  cmbcategory.Text = modSettings.ShowSettingFromFIle("ArchivedReports/DefaultCategory")
+  modSettings.ShowCheckBox(chkmark, "ArchivedReport/MarkPrinted")
+  If MMain.$RepoReportMode = True Then
+    mnuextra.Visible = False
+    mnuedit.Visible = False
+  Else
+    If modHelpVariable.$LogInCategory = "Consultant" Then
+      mnumount.Visible = True
+      mnudel.Visible = True
+      mnubulkdel.Visible = True
+    Endif
+  Endif
+
+  rbnew.Value = True
+  rbnoflag.Value = True
+  rbascend.Value = True
+  dtselected.Value = Now()
+  xoption = modSettings.ShowSettingFromFIle("EntrySetting/Reporting_DateSelect")
+  If xoption = "Yes" Then
+    chkdate.Value = True
+  Else If xoption = "No" Then
+    chkdate.Value = False
+  Endif
+  DateSelectionSett()
+  modAccount.PasInvoiceSettingRead(cmbfiscal)
+  LoadTableNames()
+
+  xhospfld = modDataRepo.HospitalField()
+  $SSQLFields = [modDataRepo.SerialField(), "fldcateg", "fldtime", "fldencounterval", "fldencounterval", "fldtitle", "flvisible", "flddetail", "fldsave", "fldlink", "flvisible"]
+  If xhospfld Then
+    $SSQLFields.Add(xhospfld)
+  Endif
+  modGeneralMain.SetEncIDPrefix(txtencid)
+  cmbcategory.SetFocus
+
+End
+
+Public Sub Form_Activate()
+
+  txtencid.SetFocus
+
+End
+
+Public Sub Form_Close()
+
+  modSettings.SaveSettingsToFile("ArchivedReports/DefaultCategory", cmbcategory.Text)
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub cmblocation_Click()
+
+  cmbvalue.Clear()
+  If cmblocation.Text Then
+    cmbvalue.List = modDataRepo.GetRepoValueListType(cmblocation.Text)
+  Endif
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatreport = "tblpatreport"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatreport from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatreport"] Then
+        $tblpatreport = res["fldpatreport"]
+      Else
+        $tblpatreport = "tblpatreport"
+      Endif
+    Else
+      $tblpatreport = "tblpatreport"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Private Sub DateSelectionSett()
+
+  If chkdate.Value = True Then
+    Panel13.Enabled = True
+  Else
+    Panel13.Enabled = False
+  Endif
+
+End
+
+Public Sub chkdate_Click()
+
+  modSettings.EnterCheckSetting(chkdate, "EntrySetting/Reporting_DateSelect")
+  DateSelectionSett()
+
+End
+
+Public Sub chkmark_Click()
+
+  modSettings.EnterCheckSetting(chkmark, "ArchivedReport/MarkPrinted")
+
+End
+
+Public Sub Form_KeyRelease()
+
+  Dim hForm As FmPatReports
+
+  If Key.Code = Key["F"] And If Key.Control Then
+    txtencid.Text = GetEncid()
+  Else If Key.Code = Key["B"] And If Key.Control Then
+    hForm = New FmPatReports("")
+    Me.Close
+    modWorkSpace.Add(hForm)
+  Endif
+
+End
+
+Public Sub mnudatesearch_Click()
+
+  Dim xdate As Date[]
+
+  xdate = DoubleDates(("Select Date Range"), "Archived Reports", [Date(), Date()])
+  If xdate Then
+    $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+    $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldtime>=&1 and fldtime<=&2" & $RepoStr, modDate.StartSqlDate(xdate[0]), modDate.EndSqlDate(xdate[1]))
+    $aMyFields = New String[]
+    modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+    GetGridSizes()
+  Endif
+
+End
+
+Public Sub dtneplist_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtselected.Value))
+  If xx Then
+    dtselected.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub mnushowall_Click()
+
+  If mnushowall.Checked = True Then
+    mnushowall.Checked = False
+    mnuhide.Enabled = True
+  Else If mnushowall.Checked = False Then
+    mnushowall.Checked = True
+    mnuhide.Enabled = False
+  Endif
+
+End
+
+Private Sub FillGridData()
+
+  Dim encid As String
+  Dim prt As Boolean
+  Dim xflag As Boolean
+  Dim stitle As String
+  Dim xorder As String
+
+  If rbascend.Value Then
+    xorder = " ORDER BY fldtime ASC"
+  Else
+    xorder = " ORDER BY fldtime DESC"
+  Endif
+
+  If txtencid.Text Then
+    encid = Trim(txtencid.Text)
+  Else
+    encid = "%"
+  Endif
+  stitle = txttitle.Text & "%"
+
+  If rbflag.Value = True Then
+    xflag = True
+  Else
+    xflag = False
+  Endif
+
+  If Not cmbdepart.Text Then
+    cmbdepart.Text = "%"
+  Endif
+
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  If mnushowall.Checked = True Then
+
+    If rbnew.Value = True And If rbprinted.Value = True Then
+      If chkdate.Value = True Then
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL) and fldtime>=&5 and fldtime<=&6" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value))                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL) and fldtime>=&5 and fldtime<=&6 and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &7))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value), cmbdepart.Text)                                                      ''
+        Endif
+      Else
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL)" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag)                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL) and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &5))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag, cmbdepart.Text)                                                      ''
+        Endif
+      Endif
+    Else
+      If rbnew.Value = True Then
+        prt = True
+      Else If rbprinted.Value = True Then
+        prt = False
+      Endif
+      If chkdate.Value = True Then
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL) and fldtime>=&6 and fldtime<=&7" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value))                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL) and fldtime>=&6 and fldtime<=&7 and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &8))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value), cmbdepart.Text)                                                      ''
+        Endif
+      Else
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL)" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag)                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL) and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &6))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag, cmbdepart.Text)                                                      ''
+        Endif
+      Endif
+    Endif
+
+  Else ''only visible
+
+    If rbnew.Value = True And If rbprinted.Value = True Then
+      If chkdate.Value = True Then
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL) and fldtime>=&5 and fldtime<=&6 and (flvisible=&7 or flvisible IS NULL)" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value), "Visible")                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL) and fldtime>=&5 and fldtime<=&6 and (flvisible=&7 or flvisible IS NULL) and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &8))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value), "Visible", cmbdepart.Text)                                                      ''
+        Endif
+      Else
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL) and (flvisible=&5 or flvisible IS NULL)" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag, "Visible")                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and (fldflag=&4 or fldflag IS NULL) and (flvisible=&5 or flvisible IS NULL) and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &6))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, xflag, "Visible", cmbdepart.Text)                                                      ''
+        Endif
+      Endif
+    Else
+      If rbnew.Value = True Then
+        prt = True
+      Else If rbprinted.Value = True Then
+        prt = False
+      Endif
+      If chkdate.Value = True Then
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL) and fldtime>=&6 and fldtime<=&7 and (flvisible=&8 or flvisible IS NULL)" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value), "Visible")                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL) and fldtime>=&6 and fldtime<=&7 and (flvisible=&8 or flvisible IS NULL) and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &9))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag, modDate.StartSqlDate(dtselected.Value), modDate.EndSqlDate(dtselected.Value), "Visible", cmbdepart.Text)                                                      ''
+        Endif
+      Else
+        If cmbdepart.Text = "%" Then
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL) and (flvisible=&6 or flvisible IS NULL)" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag, "Visible")                                                                 ''
+        Else
+          $rData = modDatabase.$syConn.Exec("select " & $SSQLFields.Join(",") & " from " & $tblpatreport & " where fldcateg=&1 and fldencounterval like &2 and fldtitle like &3 and fldsave=&4 and (fldflag=&5 or fldflag IS NULL) and (flvisible=&6 or flvisible IS NULL) and fldencounterval in(select fldencounterval from tblencounter where fldcurrlocat in(select fldbed from tbldepartmentbed where flddept like &7))" & $RepoStr & xorder, cmbcategory.Text, encid, stitle, prt, xflag, "Visible", cmbdepart.Text)                                                      ''
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  GetGridSizes()
+
+End
+
+Private Sub GetGridSizes()
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 1
+    .Columns[9].Width = 1
+    .Columns[10].Width = 1
+
+    .Columns[2].Text = "DateTime"
+    .Columns[3].Text = "Encounter"
+    .Columns[4].Text = "Name"
+    .Columns[5].Text = "Title"
+    .Columns[7].Text = "Comment"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 2 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 4 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]], modDatabase.$syConn)
+  Else If Column = 6 Then
+    GridView1.Data.Picture = Picture[GetSelectIcon($rData[$aMyFields[Column]])]
+    GridView1.Data.Text = ""
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Private Function GetSelectIcon(sVal As String) As String
+
+  Dim xx As String
+
+  If sVal = "Hidden" Then
+    xx = "icon:/small/cancel"
+  Else
+    xx = "icon:/small/play"
+  Endif
+
+  Return xx
+
+End
+
+Public Sub mnulastencid_Click()
+
+  txtencid.Text = modSettings.ShowLogValues("LastValue/Encounter")
+
+End
+
+Public Sub btnrefresh_Click()
+
+  If txtencid.Text Then
+    If txtencid.Text = modBasic.$EncIdPrefix Then
+    Else
+      modSettings.SaveValuesToLog("LastValue/Encounter", Trim(txtencid.Text))
+    Endif
+    txtname.Text = modPatient.GetPatientNameByEnc(Trim(txtencid.Text))
+    txtagesex.Text = modPatient.GetPatientAgeString(Trim(txtencid.Text), Now()) & "/" & Left(modPatient.GetPatientSex(Trim(txtencid.Text)), 1)
+    txtpatientaddress.Text = modPatient.GetPatientAddressByEnc(Trim(txtencid.Text))
+  Endif
+  If cmbcategory.Text Then
+    FillGridData()
+  Endif
+  GridView1.Select(0, 1)
+  GridView1.SetFocus
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim xx As String
+  Dim res As Result
+  Dim Row As Integer
+  Dim xFPath As String
+
+  Row = GridView1.Row
+  If GridView1.Column = 7 Then
+    xx = GetTextArea(GridView1[GridView1.Row, 5].Text, GridView1[GridView1.Row, 7].Text)
+    If xx Then
+      If MMain.$WebEntry = True Then
+        res = modDatabase.$myConn.Edit($tblpatreport, "fldrepoid=&1", GridView1[GridView1.Row, 0].Text)
+      Else
+        res = modDatabase.$myConn.Edit($tblpatreport, "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      Endif
+      res["flddetail"] = xx
+      res["flduptime"] = Now()
+      res.Update
+      FillGridData()
+    Endif
+
+  Else If GridView1.Column = 6 Then
+    If mnushowall.Checked = False Then
+      xFPath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+      If Exist(xFPath) Then
+        If chkmark.Value = True Then
+          MarkPrinted(GridView1[GridView1.Row, 0].Text)
+        Endif
+        modDevice.DesktopOpenFile(xFPath)
+      Endif
+
+      If chkmark.Value = True Then
+        FillGridData()
+        txtencid.Text = ""
+      Else
+        GridView1.Row = Row
+      Endif
+    Endif
+
+  Endif
+  GridView1.Row = Row
+
+End
+
+Private Sub MarkPrinted(serial As Variant)
+
+  Dim res As Result
+
+  If cmbcategory.Text = "Scanned Images" Then
+  Else
+    If MMain.$WebEntry = True Then
+      res = modDatabase.$myConn.Edit($tblpatreport, "fldrepoid=&1", serial)
+    Else
+      res = modDatabase.$myConn.Edit($tblpatreport, "fldid=&1", serial)
+    Endif
+    res["fldsave"] = False
+    res.Update
+  Endif
+
+End
+
+Public Sub mnushow_Click()
+
+  Dim iRow As Integer
+  Dim xFPath As String
+
+  iRow = GridView1.Row
+  If GridView1.Rows.Selection.Count > 0 Then
+    xFPath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+    If Exist(xFPath) Then
+      If modBasic.$ReportLogPDF = "Yes" Then
+        modImage.SaveReportLog("PDF", xFPath, GridView1[GridView1.Row, 3].Text)
+      Endif
+
+      If chkmark.Value = True Then
+        MarkPrinted(GridView1[GridView1.Row, 0].Text)
+      Endif
+      modDevice.DesktopOpenFile(xFPath)
+    Endif
+
+    If chkmark.Value = True Then
+      FillGridData()
+      txtencid.Text = ""
+    Else
+      GridView1.Row = iRow
+    Endif
+  Endif
+
+End
+
+Public Sub mnuprint_Click()
+
+  Dim iRow As Integer
+  Dim xFPath As String
+
+  Dim xset As String
+  Dim arcmd As String[]
+  Dim xFull As String
+
+  If modBasic.$PrintLockArchived = "Yes" Then
+    Message.Warning("Printing not allowed", "OK")
+  Else
+    If GridView1.Rows.Selection.Count > 0 Then
+      xset = modSettings.ShowSettingFromFIle("Report/PDF_MultiPage")
+      If xset = "Continuous" And If GridView1.Rows.Selection.Count > 1 Then
+        arcmd = New String[]
+        For iRow = 0 To GridView1.Rows.Count - 1
+          If GridView1.Rows[iRow].Selected = True Then
+
+            xFPath = modImage.GetBlobFileData(GridView1[iRow, 0].Text, $tblpatreport)
+            If Exist(xFPath) Then
+              arcmd.Add(xFPath)
+
+              If modBasic.$ReportLogPrint = "Yes" Then
+                modImage.SaveReportLog("Print", xFPath, GridView1[iRow, 3].Text)
+              Endif
+
+              If chkmark.Value = True Then
+                MarkPrinted(GridView1[iRow, 0].Text)
+              Endif
+            Endif
+
+          Endif
+        Next
+        xFull = modDevAll.GetPDFUnion(arcmd)
+        modPrint.DefaultPrinting(xFull, "ReportSize")
+
+      Else
+        For iRow = 0 To GridView1.Rows.Count - 1
+          If GridView1.Rows[iRow].Selected = True Then
+
+            xFPath = modImage.GetBlobFileData(GridView1[iRow, 0].Text, $tblpatreport)
+            If Exist(xFPath) Then
+              If modBasic.$ReportLogPrint = "Yes" Then
+                modImage.SaveReportLog("Print", xFPath, GridView1[iRow, 3].Text)
+              Endif
+
+              If chkmark.Value = True Then
+                MarkPrinted(GridView1[iRow, 0].Text)
+              Endif
+              modPrint.DefaultPrinting(xFPath, "ReportSize")
+
+              If chkmark.Value = True Then
+                FillGridData()
+                txtencid.Text = ""
+              Endif
+
+            Endif
+
+          Endif
+        Next
+
+      Endif
+    Endif
+  Endif
+  txtencid.SetFocus
+
+End
+
+' Public Sub mnuprint_Click()
+'
+'   Dim iRow As Integer
+'   Dim xFPath As String
+'
+'   iRow = GridView1.Row
+'   If GridView1.Rows.Selection.Count > 0 Then
+'     xFPath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+'     If Exist(xFPath) Then
+'       If modBasic.$ReportLogPrint = "Yes" Then
+'         modImage.SaveReportLog("Print", xFPath, GridView1[GridView1.Row, 3].Text)
+'       Endif
+'
+'       If chkmark.Value = True Then
+'         MarkPrinted(GridView1[GridView1.Row, 0].Text)
+'       Endif
+'       modPrint.DefaultPrinting(xFPath, "ReportSize")
+'
+'       If chkmark.Value = True Then
+'         FillGridData()
+'         txtencid.Text = ""
+'       Else
+'         GridView1.Row = iRow
+'       Endif
+'     Endif
+'   Endif
+'   txtencid.SetFocus
+'
+' End
+
+Public Sub mnuemail_Click()
+
+  Dim xpath As String
+  Dim hForm As FmRemoteMail
+  Dim xx As String[]
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xpath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+    If Exist(xpath) Then
+      If modBasic.$ReportLogSend = "Yes" Then
+        modImage.SaveReportLog("Send", xpath, GridView1[GridView1.Row, 3].Text)
+      Endif
+
+      xx = New String[]
+      xx.Add(modPatient.GetPatientEmail(GridView1[GridView1.Row, 3].Text))
+      hForm = New FmRemoteMail(xx, xpath, "Report", GridView1[GridView1.Row, 5].Text)
+      hForm.ShowModal()
+    Endif
+  Endif
+
+End
+
+Public Sub mnuftp_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    ''send ftp
+  Endif
+
+End
+
+Public Sub txtencid_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If modBasic.$AutoEncSuffix = "Yes" Then
+      txtencid.Text = txtencid.Text & modBasic.$HospCode
+    Endif
+  Else
+    modGeneralMain.InputUpCaseOnly()
+  Endif
+
+End
+
+Public Sub mnuscanfile_Click()
+
+  Dim hForm As FmScanForm
+
+  If txtencid.Text Then
+    hForm = New FmScanForm(Trim(txtencid.Text), "Scanned Images", "")
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub mnuclaim_Click()
+
+  Dim hForm As FmClaimForm
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hForm = New FmClaimForm(GridView1[GridView1.Row, 0].Text, "Report", $tblpatreport, False, "")
+    hForm.ShowModal
+    If cmbcategory.Text Then
+      FillGridData()
+    Endif
+  Endif
+
+End
+
+''delete
+Public Sub mnudel_Click()
+
+  Dim sLink As String
+  Dim xfile As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If rbnew.Value = True Then
+      If Message.Question(("Are you sure?"), ("No"), ("Yes")) = 2 Then
+
+        sLink = GridView1[GridView1.Row, 9].Text
+        If sLink Then
+          modFTPSub.DeleteBlobFIleFTP(sLink)
+          xfile = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+          If Not Exist(xfile) Then
+            modDatabase.$myConn.Delete($tblpatreport, "fldid=&1 and fldsave=&2", GridView1[GridView1.Row, 0].Text, True)
+            FillGridData()
+          Endif
+        Else
+          modDatabase.$myConn.Delete($tblpatreport, "fldid=&1 and fldsave=&2", GridView1[GridView1.Row, 0].Text, True)
+          FillGridData()
+        Endif
+
+      Endif
+    Endif
+  Endif
+
+End
+
+''bulk delete
+Public Sub mnubulkdel_Click()
+
+  Dim res As Result
+  Dim xdate As Date
+  Dim sLink As String
+  Dim xfile As String
+  Dim xPass As String
+
+  If cmbcategory.Text Then
+    xdate = GetDateValue("Select Date of Document for Deletion", "Patient Reports", DateAdd(Now(), gb.Day, -365))
+    If xdate Then
+
+      xPass = InputPassword("Provide Root Password", "Verification", "")
+      If modPassword.GetSuperVerification(modBasic.$lbluser, xPass) = True Then
+        Inc Application.Busy
+        res = modDatabase.$syConn.Exec("select fldid,fldcateg,fldtime,fldencounterval,fldencounterval,fldtitle,fldid,flddetail,fldsave,fldlink from " & $tblpatreport & " where fldcateg=&1 and fldsave=&2 and fldtime>=&3 and fldtime<=&4", cmbcategory.Text, True, modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate))                                                      ''
+        If res.Available Then
+          For Each res
+            sLink = res["fldlink"]
+            If sLink Then
+              modFTPSub.DeleteBlobFIleFTP(sLink)
+              xfile = modImage.GetBlobFileData(res["fldid"], $tblpatreport)
+              If Not Exist(xfile) Then
+                modDatabase.$myConn.Delete($tblpatreport, "fldid=&1 and fldsave=&2", res["fldid"], True)
+              Endif
+            Else
+              modDatabase.$myConn.Delete($tblpatreport, "fldid=&1 and fldsave=&2", res["fldid"], True)
+            Endif
+          Next
+        Endif
+        Dec Application.Busy
+      Else
+        Message.Info("Incorrect Root Password", ("OK"))
+      Endif
+
+      FillGridData()
+    Endif
+  Endif
+
+End
+
+Public Sub mnuvisible_Click()
+
+  Dim xx As String
+  Dim xopt As String[] = ["Visible", "Hidden"]
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xx = InputCombo("Set Visibility", GridView1[GridView1.Row, 5].Text, xopt, GridView1[GridView1.Row, 10].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit($tblpatreport, "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+        res["flvisible"] = xx
+        res.Update
+        FillGridData()
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnsearch_Click()
+
+  Dim hForm As FmTestStatus
+
+  If txtencid.Text Then
+    If cmbcategory.Text = "Diagnostic Tests" Then
+      hForm = New FmTestStatus(Trim(txtencid.Text))
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+Public Sub btninvoice_Click()
+
+  Dim xx As String
+
+  xx = InputBox("Select Invoice Number", "Search Invoice", "")
+  If xx Then
+    txtencid.Text = modNonMedical.GetEncounterFromBillNo(xx, cmbfiscal.Text)
+  Endif
+
+End
+
+Public Sub mnumount_Click()
+
+  Dim xdir As String
+  Dim xfolder As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If GridView1[GridView1.Row, 9].Text Then
+      xdir = File.Dir(Temp())
+      xfolder = xdir &/ GridView1[GridView1.Row, 3].Text
+      If Not Exist(xfolder) Then
+        Mkdir xfolder
+      Endif
+      modFTPSub.GetMountFTPFolder(File.Dir(GridView1[GridView1.Row, 9].Text), xfolder)
+      modDevice.DesktopOpenFile(xfolder)
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup()
+
+End

@@ -1,0 +1,1138 @@
+' Gambas module file
+
+Public $virtualQuery As String
+
+''----------------- Compress/Extract --------------------
+Public Sub GetZipArchive(sZip As String, sFolder As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("zip") Then
+    arcmd = ["zip", "-jr", sZip, sFolder]
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["zip"])
+  Endif
+
+End
+
+Public Sub GetZipExtract(sZip As String, sFolder As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("unzip") Then
+    arcmd = ["unzip", sZip, "-d", sFolder]
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["unzip"])
+  Endif
+
+End
+
+Public Sub GetTarExtraction(xfile As String, sFolder As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("tar") = True Then
+    arcmd = ["tar", "xf", xfile, "-C", sFolder]
+  Else
+    arcmd = ["busybox", "tar", "xf", xfile, "-C", sFolder]
+  Endif
+  modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+
+End
+
+Public Sub GetTarCompression(sFolder As String, sTargetFolder As String, sTargetFile As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("tar") = True Then
+    arcmd = ["tar", "-C", sFolder, "-cvf", sTargetFile, sTargetFolder]
+  Else
+    arcmd = ["busybox", "tar", "-C", sFolder, "-cvf", sTargetFile, sTargetFolder]
+  Endif
+  modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+
+End
+
+Public Sub GetTarCompressionExcluding(sFolder As String, sTargetFolder As String, sTargetFile As String, Optional sExclude As String[])
+
+  Dim arcmd As String[]
+  Dim xfile As String
+
+  arcmd = New String[]
+  If System.Exist("tar") = True Then
+    arcmd.Add("tar")
+  Else
+    arcmd.Add("busybox")
+    arcmd.Add("tar")
+  Endif
+
+  If sExclude Then
+    For Each xfile In sExclude
+      arcmd.Add("--exclude='" & xfile & "'")
+    Next
+  Endif
+
+  arcmd.Add("-C")
+  arcmd.Add(sFolder)
+  arcmd.Add("-cvf")
+  arcmd.Add(sTargetFile)
+  arcmd.Add(sTargetFolder)
+
+  modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+  Shell arcmd.Join(Space(1)) Wait
+
+End
+
+''NOTE: ------------------------- 7z compression with password -----------------------------
+Public Sub Get7ZCompression(UnCompressedPath As String, sPassword As String, CompressedPath As String)
+
+  Dim xcmd As String
+
+  If System.Exist("7z") Then
+    xcmd = "7z -mhc=on -mhe=on -p" & sPassword & " a " & CompressedPath & Space(1) & UnCompressedPath
+    modBasic.DebugAPIString("Execute " & Replace(xcmd, sPassword, "***"))
+    Shell xcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["p7zip-full"])
+  Endif
+
+End
+
+Public Sub Get7ZExtraction(CompressedPath As String, sPassword As String, UnCompressedPath As String)
+
+  Dim xcmd As String
+  Dim xnew As String
+
+  If System.Exist("7z") Then
+    xcmd = "7z x " & CompressedPath & " -p" & sPassword & " -o" & File.Dir(UnCompressedPath)
+    modBasic.DebugAPIString("Execute " & Replace(xcmd, sPassword, "***"))
+    Shell xcmd Wait
+    xnew = File.Dir(UnCompressedPath) &/ Replace(File.Name(CompressedPath), ".7z", "")
+    If Exist(xnew) Then
+      Move xnew To UnCompressedPath
+    Endif
+  Else
+    modApplSub.InstallSelectedApplication(["p7zip-full"])
+  Endif
+
+End
+
+''--------------------------- DICOM ------------------------
+Public Function ConverDicomToPNG(DCMPath As String) As String
+
+  Dim sPath As String
+  Dim arcmd As String[]
+
+  sPath = Temp()
+  If System.Exist("dcmj2pnm") = True Then
+    arcmd = ["dcmj2pnm", "--write-png", DCMPath, sPath]
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["dcmtk"])
+  Endif
+
+  Return sPath
+
+End
+
+Public Function GetAnonymizedDicom(sDicom As String) As String
+
+  Dim arcmd As String[]
+
+  If System.Exist("dcmodify") = True Then
+    arcmd = ["dcmodify", "-nb", "-ma", Quote("(0010,0010)=XXXXX XXXXX"), "-ma", Quote("(0010,0020)=000"), sDicom]
+    ' arcmd = ["dcmodify", "-nb", "-ma", "PatientName='XXXX XXXX'", "-ma", "PatientID='0000'", sDicom]
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["dcmtk"])
+  Endif
+  Return sDicom
+
+End
+
+Public Sub GetAnonymizedDicomFolder(sDicomDir As String)
+
+  Dim sFile As String
+  Dim sFileList As String[]
+
+  sFileList = Dir(sDicomDir, Null, gb.File)
+  For Each sFile In sFileList
+    modDevAll.GetAnonymizedDicom(sDicomDir &/ sFile)
+  Next
+
+End
+
+Public Function GetCFindPACSStudy(sHost As String, sAET As String, sPort As String, encid As String) As String
+
+  Dim patcode As String
+  Dim xpath As String
+  Dim arcmd As String[]
+
+  patcode = "PatientID=" & encid
+  $virtualQuery = ""
+
+  If System.Exist("findscu") = True Then
+    arcmd = ["findscu", "-S", "-aet", sAET, sHost, sPort, "-k", "QueryRetrieveLevel=STUDY", "-k", "PatientName", "-k", "PatientSex", "-k", "StudyDate", "-k", "StudyInstanceUID", "-k", patcode]                          ''
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait For Input As "PACSReturn"                              ''
+    xpath = Temp()
+    File.Save(xpath, Str($virtualQuery))
+  Else
+    modApplSub.InstallSelectedApplication(["dcmtk"])
+  Endif
+
+  Return xpath
+
+End
+
+Public Function GetCFindPACSSeries(sHost As String, sAET As String, sPort As String, encid As String, StudyUID As String) As String
+
+  Dim patcode As String
+  Dim xstudy As String
+  Dim xpath As String
+  Dim arcmd As String[]
+
+  patcode = "PatientID=" & encid
+  xstudy = "StudyInstanceUID=" & StudyUID
+  $virtualQuery = ""
+
+  If System.Exist("findscu") = True Then
+    arcmd = ["findscu", "-S", "-aet", sAET, sHost, sPort, "-k", "QueryRetrieveLevel=SERIES", "-k", "Modality", "-k", "SeriesInstanceUID", "-k", xstudy, "-k", patcode]                          ''
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait For Input As "PACSReturn"                              ''
+    xpath = Temp()
+    File.Save(xpath, Str($virtualQuery))
+  Else
+    modApplSub.InstallSelectedApplication(["dcmtk"])
+  Endif
+
+  Return xpath
+
+End
+
+Public Function GetCFindPACSSOP(sHost As String, sAET As String, sPort As String, encid As String, StudyUID As String, SeriesUID As String) As String
+
+  Dim patcode As String
+  Dim xstudy As String
+  Dim xseries As String
+  Dim xpath As String
+  Dim arcmd As String[]
+
+  patcode = "PatientID=" & encid
+  xstudy = "StudyInstanceUID=" & StudyUID
+  xseries = "SeriesInstanceUID=" & SeriesUID
+  $virtualQuery = ""
+
+  If System.Exist("findscu") = True Then
+    arcmd = ["findscu", "-S", "-aet", sAET, sHost, sPort, "-k", "QueryRetrieveLevel=IMAGE", "-k", "NumberOfFrames", "-k", "SOPInstanceUID", "-k", xseries, "-k", xstudy, "-k", patcode]                          ''
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait For Input As "PACSReturn"                              ''
+    xpath = Temp()
+    File.Save(xpath, Str($virtualQuery))
+  Else
+    modApplSub.InstallSelectedApplication(["dcmtk"])
+  Endif
+
+  Return xpath
+
+End
+
+Public Sub PACSReturn_Read()
+
+  Dim sLine As String
+
+  Read #Last, sLine, -256
+
+  $virtualQuery = $virtualQuery & sLine
+
+End
+
+' Public Sub GetCGetDicomFolder(sHost As String, sAET As String, sPort As String, encid As String, studyID As String, sDirPath As String)
+'
+'   Dim patcode As String
+'   Dim studycode As String
+'   Dim arcmd As String[]
+'
+'   studycode = "StudyInstanceUID=" & studyID
+'   patcode = "PatientID=" & encid
+'
+'   If System.Exist("getscu") Then
+'     arcmd = ["getscu", "-v", "-S", "-aet", sAET, sHost, sPort, "-k", "QueryRetrieveLevel=STUDY", "-k", studycode, "-k", patcode, "--output-directory", sDirPath]
+'     modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+'     Exec arcmd Wait
+'   Else
+'     modApplSub.InstallSelectedApplication(["dcmtk"])
+'   Endif
+'
+' End
+
+Public Sub CreateDICOMDIR(sFolder As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("dcmmkdir") = True Then
+    arcmd = ["dcmmkdir", "--recurse", "--output-file", sFolder &/ "DICOMDIR", "--input-directory", sFolder, "IMAGES"]
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["dcmtk"])
+  Endif
+
+End
+
+''------------------------------------- PDF Encryption --------------------------------
+Public Sub GetEncryptPDF(sInput As String, sOutput As String, sPass As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("qpdf") Then
+    arcmd = ["qpdf", "--encrypt", sPass, sPass, 40, "--", sInput, sOutput]
+    modBasic.DebugAPIString("Execute " & Replace(arcmd.Join(Space(1)), sPass, "***"))
+    Exec arcmd Wait
+  Else
+    sOutput = sInput
+    modApplSub.InstallSelectedApplication(["qpdf"])
+  Endif
+
+End
+
+Public Sub GetDecryptPDF(sInput As String, sOutput As String, sPass As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("qpdf") Then
+    arcmd = ["qpdf", "--password=" & sPass, "--decrypt", sInput, sOutput]
+    modBasic.DebugAPIString("Execute " & Replace(arcmd.Join(Space(1)), sPass, "***"))
+    Exec arcmd Wait
+  Else
+    sOutput = sInput
+    modApplSub.InstallSelectedApplication(["qpdf"])
+  Endif
+
+End
+
+'NOTE: ----------------------------- BAR CODE PROCEDURES ----------------------------------------
+Public Function MakeQRCode(encid As String) As String
+
+  Dim hFil As String
+  Dim arcmd As String[]
+
+  If System.Exist("qrencode") = True Then
+    hFil = Temp() & ".png"
+    arcmd = New String[]
+    arcmd.Add("qrencode")
+    arcmd.Add("--casesensitive")
+    If modBasic.$BarCodePixelSize Then
+      arcmd.Add("-s")
+      arcmd.Add(CStr(modBasic.$BarCodePixelSize))
+    Endif
+    If modBasic.$BarCodeImageDPI Then
+      arcmd.Add("-d")
+      arcmd.Add(CStr(modBasic.$BarCodeImageDPI))
+    Endif
+    If modBasic.$BarCodeMarginWidth Then
+      arcmd.Add("-m")
+      arcmd.Add(CStr(modBasic.$BarCodeMarginWidth))
+    Endif
+    If modBasic.$BarCodeForeGround Then
+      arcmd.Add("--foreground=" & Hex(modBasic.$BarCodeForeGround))
+    Endif
+    If modBasic.$BarCodeBackGround Then
+      arcmd.Add("--background=" & Hex(modBasic.$BarCodeBackGround))
+    Endif
+    arcmd.Add("-o")
+    arcmd.Add(hFil)
+    arcmd.Add(encid)
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["qrencode"])
+  Endif
+  Return hFil
+
+End
+
+Public Function MakeBarCodeZint(encid As String, Optional xcode As String) As String
+
+  Dim hFil As String
+  Dim arcmd As String[]
+
+  If System.Exist("zint") = True Then
+    hFil = Temp() & ".png"
+    arcmd = New String[]
+    arcmd.Add("zint")
+    If modBasic.$BarCodeFormatString Then
+      If xcode Then
+        arcmd.Add("-b")
+        arcmd.Add(xcode)
+      Endif
+    Endif
+    If modBasic.$BarCodeDisplayText = "No" Then
+      arcmd.Add("--notext")
+    Else
+      arcmd.Add("--small")
+    Endif
+    If modBasic.$BarCodeWidth Then
+      arcmd.Add("--scale=" & CStr(modBasic.$BarCodeWidth))
+    Endif
+    If modBasic.$BarCodeWhiteSpace Then
+      arcmd.Add("-w")
+      arcmd.Add(CStr(modBasic.$BarCodeWhiteSpace))
+    Endif
+    If modBasic.$BarCodeForeGround Then
+      arcmd.Add("--fg=" & Hex(modBasic.$BarCodeForeGround))
+    Endif
+    If modBasic.$BarCodeBackGround Then
+      arcmd.Add("--bg=" & Hex(modBasic.$BarCodeBackGround))
+    Endif
+    arcmd.Add("-o")
+    arcmd.Add(hFil)
+    arcmd.Add("-d")
+    arcmd.Add(encid)
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["zint"])
+  Endif
+  Return hFil
+
+End
+
+Public Function GetBarCodeSample(encid As String) As String
+
+  Dim hFil As String
+  Dim arcmd As String[]
+  Dim xcode As String
+
+  If System.Exist("zint") = True Then
+    hFil = Temp() & ".png"
+    arcmd = New String[]
+    arcmd.Add("zint")
+    If modBasic.$LabBarFormat Then
+      xcode = Trim(GetZintCode(modBasic.$LabBarFormat))
+      If xcode Then
+        arcmd.Add("-b")
+        arcmd.Add(xcode)
+      Endif
+    Endif
+    If modBasic.$LabBarDisplayText = "Yes" Then
+      arcmd.Add("--small")
+    Else
+      arcmd.Add("--notext")
+    Endif
+    If modBasic.$LabBarWidth Then
+      arcmd.Add("--scale=" & CStr(modBasic.$LabBarWidth))
+    Endif
+    If modBasic.$LabBarWhiteSpace Then
+      arcmd.Add("-w")
+      arcmd.Add(CStr(modBasic.$LabBarWhiteSpace))
+    Endif
+    arcmd.Add("-o")
+    arcmd.Add(hFil)
+    arcmd.Add("-d")
+    arcmd.Add(encid)
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["zint"])
+  Endif
+  Return hFil
+
+End
+
+Private Function GetZintCode(sName As String) As String
+
+  Dim xx As String
+  Dim xfile As String
+
+  xfile = modHelpVariable.$localesDirectory &/ "zint"
+  If Exist(xfile) Then
+    xx = modString.GetValueFromCSV(sName, xfile, 1, 0, ";")
+  Endif
+  Return xx
+
+End
+
+Public Function GetBarCodeWithOptions(encid As String) As String
+
+  Dim xpath As String
+  Dim xcode As String
+
+  xcode = Trim(GetZintCode(modBasic.$BarCodeFormatString))
+  If xcode Then
+    xpath = modDevAll.MakeBarCodeZint(encid, xcode)
+  Else
+    xpath = modDevAll.MakeBarCodeZint(encid)
+  Endif
+
+  Return xpath
+
+End
+
+''------------------------- webcam --------------------------
+Public Sub GetWebCamSnapShot(strPath As String, sDevice As String)
+
+  Dim arcmd As String[]
+  Dim xdevice As String
+
+  If sDevice Then
+    xdevice = sDevice
+  Else
+    xdevice = "/dev/v4l/by-id/" & Dir("/dev/v4l/by-id", "*")[0]
+  Endif
+  If System.Exist("streamer") = True Then
+    arcmd = ["streamer", "-c", xdevice, "-o", strPath]
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["streamer"])
+  Endif
+
+End
+
+Public Function GetWebCamVideo(dura As Integer, sDevice As String) As String
+
+  Dim aa As String
+  Dim bb As String
+  Dim cc As String
+  Dim yy As String
+  Dim arcmd As String[]
+  Dim sTemp As String
+  Dim xdevice As String
+
+  aa = modSettings.ShowSettingFromFIle("WebCamSettings/ImageQuality")
+  bb = modSettings.ShowSettingFromFIle("WebCamSettings/VideoFormat")
+  cc = modSettings.ShowSettingFromFIle("WebCamSettings/FrameRate")
+
+  yy = modString.ConvertSecondToDurationString(dura)
+  sTemp = Temp() & ".avi"
+
+  If sDevice Then
+    xdevice = sDevice
+  Else
+    xdevice = "/dev/v4l/by-id/" & Dir("/dev/v4l/by-id", "*")[0]
+  Endif
+
+  If System.Exist("streamer") = True Then
+    If aa And If bb And If cc Then
+      arcmd = ["streamer", "-q", "-c", xdevice, "-f", bb, "-j", aa, "-r", cc, "-t", yy, "-o", sTemp]
+    Else
+      arcmd = ["streamer", "-q", "-c", xdevice, "-t", yy, "-o", sTemp]
+    Endif
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["streamer"])
+  Endif
+  Return sTemp
+
+End
+
+'NOTE: ---------------------------------------- TRANSLATE ---------------------------------------------
+Public Function TranslateTextToNewLanguage(langcode As String, txtcontent As String) As String
+
+  Dim xx As String
+  Dim code As String
+  Dim yy As String
+  Dim arcmd As String[]
+
+  code = ":" & langcode
+  If System.Exist("trans") Then
+    arcmd = ["trans", "-brief", code, txtcontent]
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd To xx
+  Else
+    modApplSub.InstallSelectedApplication(["translate-shell"])
+  Endif
+
+  If xx Then
+    yy = Replace(xx, "null", "")
+  Else
+    yy = ""
+  Endif
+  Return yy
+
+End
+
+'NOTE: ----------------------------------------------- FTP Server ----------------------------------------------
+Public Function SendFileToFTP(ftpHost As String, ftpFolder As String, ftpUser As String, ftpPassword As String, sTargFile As String, sFile As String) As String
+
+  Dim xx As String
+  Dim arcmd As String[]
+  Dim sOut As String
+  Dim xmsg As String
+
+  xx = "ftp://" & ftpUser & ":" & ftpPassword & "@" & ftpHost &/ ftpFolder &/ sTargFile
+  If modBasic.$FtpUploader = "curl" Then
+    If System.Exist("curl") Then
+      If modHelpVariable.$SysFTPSSL = "Yes" Then
+        If modHelpVariable.$SysFTPCert Then
+          arcmd = ["curl", "--ftp-ssl", "--cacert", modHelpVariable.$SysFTPCert, "-T", sFile, xx, "--ftp-create-dirs"]
+        Else
+          arcmd = ["curl", "--ssl-reqd", "--insecure", "-T", sFile, xx, "--ftp-create-dirs"]
+        Endif
+      Else
+        arcmd = ["curl", "-T", sFile, xx, "--ftp-create-dirs"]
+      Endif
+      modBasic.DebugAPIString("Execute " & Replace(arcmd.Join(Space(1)), ftpPassword, "***"))
+      Exec arcmd To sOut
+    Else
+      modApplSub.InstallSelectedApplication(["curl"])
+    Endif
+
+  Else
+    If System.Exist("wput") Then
+      If modHelpVariable.$SysFTPSSL = "Yes" Then
+        arcmd = ["wput", sFile, xx]
+      Else
+        arcmd = ["wput", sFile, xx]
+      Endif
+      modBasic.DebugAPIString("Execute " & Replace(arcmd.Join(Space(1)), ftpPassword, "***"))
+      Exec arcmd To sOut
+    Else
+      modApplSub.InstallSelectedApplication(["wput"])
+    Endif
+
+  Endif
+
+  If InStr(sOut, "failed") > 0 Then
+    xmsg = sOut
+  Else
+    xmsg = ""
+  Endif
+  Return xmsg
+
+End
+
+'''---------------------------------- deleting FTP file -----------------------------------------
+Public Sub DeleteFTPFIle(ftpHost As String, ftpFolder As String, ftpUser As String, ftpPassword As String, sTargFile As String)
+
+  Dim xx As String
+  Dim arcmd As String[]
+
+  xx = "ftp://" & ftpUser & ":" & ftpPassword & "@" & ftpHost &/ ftpFolder &/ sTargFile
+  If System.Exist("wdel") = True Then
+    arcmd = ["wdel", xx]
+    modBasic.DebugAPIString("Execute " & Replace(arcmd.Join(Space(1)), ftpPassword, "***"))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["wput"])
+  Endif
+  ''delete folder if folder is blank now
+
+End
+
+''------------------------------- SMTP E mail ------------------------------
+Public Sub SendSMTPEmail(lstsendto As String[], xlstcc As String[], xlstbcc As String[], sSubject As String, sMessage As String, sAttacPath As String)
+
+  Dim hClient As New SmtpClient
+  Dim xsend As String
+  Dim xcc As String
+  Dim xbcc As String
+
+  With hClient
+    .Host = modBasic.$emailSMTPHost
+    .Encrypt = Net.TLS
+    .User = modBasic.$emailSMTPUser
+    .Password = modBasic.$emailSMTPPass
+    If modBasic.$DebugMode = True Then
+      .Debug = True
+    Endif
+
+    .Subject = sSubject
+    .From = modBasic.$emailSMTPFrom
+    For Each xsend In lstsendto
+      .To.Add(xsend)
+    Next
+
+    If xlstcc Then
+      For Each xcc In xlstcc
+        .Cc.Add(xcc)
+      Next
+    Endif
+    If xlstbcc Then
+      For Each xbcc In xlstbcc
+        .Bcc.Add(xbcc)
+      Next
+    Endif
+
+    .Body = sMessage
+    If sAttacPath Then
+      If File.Ext(sAttacPath) = "html" Then
+        .Add(File.Load(sAttacPath), "text/html", "Attachment")
+      Else If File.Ext(sAttacPath) = "pdf" Then
+        .Add(File.Load(sAttacPath), "application/pdf", "Attachment")
+      Else
+        .Add(File.Load(sAttacPath), modImageSub.GetContentTypeFrom(sAttacPath), "Attachment")
+      Endif
+    Endif
+    modBasic.DebugAPIString("Sending SMTP E-mail to " & lstsendto.Join(";"))
+    .Send()
+  End With
+  modAppSupport.SaveMessageLog(lstsendto.Join(";"), sMessage, sSubject)
+
+End
+
+''================================ CURL HTTP =========================
+Public Function HTTPPOSTCollectionVal(sURL As String, xuser As String, xpass As String, sColl As JSONCollection) As String
+
+  Dim xval As String
+  Dim xauth As String
+  Dim xcontent As String
+  Dim arcmd As String
+
+  xcontent = "Content-Type: application/json"
+  If System.Exist("curl") Then
+    If xuser Then
+      If xpass Then
+        xauth = xuser & ":" & xpass
+        If modBasic.$cURLCACert = "Disable" Then
+          arcmd = "curl -k -u " & xauth & " -d '" & JSON.Encode(sColl) & "' -H " & Quote(xcontent) & "  -X POST " & sURL
+        Else
+          arcmd = "curl -u " & xauth & " -d '" & JSON.Encode(sColl) & "' -H " & Quote(xcontent) & "  -X POST " & sURL
+        Endif
+      Else
+        xauth = xuser
+        If modBasic.$cURLCACert = "Disable" Then
+          arcmd = "curl -k -A " & xauth & " -d '" & JSON.Encode(sColl) & "' -H " & Quote(xcontent) & "  -X POST " & sURL
+        Else
+          arcmd = "curl -A " & xauth & " -d '" & JSON.Encode(sColl) & "' -H " & Quote(xcontent) & "  -X POST " & sURL
+        Endif
+      Endif
+    Else
+      If modBasic.$cURLCACert = "Disable" Then
+        arcmd = "curl -k" & " -d '" & JSON.Encode(sColl) & "' -H " & Quote(xcontent) & "  -X POST " & sURL
+      Else
+        arcmd = "curl" & " -d '" & JSON.Encode(sColl) & "' -H " & Quote(xcontent) & "  -X POST " & sURL
+      Endif
+    Endif
+    modBasic.DebugAPIString("Execute " & Replace(arcmd, xpass, "***"))
+    Shell arcmd To xval
+  Else
+    modApplSub.InstallSelectedApplication(["curl"])
+  Endif
+
+  Return Trim(xval)
+
+End
+
+' Public Function GetCurlGetDownload(sLink As String) As String
+'
+'   Dim arcmd As String[]
+'   Dim xval As String
+'
+'   If System.Exist("curl") Then
+'     arcmd = ["curl", "--request", "GET", "--url", sLink]
+'     modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+'     Exec arcmd To xval
+'   Else
+'     modApplSub.InstallSelectedApplication(["curl"])
+'   Endif
+'
+'   Return xval
+'
+' End
+
+''--------- download file ----------------------
+Public Function GetCurlDownload(sLink As String, Optional sUser As String, Optional sPass As String) As String
+
+  Dim arcmd As String[]
+  Dim xval As String
+
+  If System.Exist("curl") Then
+    If modBasic.$cURLCACert = "Disable" Then
+      If sUser Then
+        arcmd = ["curl", "-k", "-u", sUser & ":" & sPass, sLink]
+      Else
+        arcmd = ["curl", "-k", sLink]
+      Endif
+    Else
+      If sUser Then
+        arcmd = ["curl", "-u", sUser & ":" & sPass, sLink]
+      Else
+        arcmd = ["curl", sLink]
+      Endif
+    Endif
+    modBasic.DebugAPIString("Execute " & Replace(arcmd.Join(Space(1)), sPass, "***"))
+    Exec arcmd To xval
+  Else
+    modApplSub.InstallSelectedApplication(["curl"])
+  Endif
+
+  Return xval
+
+End
+
+Public Sub GetWgetDownload(sLink As String, sOutFile As String, Optional sUser As String, Optional sPass As String)
+
+  Dim arcmd As String[]
+  Dim xtemp As String
+
+  xtemp = Temp() & ".log"
+  If System.Exist("wget") Then
+    If modBasic.$cURLCACert = "Disable" Then
+      If sUser Then
+        arcmd = ["wget", "--no-check-certificate", "--no-cache", "--user", sUser, "--password", sPass, "-o", xtemp, sLink, "-O", sOutFile]
+      Else
+        arcmd = ["wget", "--no-check-certificate", "--no-cache", "-o", xtemp, sLink, "-O", sOutFile]
+      Endif
+    Else
+      If sUser Then
+        arcmd = ["wget", "--no-cache", "--user", sUser, "--password", sPass, "-o", xtemp, sLink, "-O", sOutFile]
+      Else
+        arcmd = ["wget", "--no-cache", "-o", xtemp, sLink, "-O", sOutFile]
+      Endif
+    Endif
+    modBasic.DebugAPIString("Execute " & Replace(arcmd.Join(Space(1)), sPass, "***"))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["wget"])
+  Endif
+
+End
+
+Public Function GetWgetDownlaodString(sLink As String) As String
+
+  Dim sPath As String
+  Dim xx As String
+
+  sPath = Temp()
+  modDevAll.GetWgetDownload(sLink, sPath)
+  xx = File.Load(sPath)
+  Return xx
+
+End
+
+Public Sub GetWgetFileToSelFolder(sFile As String, sFolder As String)
+
+  Dim xcmd As String[]
+
+  If System.Exist("wget") = True Then
+    xcmd = ["wget", sFile, "-P", sFolder]
+  Else
+    xcmd = ["busybox", "wget", sFile, "-P", sFolder]
+  Endif
+  modBasic.DebugAPIString("Execute " & xcmd.Join(Space(1)))
+  Exec xcmd Wait
+
+End
+
+'NOTE: ---------------------------------------- CONVERSION FOR PRINT/REPORT--------------------------
+Public Function GetPDFUnion(sPDF As String[]) As String
+
+  Dim sPath As String
+  Dim arcmd As String[]
+
+  sPath = Temp() & ".pdf"
+  arcmd = New String[]
+  If System.Exist("pdfunite") Then
+    arcmd.Add("pdfunite")
+    arcmd.Insert(sPDF)
+    arcmd.Add(sPath)
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["poppler-utils"])
+  Endif
+
+  Return sPath
+
+End
+
+Public Function GetPDFRotate(sPDF As String, sDegree As String) As String
+
+  Dim arcmd As String[]
+  Dim sPath As String
+
+  sPath = Temp() & ".pdf"
+  If System.Exist("qpdf") Then
+    arcmd = ["qpdf", sPDF, sPath, "--rotate=" & sDegree]
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["qpdf"])
+  Endif
+
+  Return sPath
+
+End
+
+Public Sub ConvertTexttoHTML(stInput As String, stOutput As String)
+
+  Dim arcmd As String[]
+
+  If System.Exist("txt2html") Then
+    arcmd = ["txt2html", "--tables", "--outfile", stOutput, "--infile", stInput]
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["txt2html"])
+  Endif
+
+End
+
+''convert HTML to Text for line printers
+Public Sub ConvertHTMLtoText(stInput As String, stOutput As String, sSize As String)
+
+  Dim arcmd As String
+  Dim xval As String
+
+  If System.Exist("links") Then
+    If sSize = "InvoiceSize" Then
+      xval = modSettings.ShowSettingFromFIle("Invoice/HTML-to-Text_Width")
+      If xval Then
+        If CFloat(xval) > 0 Then
+          arcmd = "links -width " & xval & " -dump " & stInput & " > " & stOutput
+        Else
+          arcmd = "links -dump " & stInput & " > " & stOutput
+        Endif
+      Else
+        arcmd = "links -dump " & stInput & " > " & stOutput
+      Endif
+    Else
+      arcmd = "links -dump " & stInput & " > " & stOutput
+    Endif
+    modBasic.DebugString("Execute " & arcmd)
+    Shell arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["links"])
+  Endif
+
+End
+
+Public Sub GetJsonFormat(xJson As String) As String
+
+  Dim arcmd As String
+  Dim xval As String
+
+  If System.Exist("jq") Then
+    arcmd = "echo '" & xJson & "' | jq ."
+    modBasic.DebugString("Execute " & arcmd)
+    Shell arcmd To xval
+
+  Else
+    modApplSub.InstallSelectedApplication(["jq"])
+  Endif
+
+  Return xval
+
+End
+
+''convert HTML to Postscript
+' Public Function ConvertHTMLToPS(sPath As String) As String
+'
+'   Dim xx As String
+'   Dim arcmd As String
+'
+'   xx = Temp() & ".ps"
+'   arcmd = "html2ps " & sPath & " > " & xx
+'   modBasic.DebugString("Execute " & arcmd)
+'   Shell arcmd Wait
+'   Return xx
+'
+' End
+
+''convert PDF to PS
+Public Function ConvertPDFToPS(sPDF As String) As String
+
+  Dim sPath As String
+  Dim arcmd As String[]
+
+  sPath = Temp() & ".ps"
+  If System.Exist("pdftocairo") Then
+    arcmd = ["pdftocairo", sPDF, "-ps", "-origpagesizes", sPath]
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["poppler-utils"])
+  Endif
+
+  Return sPath
+
+End
+
+''convert PDF to image
+Public Function ConvertPDFToImage(sPDF As String, sType As String) As String[]
+
+  Dim sPath As String
+  Dim arcmd As String[]
+  Dim xPath As String
+  Dim pathList As String[]
+
+  pathList = New String[]
+  sPath = Temp()
+  If System.Exist("pdftocairo") Then
+    If sType = "jpeg" Then
+      arcmd = ["pdftocairo", sPDF, "-jpeg", sPath]
+    Else
+      arcmd = ["pdftocairo", sPDF, "-png", sPath]
+    Endif
+    modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["poppler-utils"])
+  Endif
+
+  For Each xPath In Dir(File.Dir(sPath))
+    If xpath Like File.Name(sPath) & "*" Then
+      pathList.Add(File.Dir(sPath) &/ xpath)
+    Endif
+  Next
+
+  Return pathList
+
+End
+
+''convert multiple images to pdf
+Public Function ComvertMultiImagesToPDF(sFileList As String[]) As String
+
+  Dim sPath As String
+  Dim arcmd As String[]
+  Dim sImgList As String[]
+  Dim sPdfList As String[]
+  Dim sfile As String
+  Dim sPdf As String
+
+  sImgList = New String[]
+  sPdfList = New String[]
+  For Each sfile In sFileList
+    If Lower(File.Ext(sfile)) = "pdf" Then
+      sPdfList.Add(sfile)
+    Else
+      sImgList.Add(sfile)
+    Endif
+  Next
+
+  If sImgList.Count Then
+    sPath = Temp() & ".pdf"
+    If modBasic.$ConvImagePDF = "img2pdf" Then
+      If System.Exist("img2pdf") Then
+        arcmd = New String[]
+        arcmd.Add("img2pdf")
+        arcmd.Add("--output")
+        arcmd.Add(sPath)
+        arcmd.Insert(sImgList)
+        modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+        Exec arcmd Wait
+      Else
+        modApplSub.InstallSelectedApplication(["img2pdf"])
+      Endif
+    Else
+      If System.Exist("convert") Then
+        arcmd = New String[]
+        arcmd.Add("convert")
+        arcmd.Insert(sImgList)
+        arcmd.Add(sPath)
+        modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+        Exec arcmd Wait
+      Else
+        modApplSub.InstallSelectedApplication(["imagemagick"])
+      Endif
+    Endif
+
+    sPdfList.Add(sPath)
+  Endif
+
+  If sPdfList.Count Then
+    If sPdfList.Count > 1 Then
+      sPdf = GetPDFUnion(sPdfList)
+    Else
+      sPdf = sPdfList[0]
+    Endif
+  Endif
+  Return sPdf
+
+End
+
+Public Function ConvertToBlackInWhite(sInput As String) As String
+
+  Dim arcmd As String[]
+  Dim sOutput As String
+
+  If System.Exist("convert") Then
+    sOutput = Temp() & "." & File.Ext(sInput)
+    arcmd = New String[]
+    arcmd.Add("convert")
+    arcmd.Add(sInput)
+    arcmd.Add("-alpha")
+    arcmd.Add("off")
+    arcmd.Add("-threshold")
+    arcmd.Add("50%")
+    arcmd.Add(sOutput)
+    modBasic.DebugAPIString("Execute " & arcmd.Join(Space(1)))
+    Exec arcmd Wait
+  Else
+    modApplSub.InstallSelectedApplication(["imagemagick"])
+  Endif
+
+  Return sOutput
+
+End
+
+''convert HTML to Image (Not used yet- either use it or convert from pdf)
+' Public Function ConvertHTMLToImageString(sHTM As String, sSize As String) As String
+'
+'   Dim sPath As String
+'
+'   sPath = Temp() & ".png"
+'   Exec ["wkhtmltoimage", sHTM, sPath] Wait
+'   Return sPath
+'
+' End
+
+''=================== Database =========================
+Public Function GetQueryOracleServer(sServer As String, sDB As String, sUser As String, sPass As String, sQuery As String) As String
+
+  Dim xx As String
+  Dim yy As String
+  Dim arcmd As String
+
+  arcmd = "echo '" & sQuery & ";'|sqlplus -s " & sUser & "/" & sPass & "@" & sServer & "/" & sDB
+  modBasic.DebugString("Execute " & Replace(arcmd, sPass, "***"))
+  Shell arcmd To xx
+  If xx Then
+    yy = Trim(xx)
+  Else
+    yy = ""
+  Endif
+
+  Return yy
+
+End
+
+Public Function GetQueryMsSqlServer(sServer As String, sDB As String, sUser As String, sPass As String, sQuery As String) As String
+
+  Dim xx As String
+  Dim yy As String
+  Dim arcmd As String[]
+
+  If System.Exist("sqsh") = True Then
+    If sPass Then
+      arcmd = ["sqsh", "-S", sServer, "-D", sDB, "-U", sUser, "-P", sPass, "-h", "-C", sQuery]
+      modBasic.DebugString("Execute " & Replace(arcmd.Join(Space(1)), sPass, "***"))
+      Exec arcmd To xx
+    Else
+      arcmd = ["sqsh", "-S", sServer, "-D", sDB, "-U", sUser, "-h", "-C", sQuery]
+      modBasic.DebugString("Execute " & Replace(arcmd.Join(Space(1)), sPass, "***"))
+      Exec arcmd To xx
+    Endif
+    If xx Then
+      yy = Trim(xx)
+    Else
+      yy = ""
+    Endif
+
+  Else
+    modApplSub.InstallSelectedApplication(["sqsh"])
+  Endif
+  Return yy
+
+End

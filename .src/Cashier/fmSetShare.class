@@ -1,0 +1,1318 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $SSQLFields As String[]
+Private $Type As String
+Private $sLevel As String
+Private $xFormat As String
+Private $UserList As Variant[]
+Private $ProgressBar1 As ProgressBar
+
+Public Sub _new(sType As String, sFormat As String)
+
+  $Type = sType
+  $xFormat = sFormat
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  cmbbillmode.List = modNonMedical.FillCashModeCombo()
+  cmbbillmode.Add("%")
+  cmbbillmode.Text = "%"
+  cmbfaculty.List = modGeneral.GetUsersCategory()
+  If modBasic.$PayableSettingVerify = "Enable" Then
+    $sLevel = "Waiting"
+  Else
+    $sLevel = "Active"
+  Endif
+  cmbdisc.List = ["=", ">=", "<=", ">", "<"]
+  cmbdisc.Text = ">"
+  cmbposjoin.List = ["With", "Without"]
+  cmbposname.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(flditem) as col from tblprocedureuser"))
+
+  $SSQLFields = ["fldid", "fldencounterval", "fldencounterval", "flditemname", "fldcurrlocat", "flditemrate", "flditemqty", "flddiscper", "fldditemamt", "fldtime", "fldbillno", "fldid", "flditemtype", "fldsample", "fldpayto", "fldrefer", "fldbillingmode"]
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  rbmode.Value = True
+  cmbbillmode.List = GetCategoryGroups()
+  cmbbillmode.Text = "%"
+  rbselencid.Value = True
+  If $xFormat = "Entry" Then
+    Panel3.Enabled = True
+  Else If $xFormat = "Saved" Then
+    If modHelpVariable.$LogInCategory = "Account" Then
+      Panel3.Enabled = True
+      Panel6.Enabled = True
+    Else
+      Panel3.Enabled = False
+      Panel6.Enabled = False
+      mnudelsurguser.Visible = False
+      mnusharing.Visible = False
+    Endif
+  Endif
+  rboption10.Value = True
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Private Function GetCategoryGroups() As String[]
+
+  Dim xList As String[]
+
+  If rbmode.Value = True Then
+    xList = modNonMedical.FillCashModeCombo()
+  Else If rbdept.Value = True Then
+    xList = modNonMedical.GetGroupNameAccount()
+  Endif
+  xList.Add("%")
+  Return xList
+
+End
+
+Public Sub rbmode_Click()
+
+  cmbbillmode.List = GetCategoryGroups()
+  cmbbillmode.Text = "%"
+
+End
+
+Public Sub rbdept_Click()
+
+  cmbbillmode.List = GetCategoryGroups()
+  cmbbillmode.Text = "%"
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub CheckBox1_Click()
+
+  Dim Row As Integer
+
+  For Row = 0 To GridView1.Rows.Count - 1
+    If CheckBox1.Value = True Then
+      GridView1[Row, 0].Picture = Picture["icons/checked.png"]
+    Else If CheckBox1.Value = False Then
+      GridView1[Row, 0].Picture = Picture["icons/unchecked.png"]
+    Endif
+  Next
+
+End
+
+Private Sub UncheckAll()
+
+  Dim Row As Integer
+
+  For Row = 0 To GridView1.Rows.Count - 1
+    GridView1[Row, 0].Picture = Picture["icons/unchecked.png"]
+  Next
+
+End
+
+Public Sub txtreceipt_KeyPress()
+
+  If Key.Code = Key.Down Then
+    If rbselencid.Value = True Then
+      If Not txtreceipt.Text Then
+        txtreceipt.Text = PatSearch("Encounter")
+        txtreceipt.SetFocus
+      Else
+        If modBasic.$AutoEncSuffix = "Yes" Then
+          txtreceipt.Text = txtreceipt.Text & modBasic.$HospCode
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbbillmode_Click()
+
+  If cmbbillmode.Text Then
+    If rbmode.Value = True Then
+      cmbitem.List = modNonMedical.NonStockBillActiveItemArray($Type, cmbbillmode.Text)
+    Else If rbdept.Value = True Then
+      cmbitem.List = modNonMedical.NonStockBillActiveDeptArray($Type, cmbbillmode.Text)
+    Endif
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim res As Result
+  Dim xVar As Variant[]
+
+  ShowBillingData()
+  If cmbfaculty.Text Then
+    res = modDatabase.$myConn.Exec("select flduserid,fldusername from tbluser where fldpayable=&1 and fldcategory=&2", True, cmbfaculty.Text)
+    If res.Available Then
+      xVar = New Variant[]
+      For Each res
+        xVar.Add([res["flduserid"], res["fldusername"]])
+      Next
+      $UserList = xVar
+    Endif
+  Else
+    $UserList = modBasic.$PayUserList
+  Endif
+
+End
+
+Private Sub ShowBillingData()
+
+  Dim sql As String
+  Dim xcompl As String
+  Dim ycompl As String
+  Dim xdiscstr As String
+  Dim xposSql As String
+
+  If modBasic.$PayableGroupSource = "All Billed" Then
+    xcompl = "Waiting"
+    ycompl = "Sampled"
+  Else
+    Select $Type
+      Case "Procedures", "Radio Diagnostics", "Diagnostic Tests"
+        xcompl = "Sampled"
+        ycompl = "Sampled"
+      Case Else
+        xcompl = "Waiting"
+        ycompl = "Waiting"
+    End Select
+  Endif
+
+  If $xFormat = "Entry" Then
+    If txtreceipt.Text Then
+      If chkdiscount.Value = True Then
+        xdiscstr = " and flddiscper" & cmbdisc.Text & "&7 and flddiscper>&8"
+      Else
+        xdiscstr = ""
+      Endif
+      If rbselencid.Value Then
+        sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and (fldsample=&3 or fldsample=&4) and fldencounterval like &5 and (flditemqty-fldretqty)>&6 and fldpayto IS NULL and fldid not in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares)" & xdiscstr
+      Else If rbselinv.Value = True Then
+        If txtreceipt.Text Like "ARC" & "*" Then
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and (fldsample=&3 or fldsample=&4) and fldextracol like &5 and (flditemqty-fldretqty)>&6 and fldpayto IS NULL and fldid not in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares)" & xdiscstr
+        Else
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and (fldsample=&3 or fldsample=&4) and fldbillno like &5 and (flditemqty-fldretqty)>&6 and fldpayto IS NULL and fldid not in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares)" & xdiscstr
+        Endif
+      Endif
+      $rData = modDatabase.$syConn.Exec(sql, True, $Type, xcompl, ycompl, txtreceipt.Text, 0, txtdisc.Value, 0)
+
+    Else
+      If chkdiscount.Value = True Then
+        xdiscstr = " and flddiscper" & cmbdisc.Text & "&{11} and flddiscper>&{12}"
+      Else
+        xdiscstr = ""
+      Endif
+      If rbmode.Value = True Then
+        If cmbitem.Text Then
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and fldbillingmode like &7 and (flditemqty-fldretqty)>&8 and flditemname like &9 and fldpayto IS NULL and fldid not in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr                                           ''
+        Else
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and fldbillingmode like &7 and (flditemqty-fldretqty)>&8 and fldpayto IS NULL and fldid not in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr
+        Endif
+      Else If rbdept.Value = True Then
+        If cmbitem.Text Then
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and flditemname in(select flditemname from tblreportgroup where fldgroup like &7) and (flditemqty-fldretqty)>&8 and flditemname like &9 and fldpayto IS NULL and fldid not in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr                                           ''
+        Else
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and flditemname in(select flditemname from tblreportgroup where fldgroup like &7) and (flditemqty-fldretqty)>&8 and fldpayto IS NULL and fldid not in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr
+        Endif
+      Endif
+      $rData = modDatabase.$syConn.Exec(sql, True, $Type, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xcompl, ycompl, cmbbillmode.Text, 0, cmbitem.Text, "Active", txtdisc.Value, 0)
+    Endif
+
+  Else If $xFormat = "Saved" Then
+    If txtreceipt.Text Then
+      If chkdiscount.Value = True Then
+        xdiscstr = " and flddiscper" & cmbdisc.Text & "&7 and flddiscper>&8"
+      Else
+        xdiscstr = ""
+      Endif
+      If rbselencid.Value Then
+        sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and (fldsample=&3 or fldsample=&4) and fldencounterval like &5 and (flditemqty-fldretqty)>&6 and fldpayto IS NULL and fldid in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares)" & xdiscstr
+      Else If rbselinv.Value = True Then
+        If txtreceipt.Text Like "ARC" & "*" Then
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and (fldsample=&3 or fldsample=&4) and fldextracol like &5 and (flditemqty-fldretqty)>&6 and fldpayto IS NULL and fldid in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares)" & xdiscstr
+        Else
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and (fldsample=&3 or fldsample=&4) and fldbillno like &5 and (flditemqty-fldretqty)>&6 and fldpayto IS NULL and fldid in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares)" & xdiscstr
+        Endif
+      Endif
+      $rData = modDatabase.$syConn.Exec(sql, True, $Type, xcompl, ycompl, txtreceipt.Text, 0, txtdisc.Value, 0)
+
+    Else
+      If chkdiscount.Value = True Then
+        xdiscstr = " and flddiscper" & cmbdisc.Text & "&{11} and flddiscper>&{12}"
+      Else
+        xdiscstr = ""
+      Endif
+      If cmbposjoin.Text = "With" Then
+        xposSql = " and fldid in(select flditemid from tblpatgenshare where lower(fldusertype)=&{13})"
+      Else If cmbposjoin.Text = "Without" Then
+        xposSql = " and fldid not in(select flditemid from tblpatgenshare where lower(fldusertype)=&{13})"
+      Else
+        xposSql = ""
+      Endif
+      If rbmode.Value = True Then
+        If cmbitem.Text Then
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and fldbillingmode like &7 and (flditemqty-fldretqty)>&8 and flditemname like &9 and fldpayto IS NULL and fldid in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr & xposSql                                           ''
+        Else
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and fldbillingmode like &7 and (flditemqty-fldretqty)>&8 and fldpayto IS NULL and fldid in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr & xposSql
+        Endif
+      Else If rbdept.Value = True Then
+        If cmbitem.Text Then
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and flditemname in(select flditemname from tblreportgroup where fldgroup like &7) and (flditemqty-fldretqty)>&8 and flditemname like &9 and fldpayto IS NULL and fldid in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr & xposSql                                           ''
+        Else
+          sql = "select " & $SSQLFields.Join(",") & " from tblpatbilling where fldsave=&1 and flditemtype=&2 and fldtime>=&3 and fldtime<=&4 and (fldsample=&5 or fldsample=&6) and flditemname in(select flditemname from tblreportgroup where fldgroup like &7) and (flditemqty-fldretqty)>&8 and fldpayto IS NULL and fldid in(select flditemid from tblpatgenshare) and fldid not in(select fldbillid from tblpatusershares) and flditemname in (select flditemname from tblprocedureshare where fldactive=&{10})" & xdiscstr & xposSql
+        Endif
+      Endif
+      $rData = modDatabase.$syConn.Exec(sql, True, $Type, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), xcompl, ycompl, cmbbillmode.Text, 0, cmbitem.Text, "Active", txtdisc.Value, 0, LCase(cmbposname.Text))
+    Endif
+
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 1
+    .Columns[12].Width = 1
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[15].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[16].Width = 1
+
+    .Columns[1].Text = "Encounter"
+    .Columns[2].Text = "Patient Name"
+    .Columns[3].Text = "Particulars"
+    .Columns[4].Text = "Location"
+    .Columns[5].Text = "Rate"
+    .Columns[6].Text = "QTY"
+    .Columns[7].Text = "Disc%"
+    .Columns[8].Text = "Total"
+    .Columns[9].Text = "DateTime"
+    .Columns[10].Text = "Invoice"
+    .Columns[13].Text = "Status"
+    .Columns[14].Text = "Payable"
+    .Columns[15].Text = "Referral"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+
+  Dim xxx As Variant
+
+  If Column = 0 Then
+    GridView1.Data.Picture = Picture["icons/unchecked.png"]
+  Else If Column = 2 Then
+    xxx = modPatient.GetPatientNameByEnc(xVariable)
+  Else If Column = 5 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+  Else If Column = 6 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+  Else If Column = 7 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+  Else If Column = 8 Then
+    xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+  Else If Column = 9 Then
+    xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+  Else If Column = 14 Then
+    xxx = modGeneral.GetUserFullName(xVariable)
+  Else If Column = 15 Then
+    xxx = modGeneral.GetUserFullName(xVariable)
+  Else If Column = 16 Then
+    xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+  Else
+    xxx = xVariable
+  Endif
+  Return xxx
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim xType As String[]
+
+  txtid.Value = 0
+  txtencid.Text = ""
+  txtitem.Text = ""
+  ClearAllProfiles()
+
+  If GridView1.Column = 0 Then
+  Else
+    UncheckAll()
+  Endif
+  modGridView.CheckUncheckGridNoDB(GridView1, 0)
+  If Not GridView1[GridView1.Row, 14].Text Then
+    xType = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldusertype) as col from tblprocedureshare where flditemtype=&1 and fldbillingmode like &2 and (flditemname like &3 or flditemname=&4) and fldactive=&5", $Type, GridView1[GridView1.Row, 16].Text, GridView1[GridView1.Row, 3].Text, "%", "Active"))
+    If modHelpVariable.$LogInCategory = "Account" Then
+      cmbpertype.List = xType
+      cmbpertype2.List = xType
+      cmbpertype3.List = xType
+      cmbpertype4.List = xType
+      cmbpertype5.List = xType
+      cmbpertype6.List = xType
+      cmbpertype7.List = xType
+      cmbpertype8.List = xType
+      cmbpertype9.List = xType
+      cmbpertype10.List = xType
+    Endif
+
+    txtid.Value = GridView1[GridView1.Row, 11].Text
+    txtencid.Text = GridView1[GridView1.Row, 1].Text
+    txtitem.Text = GridView1[GridView1.Row, 3].Text
+    ShowSurgUser()
+
+    If modHelpVariable.$LogInCategory = "Account" Then
+    Else
+      If CheckBox1.Value = False Then
+        If xType.Count > 0 Then
+          cmbpertype.Text = xType[0]
+          cmbpertype_Click()
+        Endif
+        If xType.Count > 1 Then
+          cmbpertype2.Text = xType[1]
+          cmbpertype2_Click()
+        Endif
+        If xType.Count > 2 Then
+          cmbpertype3.Text = xType[2]
+          cmbpertype3_Click()
+        Endif
+        If xType.Count > 3 Then
+          cmbpertype4.Text = xType[3]
+          cmbpertype4_Click()
+        Endif
+        If xType.Count > 4 Then
+          cmbpertype5.Text = xType[4]
+          cmbpertype5_Click()
+        Endif
+        If xType.Count > 5 Then
+          cmbpertype6.Text = xType[5]
+          cmbpertype6_Click()
+        Endif
+        If xType.Count > 6 Then
+          cmbpertype7.Text = xType[6]
+          cmbpertype7_Click()
+        Endif
+        If xType.Count > 7 Then
+          cmbpertype8.Text = xType[7]
+          cmbpertype8_Click()
+        Endif
+        If xType.Count > 8 Then
+          cmbpertype9.Text = xType[8]
+          cmbpertype9_Click()
+        Endif
+        If xType.Count > 9 Then
+          cmbpertype10.Text = xType[9]
+          cmbpertype10_Click()
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnumain.Popup
+
+End
+
+Public Sub mnusharing_Click()
+
+  Dim hForm As FmDiffShare
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Not GridView1[GridView1.Row, 14].Text Then
+      hForm = New FmDiffShare(GridView1[GridView1.Row, 11].Text)
+      hForm.ShowModal
+      ShowBillingData()
+    Endif
+  Endif
+
+End
+
+''============================ Payable ==================
+Public Sub cmbpertype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype)
+  modFillContainer.RestrictComboToContent(cmbpertype)
+
+End
+
+Public Sub cmbpertype2_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype2)
+  modFillContainer.RestrictComboToContent(cmbpertype2)
+
+End
+
+Public Sub cmbpertype3_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype3)
+  modFillContainer.RestrictComboToContent(cmbpertype3)
+
+End
+
+Public Sub cmbpertype4_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype4)
+  modFillContainer.RestrictComboToContent(cmbpertype4)
+
+End
+
+Public Sub cmbpertype5_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype5)
+  modFillContainer.RestrictComboToContent(cmbpertype5)
+
+End
+
+Public Sub cmbpertype6_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype6)
+  modFillContainer.RestrictComboToContent(cmbpertype6)
+
+End
+
+Public Sub cmbpertype7_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype7)
+  modFillContainer.RestrictComboToContent(cmbpertype7)
+
+End
+
+Public Sub cmbpertype8_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype8)
+  modFillContainer.RestrictComboToContent(cmbpertype8)
+
+End
+
+Public Sub cmbpertype9_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype9)
+  modFillContainer.RestrictComboToContent(cmbpertype9)
+
+End
+
+Public Sub cmbpertype10_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbpertype10)
+  modFillContainer.RestrictComboToContent(cmbpertype10)
+
+End
+
+Public Sub btnconsult_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult.Tag = xMedUser[0]
+    btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult2_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult2.Tag = xMedUser[0]
+    btnconsult2.Text = xMedUser[1]
+  Else
+    btnconsult2.Tag = ""
+    btnconsult2.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult3_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult3.Tag = xMedUser[0]
+    btnconsult3.Text = xMedUser[1]
+  Else
+    btnconsult3.Tag = ""
+    btnconsult3.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult4_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult4.Tag = xMedUser[0]
+    btnconsult4.Text = xMedUser[1]
+  Else
+    btnconsult4.Tag = ""
+    btnconsult4.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult5_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult5.Tag = xMedUser[0]
+    btnconsult5.Text = xMedUser[1]
+  Else
+    btnconsult5.Tag = ""
+    btnconsult5.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult6_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult6.Tag = xMedUser[0]
+    btnconsult6.Text = xMedUser[1]
+  Else
+    btnconsult6.Tag = ""
+    btnconsult6.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult7_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult7.Tag = xMedUser[0]
+    btnconsult7.Text = xMedUser[1]
+  Else
+    btnconsult7.Tag = ""
+    btnconsult7.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult8_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult8.Tag = xMedUser[0]
+    btnconsult8.Text = xMedUser[1]
+  Else
+    btnconsult8.Tag = ""
+    btnconsult8.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult9_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult9.Tag = xMedUser[0]
+    btnconsult9.Text = xMedUser[1]
+  Else
+    btnconsult9.Tag = ""
+    btnconsult9.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult10_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Payable"), $UserList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult10.Tag = xMedUser[0]
+    btnconsult10.Text = xMedUser[1]
+  Else
+    btnconsult10.Tag = ""
+    btnconsult10.Text = ""
+  Endif
+
+End
+
+Private Function GetDefaultUser(xUserType As String) As String
+
+  Dim res As Result
+  Dim xval As String
+
+  If GridView1.Rows.Selection.Count Then
+    res = modDatabase.$myConn.Exec("select flddefault from tblprocedureshare where flditemtype=&1 and fldbillingmode like &2 and (flditemname like &3 or flditemname=&4) and fldactive=&5 and fldusertype=&6", $Type, GridView1[GridView1.Row, 16].Text, GridView1[GridView1.Row, 3].Text, "%", "Active", xUserType)
+    If res.Available Then
+      res.MoveFirst
+      If res["flddefault"] Then
+        xval = res["flddefault"]
+      Else
+        xval = ""
+      Endif
+    Else
+      xval = ""
+    Endif
+  Endif
+  Return xval
+
+End
+
+Private Sub ClearProfileButton(sButtBox As ButtonBox)
+
+  sButtBox.Tag = ""
+  sButtBox.Text = ""
+  sButtBox.Enabled = True
+
+End
+
+Public Sub cmbpertype_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype.Text Then
+      xval = GetDefaultUser(cmbpertype.Text)
+      If xval Then
+        btnconsult.Tag = xval
+        btnconsult.Text = modGeneral.GetUserFullName(btnconsult.Tag)
+        btnconsult.Enabled = False
+        rboption.Enabled = False
+        cmbpertype.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype2_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult2)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype2.Text Then
+      xval = GetDefaultUser(cmbpertype2.Text)
+      If xval Then
+        btnconsult2.Tag = xval
+        btnconsult2.Text = modGeneral.GetUserFullName(btnconsult2.Tag)
+        btnconsult2.Enabled = False
+        rboption2.Enabled = False
+        cmbpertype2.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype3_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult3)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype3.Text Then
+      xval = GetDefaultUser(cmbpertype3.Text)
+      If xval Then
+        btnconsult3.Tag = xval
+        btnconsult3.Text = modGeneral.GetUserFullName(btnconsult3.Tag)
+        btnconsult3.Enabled = False
+        rboption3.Enabled = False
+        cmbpertype3.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype4_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult4)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype4.Text Then
+      xval = GetDefaultUser(cmbpertype4.Text)
+      If xval Then
+        btnconsult4.Tag = xval
+        btnconsult4.Text = modGeneral.GetUserFullName(btnconsult4.Tag)
+        btnconsult4.Enabled = False
+        rboption4.Enabled = False
+        cmbpertype4.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype5_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult5)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype5.Text Then
+      xval = GetDefaultUser(cmbpertype5.Text)
+      If xval Then
+        btnconsult5.Tag = xval
+        btnconsult5.Text = modGeneral.GetUserFullName(btnconsult5.Tag)
+        btnconsult5.Enabled = False
+        rboption5.Enabled = False
+        cmbpertype5.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype6_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult6)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype6.Text Then
+      xval = GetDefaultUser(cmbpertype6.Text)
+      If xval Then
+        btnconsult6.Tag = xval
+        btnconsult6.Text = modGeneral.GetUserFullName(btnconsult6.Tag)
+        btnconsult6.Enabled = False
+        rboption6.Enabled = False
+        cmbpertype6.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype7_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult7)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype7.Text Then
+      xval = GetDefaultUser(cmbpertype7.Text)
+      If xval Then
+        btnconsult7.Tag = xval
+        btnconsult7.Text = modGeneral.GetUserFullName(btnconsult7.Tag)
+        btnconsult7.Enabled = False
+        rboption7.Enabled = False
+        cmbpertype7.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype8_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult8)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype8.Text Then
+      xval = GetDefaultUser(cmbpertype8.Text)
+      If xval Then
+        btnconsult8.Tag = xval
+        btnconsult8.Text = modGeneral.GetUserFullName(btnconsult8.Tag)
+        btnconsult8.Enabled = False
+        rboption8.Enabled = False
+        cmbpertype8.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype9_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult9)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype9.Text Then
+      xval = GetDefaultUser(cmbpertype9.Text)
+      If xval Then
+        btnconsult9.Tag = xval
+        btnconsult9.Text = modGeneral.GetUserFullName(btnconsult9.Tag)
+        btnconsult9.Enabled = False
+        rboption9.Enabled = False
+        cmbpertype9.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbpertype10_Click()
+
+  Dim xval As String
+
+  ClearProfileButton(btnconsult10)
+  If modHelpVariable.$LogInCategory = "Account" Then
+  Else
+    If cmbpertype10.Text Then
+      xval = GetDefaultUser(cmbpertype10.Text)
+      If xval Then
+        btnconsult10.Tag = xval
+        btnconsult10.Text = modGeneral.GetUserFullName(btnconsult10.Tag)
+        btnconsult10.Enabled = False
+        rboption10.Enabled = False
+        cmbpertype10.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim Row As Integer
+  Dim xbool As Boolean
+
+  If chkpartial.Value = True Then
+    xbool = True
+  Else
+    If modHelpVariable.$LogInCategory = "Account" Then
+      xbool = True
+    Else
+      xbool = AllowForceAllOrNone()
+    Endif
+  Endif
+
+  If xbool = True Then
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+      $ProgressBar1.Visible = True
+      $ProgressBar1.Value = 0
+    Endif
+
+    Inc Application.Busy
+    For Row = 0 To GridView1.Rows.Count - 1
+      If GridView1[Row, 0].Picture = Picture["icons/checked.png"] Then
+
+        If GridView1[Row, 11].Text And If GridView1[Row, 1].Text Then
+          modDatabase.$myConn.Begin
+          If cmbpertype.Text And If btnconsult.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype.Text, btnconsult.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype2.Text And If btnconsult2.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype2.Text, btnconsult2.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype3.Text And If btnconsult3.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype3.Text, btnconsult3.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype4.Text And If btnconsult4.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype4.Text, btnconsult4.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype5.Text And If btnconsult5.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype5.Text, btnconsult5.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype6.Text And If btnconsult6.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype6.Text, btnconsult6.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype7.Text And If btnconsult7.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype7.Text, btnconsult7.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype8.Text And If btnconsult8.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype8.Text, btnconsult8.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype9.Text And If btnconsult9.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype9.Text, btnconsult9.Tag, "", $sLevel, 100)
+          Endif
+          If cmbpertype10.Text And If btnconsult10.Tag Then
+            modPatientGeneral.AddClinicalSharingUser($Type, GridView1[Row, 11].Text, GridView1[Row, 1].Text, cmbpertype10.Text, btnconsult10.Tag, "", $sLevel, 100)
+          Endif
+          modDatabase.$myConn.Commit
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (Row) / GridView1.Rows.Count
+          Wait
+        Endif
+      Endif
+    Next
+    Dec Application.Busy
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Visible = False
+    Endif
+    ShowBillingData()
+    ShowSurgUser()
+    ClearAllProfiles()
+
+  Else
+    Message.Warning("EITHER Use Partial Mode OR fill Users for all Positions", ("OK"))
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Private Function AllowForceAllOrNone() As Boolean
+
+  Dim xbool As Boolean
+
+  xbool = True
+  If cmbpertype.Text And If Not btnconsult.Tag Then
+    If btnconsult.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype2.Text And If Not btnconsult2.Tag Then
+    If btnconsult2.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype3.Text And If Not btnconsult3.Tag Then
+    If btnconsult3.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype4.Text And If Not btnconsult4.Tag Then
+    If btnconsult4.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype5.Text And If Not btnconsult5.Tag Then
+    If btnconsult5.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype6.Text And If Not btnconsult6.Tag Then
+    If btnconsult6.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype7.Text And If Not btnconsult7.Tag Then
+    If btnconsult7.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype8.Text And If Not btnconsult8.Tag Then
+    If btnconsult8.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype9.Text And If Not btnconsult9.Tag Then
+    If btnconsult9.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+  If cmbpertype10.Text And If Not btnconsult10.Tag Then
+    If btnconsult10.Enabled = True Then
+      xbool = False
+    Endif
+  Endif
+
+  Return xbool
+
+End
+
+Private Sub ClearAllProfiles()
+
+  ClearShareUserProfile(cmbpertype, btnconsult, rboption)
+  ClearShareUserProfile(cmbpertype2, btnconsult2, rboption2)
+  ClearShareUserProfile(cmbpertype3, btnconsult3, rboption3)
+  ClearShareUserProfile(cmbpertype4, btnconsult4, rboption4)
+  ClearShareUserProfile(cmbpertype5, btnconsult5, rboption5)
+  ClearShareUserProfile(cmbpertype6, btnconsult6, rboption6)
+  ClearShareUserProfile(cmbpertype7, btnconsult7, rboption7)
+  ClearShareUserProfile(cmbpertype8, btnconsult8, rboption8)
+  ClearShareUserProfile(cmbpertype9, btnconsult9, rboption9)
+  ClearShareUserProfile(cmbpertype10, btnconsult10, rboption10)
+  rboption10.Value = True
+
+End
+
+Private Sub ClearShareUserProfile(cmbprofile As ComboBox, btnusername As ButtonBox, rbfraction As RadioButton)
+
+  ' cmbprofile.Clear()
+  cmbprofile.Text = ""
+  If modHelpVariable.$LogInCategory = "Account" Then
+    cmbprofile.Enabled = True
+  Else
+    cmbprofile.Enabled = False
+  Endif
+  btnusername.Enabled = True
+  btnusername.Tag = ""
+  btnusername.Text = ""
+  If CheckBox1.Value = False Then
+    rbfraction.Enabled = True
+  Endif
+
+End
+
+Private Sub ShowSurgUser()
+
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim $sData3 As Result
+
+  $sData3 = modDatabase.$myConn.Exec("select fldid,fldtime,fldusertype,fldvalue,fldmixper,fldreport from tblpatgenshare where flditemid=&1 and fldcategory=&2 and fldactive=&3", txtid.Value, $Type, $sLevel)
+
+  grdperson.Clear
+  grdperson.Columns.Count = $sData3.Fields.Count
+  grdperson.Rows.Count = $sData3.Count
+
+  For Each $sData3
+    Column = 0
+    For Each fld In $sData3.Fields
+      modGeneralMain.GridExplicitDecoration(grdperson, $sData3.Index, Column)
+      If Column = 3 Then
+        grdperson[$sData3.Index, Column].Text = modGeneral.GetUserFullName($sData3[fld.Name])
+      Else
+        grdperson[$sData3.Index, Column].Text = $sData3[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  grdperson.Row = 0
+
+  With grdperson
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 1
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 200 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "Category"
+    .Columns[3].Text = "User Name"
+    .Columns[4].Text = "Frac%"
+    .Columns[5].Text = "Description"
+  End With
+
+End
+
+Public Sub grdperson_Click()
+
+  Dim res As Result
+  Dim xx As String
+  ' Dim xval As Float
+
+  If grdperson.Column = 5 Then
+    xx = GetTextArea(grdperson[grdperson.Row, 3].Text, grdperson[grdperson.Row, 5].Text)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatgenshare", "fldid=&1 and fldsave=&2", grdperson[grdperson.Row, 0].Text, True)
+      res["fldreport"] = xx
+      res["flduptime"] = Now()
+      res["xyz"] = False
+      res.Update
+      ShowSurgUser()
+    Endif
+    ' Else If grdperson.Column = 4 Then
+    '   xval = InputValue("Sub Fraction Percentage", grdperson[grdperson.Row, 2].Text, grdperson[grdperson.Row, 4].Text)
+    '   If xval And If xval <= 100 Then
+    '     res = modDatabase.$myConn.Edit("tblpatgenshare", "fldid=&1 and fldsave=&2", grdperson[grdperson.Row, 0].Text, True)
+    '     res["fldmixper"] = xval
+    '     res["flduptime"] = Now()
+    '     res["xyz"] = False
+    '     res.Update
+    '     ShowSurgUser()
+    '   Endif
+  Endif
+
+End
+
+Public Sub grdperson_Menu()
+
+  mnudelperson.Popup()
+
+End
+
+Public Sub mnudelsurguser_Click()
+
+  If grdperson.Rows.Selection.Count Then
+    modDatabase.$myConn.Delete("tblpatgenshare", "fldid=&1 and fldsave=&2", grdperson[grdperson.Row, 0].Text, True)
+    ShowSurgUser()
+  Endif
+
+End
+
+Public Sub cmbitem_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbitem)
+  modFillContainer.RestrictComboToContent(cmbitem)
+
+End
+
+Public Sub btnclrall_Click()
+
+  ClearAllProfiles()
+
+End
+
+Public Sub btnfract_Click()
+
+  Dim xcateg As String
+  Dim hForm As FmSubFraction
+
+  If GridView1.Rows.Selection.Count Then
+    If rboption.Value = True Then
+      xcateg = cmbpertype.Text
+      btnconsult.Tag = ""
+      btnconsult.Text = ""
+    Else If rboption2.Value = True Then
+      xcateg = cmbpertype2.Text
+      btnconsult2.Tag = ""
+      btnconsult2.Text = ""
+    Else If rboption3.Value = True Then
+      xcateg = cmbpertype3.Text
+      btnconsult3.Tag = ""
+      btnconsult3.Text = ""
+    Else If rboption4.Value = True Then
+      xcateg = cmbpertype4.Text
+      btnconsult4.Tag = ""
+      btnconsult4.Text = ""
+    Else If rboption5.Value = True Then
+      xcateg = cmbpertype5.Text
+      btnconsult5.Tag = ""
+      btnconsult5.Text = ""
+    Else If rboption6.Value = True Then
+      xcateg = cmbpertype6.Text
+      btnconsult6.Tag = ""
+      btnconsult6.Text = ""
+    Else If rboption7.Value = True Then
+      xcateg = cmbpertype7.Text
+      btnconsult7.Tag = ""
+      btnconsult7.Text = ""
+    Else If rboption8.Value = True Then
+      xcateg = cmbpertype8.Text
+      btnconsult8.Tag = ""
+      btnconsult8.Text = ""
+    Else If rboption9.Value = True Then
+      xcateg = cmbpertype9.Text
+      btnconsult9.Tag = ""
+      btnconsult9.Text = ""
+    Else If rboption10.Value = True Then
+      xcateg = cmbpertype10.Text
+      btnconsult10.Tag = ""
+      btnconsult10.Text = ""
+    Endif
+    If xcateg Then
+      hForm = New FmSubFraction($Type, GridView1[GridView1.Row, 11].Text, GridView1[GridView1.Row, 1].Text, xcateg, $sLevel, $UserList)
+      hForm.ShowModal
+      ShowSurgUser()
+      If rboption.Value = True Then
+        cmbpertype.Enabled = False
+        btnconsult.Enabled = False
+      Else If rboption2.Value = True Then
+        cmbpertype2.Enabled = False
+        btnconsult2.Enabled = False
+      Else If rboption3.Value = True Then
+        cmbpertype3.Enabled = False
+        btnconsult3.Enabled = False
+      Else If rboption4.Value = True Then
+        cmbpertype4.Enabled = False
+        btnconsult4.Enabled = False
+      Else If rboption5.Value = True Then
+        cmbpertype5.Enabled = False
+        btnconsult5.Enabled = False
+      Else If rboption6.Value = True Then
+        cmbpertype6.Enabled = False
+        btnconsult6.Enabled = False
+      Else If rboption7.Value = True Then
+        cmbpertype7.Enabled = False
+        btnconsult7.Enabled = False
+      Else If rboption8.Value = True Then
+        cmbpertype8.Enabled = False
+        btnconsult8.Enabled = False
+      Else If rboption9.Value = True Then
+        cmbpertype9.Enabled = False
+        btnconsult9.Enabled = False
+      Else If rboption10.Value = True Then
+        cmbpertype10.Enabled = False
+        btnconsult10.Enabled = False
+      Endif
+    Endif
+
+  Endif
+
+End

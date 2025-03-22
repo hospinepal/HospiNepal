@@ -1,0 +1,477 @@
+' Gambas class file
+
+Private $rData As Result
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  cmbroute.List = modMedicine.ComboRoute()
+  cmbcategory.List = ["Expired Items", "Near Expiry", "Broken Items", "Not Ordered", "QTY Error", "Other Cagory"]
+  BlankAllBox()
+  DisplayDefaultStockReturnMode()
+  If modBasic.$AccessStockReturn = "Disable" Then
+    mnusave.Enabled = False
+  Endif
+  ShowTransferGrid()
+
+End
+
+Private Sub DisplayDefaultStockReturnMode()
+
+  Dim def As String
+
+  def = modSettings.ShowSettingFromFIle("BrandOrGeneric/StockReturn")
+  modStockSub.GetBrandgenericSettingOption(def, rbrand, rbgeneric)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Activate()
+
+  If Not cmbcategory.Text Then
+    cmbcategory.SetFocus
+  Endif
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub rbgeneric_Click()
+
+  modSettings.SaveSettingsToFile("BrandOrGeneric/Transfer", "Generic")
+
+End
+
+Public Sub rbrand_Click()
+
+  modSettings.SaveSettingsToFile("BrandOrGeneric/StockReturn", "Brand")
+
+End
+
+Public Sub cmbmedicine_GotFocus()
+
+  Dim brandOrGeneric As String
+  Dim res As Result
+
+  If rbrand.Value = True Then
+    brandOrGeneric = "Brand"
+  Else
+    brandOrGeneric = "Generic"
+  Endif
+  If cmbroute.Text Then
+    If Not cmbmedicine.Text Then
+      res = modStock.FillMedicinesTransferComboResult(cmbroute.Text, brandOrGeneric, modBasic.$compID)
+      cmbmedicine.Text = GridViewNew("Select Particulars", modControlSub.GetDirectFillresult(res), False, cmbmedicine, GridView1.Height + cmbmedicine.Height)
+    Endif
+  Endif
+
+End
+
+Public Sub cmbbatch_GotFocus()
+
+  Dim res1 As Result
+
+  If Not cmbbatch.Count Then
+    If cmbmedicine.Text Then
+      If modStockSub.GetComboStockControl(cmbroute.Text, cmbmedicine.Text, rbgeneric, rbrand) = False Then
+        cmbmedicine.Text = ""
+        Balloon.Warning(("Item not listed"), cmbmedicine)
+        Balloon.Delay = modBasic.$BalloonDelay
+        cmbroute.SetFocus
+      Else
+        If cmbroute.Text = "suture" Or cmbroute.Text = "msurg" Or cmbroute.Text = "ortho" Or cmbroute.Text = "extra" Then
+        Else
+          If rbrand.Value = True Then
+            cmbmedicine.Text = modMedConstant.ConvertBrandToGeneric(cmbroute.Text, cmbmedicine.Text)
+          Endif
+        Endif
+        res1 = modDatabase.$myConn.Exec("select distinct(fldbatch) as col from tblentry where fldstockid=&1 and fldcomp=&2 and fldqty>&3", cmbmedicine.Text, modBasic.$compID, 0)
+        cmbbatch.List = modControlSub.GetDirectFillresult(res1)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub cmbbatch_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+
+  res = modDatabase.$myConn.Exec("select fldstockno,fldexpiry,fldqty,fldstatus,fldcategory,fldsellpr from tblentry where fldstockid=&1 and fldbatch=&2 and fldcomp=&3", cmbmedicine.Text, cmbbatch.Text, modBasic.$compID)                                                   ''
+  If res.Available Then
+    res.MoveFirst
+    txtstatus.Value = res["fldstatus"]
+    lbldate.Value = res["fldexpiry"]
+    ' txtmax.Value = res!fldqty
+    txtstockno.Value = res["fldstockno"]
+    res1 = modDatabase.$myConn.Exec("select distinct(fldsuppname) as col from tblpurchase where fldstockno=&1 and fldreturnqty=&2", txtstockno.Value, 0)
+    If res1.Available Then
+      cmbvendor.List = modControlSub.GetDirectFillresult(res1)
+    Else
+      cmbvendor.Text = "Purchase from Other Location"
+    Endif
+  Endif
+
+End
+
+Private Sub BlankAllBox()
+
+  cmbroute.Text = ""
+  cmbmedicine.Text = ""
+  cmbbatch.Clear()
+  cmbbatch.Text = ""
+  txtqty.Value = 0
+  txtmax.Value = 0
+  txtstatus.Value = 0
+  txtstockno.Value = 0
+  txtnetcost.Value = 0
+  cmbvendor.Clear
+  cmbvendor.Text = ""
+  cmbreference.Clear
+  cmbreference.Text = ""
+  lbladdress.Text = ""
+  lblinvoice.Text = ""
+  cmbrate.Clear()
+  cmbrate.Text = ""
+  cmbrate.Enabled = True
+
+End
+
+Public Sub chksave_Click()
+
+  Dim res As Result
+
+  If chksave.Value Then
+    If cmbroute.Text And If cmbmedicine.Text And If cmbbatch.Text And If cmbvendor.Text And If cmbreference.Text And If txtqty.Value And If txtstockno.Value Then
+      Inc Application.Busy
+      res = modDatabase.$myConn.Create("tblstockreturn")
+      res["fldstockno"] = txtstockno.Value
+      res["fldstockid"] = cmbmedicine.Text
+      res["fldcategory"] = cmbcategory.Text
+      res["fldqty"] = txtqty.Value
+      res["fldcost"] = txtnetcost.Value
+      res["fldsuppname"] = cmbvendor.Text
+      res["fldreference"] = cmbreference.Text
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["fldsave"] = False
+      res["fldnewreference"] = ""
+      res["xyz"] = True
+      res.Update()
+      Dec Application.Busy
+      ShowTransferGrid()
+      BlankAllBox()
+      cmbroute.SetFocus
+    Endif
+  Endif
+
+End
+
+Public Sub chksave_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    chksave.Value = True
+    chksave_Click()
+  Endif
+
+End
+
+Public Sub cmbroute_Click()
+
+  chksave.Value = False
+  cmbmedicine.Clear()
+  cmbmedicine.Text = ""
+  cmbbatch.Clear()
+  cmbbatch.Text = ""
+
+End
+
+Public Sub cmbcategory_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcategory)
+
+End
+
+Public Sub cmbroute_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbroute)
+  modFillContainer.RestrictComboToContent(cmbroute)
+
+End
+
+Public Sub cmbbatch_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbbatch)
+  modFillContainer.RestrictComboToContent(cmbbatch)
+
+End
+
+Public Sub cmbvendor_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbvendor)
+  modFillContainer.RestrictComboToContent(cmbvendor)
+
+End
+
+Public Sub cmbreference_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbreference)
+  modFillContainer.RestrictComboToContent(cmbreference)
+
+End
+
+Public Sub cmbrate_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbrate)
+  modFillContainer.RestrictComboToContent(cmbrate)
+
+End
+
+Public Sub btnfullrep_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, "STOCK RETURN", modReportVar.GetDateTimeReport(Date(), gb.MediumDate))
+
+End
+
+Public Sub txtqty_LostFocus()
+
+  If txtqty.Value <= txtmax.Value Then
+  Else
+    txtqty.Value = 0
+  Endif
+
+End
+
+Public Sub cmbvendor_Click()
+
+  Dim res As Result
+
+  lbladdress.Text = modSupplier.GetAddFromSuppName(cmbvendor.Text)
+  res = modDatabase.$myConn.Exec("select fldreference as col from tblpurchase where fldstockno=&1 and fldsuppname=&2 and fldreturnqty=&3", txtstockno.Value, cmbvendor.Text, 0)
+  cmbreference.List = modControlSub.GetDirectFillresult(res)
+
+End
+
+Public Sub cmbreference_Click()
+
+  Dim res As Result
+  Dim xList As String[]
+
+  res = modDatabase.$myConn.Exec("select fldbillno,fldnetcost,fldtotalqty,fldreturnqty from tblpurchase where fldstockno=&1 and fldsuppname=&2 and fldreference=&3 and fldreturnqty=&4", txtstockno.Value, cmbvendor.Text, cmbreference.Text, 0)
+  If res.Available Then
+    If res.Count = 1 Then
+      res.MoveFirst
+      lblinvoice.Text = res["fldbillno"]
+      txtnetcost.Value = res["fldnetcost"]
+      txtmax.Value = res["fldtotalqty"] - res["fldreturnqty"]
+      cmbrate.Text = CStr(res["fldnetcost"])
+      cmbrate.Enabled = False
+    Else
+      xList = New String[]
+      For Each res
+        xList.Add(CStr(res["fldnetcost"]))
+      Next
+      cmbrate.List = xList
+      cmbrate.Enabled = True
+    Endif
+  Endif
+
+End
+
+Public Sub cmbrate_Click()
+
+  Dim res As Result
+
+  txtnetcost.Value = CFloat(cmbrate.Text)
+  res = modDatabase.$myConn.Exec("select fldbillno,fldnetcost,fldtotalqty,fldreturnqty from tblpurchase where fldstockno=&1 and fldsuppname=&2 and fldreference=&3 and fldreturnqty=&4 and fldnetcost=&5", txtstockno.Value, cmbvendor.Text, cmbreference.Text, 0, txtnetcost.Value)
+  If res.Available Then
+    res.MoveFirst
+    lblinvoice.Text = res["fldbillno"]
+    txtmax.Value = res["fldtotalqty"] - res["fldreturnqty"]
+  Endif
+
+End
+
+Private Sub ShowTransferGrid()
+
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  $rData = modDatabase.$myConn.Exec("select fldid,fldcategory,fldstockno,fldstockid,fldstockno,fldstockno,fldqty,fldcost,fldsuppname,fldreference from tblstockreturn where fldcomp=&1 and fldsave=&2", modBasic.$compID, False)
+
+  GridView1.Clear
+  GridView1.Columns.Count = $rData.Fields.Count
+  GridView1.Rows.Count = $rData.Count
+
+  For Each $rData
+    Column = 0
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+      If Column = 4 Then
+        GridView1[$rData.Index, Column].Text = modStock.GetBatchFromStockNo($rData["fldstockno"])
+      Else If Column = 5 Then
+        GridView1[$rData.Index, Column].Text = modReportVar.GetDateTimeReport(modStock.GetExpiryFromStockNo($rData["fldstockno"]), gb.MediumDate)
+      Else
+        GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[1].Text = "Category"
+    .Columns[3].Text = "Particulars"
+    .Columns[4].Text = "Batch"
+    .Columns[5].Text = "Expiry"
+    .Columns[6].Text = "QTY"
+    .Columns[7].Text = "NetCost"
+    .Columns[8].Text = "Vendor"
+    .Columns[9].Text = "RefNo"
+
+    ' .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 1
+    .Columns[3].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+  End With
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modDatabase.$myConn.Delete("tblstockreturn", "fldid=&1 and fldsave=&2", GridView1[GridView1.Row, 0].Text, False)
+    ShowTransferGrid()
+  Endif
+
+End
+
+Public Sub mnublank_Click()
+
+  Me.Close
+  Wait
+  modWorkSpace.Add(fmStockReturn)
+
+End
+
+Public Sub mnusave_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res3 As Result
+  Dim ref As String
+  Dim qty As Float
+  Dim xqty As Float
+  Dim xx As Float
+  Dim idLock As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldid,fldcategory,fldstockno,fldstockid,fldqty,fldcost,fldsuppname,fldreference from tblstockreturn where fldcomp=&1 and fldsave=&2", modBasic.$compID, False)
+  If res.Available = True Then
+
+    Inc Application.Busy
+    idLock = modBillLock.LockTableForID("Reference")
+    If idLock = True Then
+
+      modDatabase.$myConn.Begin
+      ref = modBillLock.ReferenceString("Stock Return")
+      If ref Then
+        For Each res
+          If res!fldqty <= modStock.TotalQTYbyStockNo(res!fldstockno) Then
+            'reduce stock
+            qty = 0 - res!fldqty
+            modStockSub.AddToExistEntry(res!fldstockno, qty, modBasic.$compID)
+            'reduce amt in tblpurchase
+            xqty = res!fldqty
+            While xqty > 0
+              res3 = modDatabase.$myConn.Edit("tblpurchase", "fldstockno=&1 and fldstockid=&2 and fldreference=&3 and fldsuppname=&4 and (fldtotalqty-fldreturnqty)>&5", res!fldstockno, res!fldstockid, res!fldreference, res!fldsuppname, 0)
+              If xqty <= (res3!fldtotalqty - res3!fldreturnqty) Then
+                res3["fldreturnqty"] = res3!fldreturnqty + xqty
+                xqty = 0
+              Else If xqty > (res3!fldtotalqty - res3!fldreturnqty) Then
+                xx = res3!fldtotalqty - res3!fldreturnqty
+                res3["fldreturnqty"] = res3!fldreturnqty + xx
+                xqty = xqty - xx
+              Endif
+              res3["xyz"] = False
+              res3.Update
+            Wend
+            'save record
+            res1 = modDatabase.$myConn.Edit("tblstockreturn", "fldid=&1", res!fldid)
+            res1["flduserid"] = modBasic.$lbluser
+            res1["fldtime"] = Now()
+            res1["fldcomp"] = modBasic.$compID
+            res1["fldsave"] = True
+            res1["fldnewreference"] = ref
+            res1["xyz"] = False
+            res1.Update
+          Else
+            Message.Warning(("Insufficient stock"), ("OK"))
+          Endif
+        Next
+      Endif  ''if ref no exist
+      modDatabase.$myConn.Commit
+
+      modBillLock.ReleaseLockTable("Reference")
+    Endif ''if locked
+    Dec Application.Busy
+
+    ShowTransferGrid()
+  Endif  ''if result available
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Reference")
+  Endif
+  modHelpVariable.CreateErrorReport()
+
+End
+
+''========================= Reprint =========================
+Public Sub mnureprint_Click()
+
+  Dim hForm As FmReprintStore
+
+  hForm = New FmReprintStore("StockReturn")
+  hForm.ShowModal
+
+End
+
+Public Sub txtqty_GotFocus()
+
+  txtqty.SelectAll
+
+End

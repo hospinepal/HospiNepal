@@ -1,0 +1,1141 @@
+' Gambas module file
+
+Private $ProgressBar1 As ProgressBar
+
+''-------------------- supporting --------------------------
+Private Function GetCollectionCount(res As Result) As Collection
+
+  Dim aColl As Collection
+
+  aColl = New Collection
+  If res.Available Then
+    For Each res
+      If res["fldvalue"] Then
+        aColl.Add(res["fldvalue"], res["fldname"])
+      Else
+        aColl.Add(0, res["fldname"])
+      Endif
+    Next
+  Endif
+
+  Return aColl
+
+End
+
+Private Function GetCollectionRecord(res As Result) As Collection
+
+  Dim aColl As Collection
+
+  aColl = New Collection
+  If res.Available Then
+    For Each res
+      If res["fldvalue"] Then
+        aColl.Add(res["fldvalue"], res["fldcode"] & "|" & res["fldname"])
+      Else
+        aColl.Add(0, res["fldcode"] & "|" & res["fldname"])
+      Endif
+    Next
+  Endif
+
+  Return aColl
+
+End
+
+Private Function GetCollectionDualRecord(res As Result) As Collection
+
+  Dim aColl As Collection
+  Dim xcnt As Float
+  Dim xamt As Float
+
+  aColl = New Collection
+  If res.Available Then
+    For Each res
+      xcnt = 0
+      xamt = 0
+      If res["fldcount"] Then
+        xcnt = res["fldcount"]
+      Endif
+      If res["fldamount"] Then
+        xamt = res["fldamount"]
+      Endif
+      aColl.Add([xcnt, xamt], res["fldcode"] & "|" & res["fldname"])
+    Next
+  Endif
+
+  Return aColl
+
+End
+
+''======================= distinct by stockid ==============================
+Public Function ShowOpeningStockQtyColl($con As Connection, sType As String, dt As Date, sComp As String, sLocaType As String, sLocation As String) As Collection
+
+  Dim dtx As Date
+  Dim res As Result
+  Dim rs1 As Result
+  Dim rs2 As Result
+  Dim rs3 As Result
+  Dim rs4 As Result
+  Dim rs5 As Result
+  Dim rs6 As Result
+  Dim rs7 As Result
+
+  Dim bulqty As Float
+  Dim purqty As Float
+  Dim salqty As Float
+  Dim sentqty As Float
+  Dim recvqty As Float
+  Dim adjqty As Float
+  Dim curqty As Float
+  Dim xval As Float
+  Dim RepoStr As String
+
+  Dim rex As Result
+  Dim rss3 As Result
+
+  Dim aCollEntryAll As Collection
+  Dim bCollPurchPast As Collection
+  Dim bCollBulkPast As Collection
+  Dim bCollSalePast As Collection
+  Dim bCollSentPast As Collection
+  Dim bCollRecvPast As Collection
+  Dim bCollAdjusPast As Collection
+
+  Dim xColl As Collection
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  dtx = Now()
+
+  aCollEntryAll = New Collection
+  rs6 = $con.Exec("select fldstockid as fldname,SUM(fldqty) as fldvalue from tblentry where fldcategory=&1 and fldcomp like &2" & RepoStr & " GROUP BY fldname", sType, sComp)
+  aCollEntryAll = GetCollectionCount(rs6)
+
+  bCollPurchPast = New Collection
+  rs1 = $con.Exec("select fldstockid as fldname,SUM(fldtotalqty-fldreturnqty) as fldvalue from tblpurchase where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldcomp like &4 and fldsav=&5" & RepoStr & " GROUP BY fldname", modDate.EndSqlDate(dt), dtx, sType, sComp, False)
+  bCollPurchPast = GetCollectionCount(rs1)
+
+  bCollBulkPast = New Collection
+  rs2 = $con.Exec("select fldstockid as fldname,SUM(fldqtydisp-fldqtyret) as fldvalue from tblbulksale where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldsave=&4 and fldcomp like &5" & RepoStr & " GROUP BY fldname", modDate.EndSqlDate(dt), dtx, sType, True, sComp)
+  bCollBulkPast = GetCollectionCount(rs2)
+
+  bCollSalePast = New Collection
+  rs3 = $con.Exec("select t2.fldstockid as fldname,SUM(t1.flditemqty) as fldvalue from tblpatbilling AS t1 inner join tblentry AS t2 on t1.flditemno=t2.fldstockno where t1.fldtime>&1 and t1.fldtime<=&2 and t1.flditemtype=&3 and t1.fldcomp like &4 and t1.fldsave=&5" & RepoStr & " GROUP BY fldname", modDate.EndSqlDate(dt), dtx, sType, sComp, True)
+  bCollSalePast = GetCollectionCount(rs3)
+
+  bCollSentPast = New Collection
+  rs4 = $con.Exec("select fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldfromcomp like &5" & RepoStr & " GROUP BY fldname", modDate.EndSqlDate(dt), dtx, sType, True, sComp)
+  bCollSentPast = GetCollectionCount(rs4)
+
+  bCollRecvPast = New Collection
+  rs5 = $con.Exec("select fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldtocomp like &5" & RepoStr & " GROUP BY fldname", modDate.EndSqlDate(dt), dtx, sType, True, sComp)
+  bCollRecvPast = GetCollectionCount(rs5)
+
+  bCollAdjusPast = New Collection
+  rs7 = $con.Exec("select fldstockid as fldname,SUM(fldcompqty-fldcurrqty) as fldvalue from tbladjustment where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldsav=&4 and fldcomp like &5" & RepoStr & " GROUP BY fldname", modDate.EndSqlDate(dt), dtx, sType, True, sComp)
+  bCollAdjusPast = GetCollectionCount(rs7)
+
+  xColl = New Collection
+  res = $con.Exec("select distinct(fldstockid) as fldstockid from tblentry where fldcategory=&1 and fldcomp like &2" & RepoStr, sType, sComp)
+  If res.Available Then
+    For Each res
+      xval = 0
+
+      curqty = 0
+      If aCollEntryAll[res["fldstockid"]] Then
+        curqty = aCollEntryAll[res["fldstockid"]]
+      Endif
+
+      purqty = 0
+      If bCollPurchPast[res["fldstockid"]] Then
+        purqty = bCollPurchPast[res["fldstockid"]]
+      Endif
+
+      bulqty = 0
+      If bCollBulkPast[res["fldstockid"]] Then
+        bulqty = bCollBulkPast[res["fldstockid"]]
+      Endif
+
+      salqty = 0
+      If bCollSalePast[res["fldstockid"]] Then
+        salqty = bCollSalePast[res["fldstockid"]]
+      Endif
+
+      rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+      If rex.Available Then
+        For Each rex
+          If rex["fldpatbilling"] = "tblpatbilling" Then
+          Else
+            rss3 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>&1 and fldtime<=&2 and flditemno in(select fldstockno from tblentry where fldstockid=&3) and flditemtype=&4 and fldcomp like &5 and fldsave=&6" & RepoStr, modDate.EndSqlDate(dt), dtx, res["fldstockid"], sType, sComp, True)
+            If rss3.Available = True Then
+              If rss3["qty"] Then
+                salqty = salqty + rss3["qty"]
+              Endif
+            Endif
+          Endif
+        Next
+      Endif
+
+      sentqty = 0
+      If bCollSentPast[res["fldstockid"]] Then
+        sentqty = bCollSentPast[res["fldstockid"]]
+      Endif
+
+      recvqty = 0
+      If bCollRecvPast[res["fldstockid"]] Then
+        recvqty = bCollRecvPast[res["fldstockid"]]
+      Endif
+
+      adjqty = 0
+      If bCollAdjusPast[res["fldstockid"]] Then
+        adjqty = bCollAdjusPast[res["fldstockid"]]
+      Endif
+
+      xval = curqty - (purqty + recvqty) + (salqty + bulqty + sentqty + adjqty)
+
+      xColl.Add(xval, res["fldstockid"])
+    Next
+  Endif
+
+  Return xColl
+
+End
+
+Public Function GetTransactionPurchaseColl($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As Collection
+
+  Dim rs1 As Result
+  Dim RepoStr As String
+  Dim xColl As Collection
+
+  xColl = New Collection
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs1 = $con.Exec("select fldstockid as fldname,SUM(fldtotalqty-fldreturnqty) as fldvalue from tblpurchase where fldtime>=&1 and fldtime<=&2 and fldcategory=&3 and fldcomp like &4 and fldsav=&5" & RepoStr & " GROUP BY fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, sComp, False)
+  xColl = GetCollectionCount(rs1)
+
+  Return xColl
+
+End
+
+Public Function GetTransactionBulkSaleColl($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As Collection
+
+  Dim rs2 As Result
+  Dim RepoStr As String
+  Dim xColl As Collection
+
+  xColl = New Collection
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs2 = $con.Exec("select fldstockid as fldname,SUM(fldqtydisp-fldqtyret) as fldvalue from tblbulksale where fldtime>=&1 and fldtime<=&2 and fldcategory=&3 and fldsave=&4 and fldcomp like &5" & RepoStr & " GROUP BY fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  xColl = GetCollectionCount(rs2)
+
+  Return xColl
+
+End
+
+Public Function GetTransactionBillingColl($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As Collection
+
+  ' Dim rex As Result
+  ' Dim rs2 As Result
+  Dim rs3 As Result
+  Dim RepoStr As String
+  Dim xColl As Collection
+
+  xColl = New Collection
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs3 = $con.Exec("select t2.fldstockid as fldname,SUM(t1.flditemqty) as fldvalue from tblpatbilling AS t1 inner join tblentry AS t2 on t1.flditemno=t2.fldstockno where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.flditemtype=&3 and t1.fldcomp like &4 and t1.fldsave=&5" & RepoStr & " GROUP BY fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, sComp, True)
+  xColl = GetCollectionCount(rs3)
+
+  ' ' rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+  ' ' If rex.Available Then
+  ' '   For Each rex
+  ' '     If rex["fldpatbilling"] = "tblpatbilling" Then
+  ' '     Else
+  ' '
+  ' '       rs2 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>=&1 and fldtime<=&2 and flditemno in(select fldstockno from tblentry where fldstockid=&3) and flditemtype=&4 and fldcomp like &5 and fldsave=&6" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sItem, sType, sComp, True)
+  ' '       If rs2.Available = True Then
+  ' '         If rs2["qty"] Then
+  ' '           salqty = salqty + rs2["qty"]
+  ' '         Endif
+  ' '       Endif
+  ' '
+  ' '     Endif
+  ' '   Next
+  ' ' Endif
+
+  Return xColl
+
+End
+
+Public Function GetTransactionTransferFromColl($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As Collection
+
+  Dim rs4 As Result
+  Dim RepoStr As String
+  Dim xColl As Collection
+
+  xColl = New Collection
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs4 = $con.Exec("select fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>=&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldfromcomp like &5" & RepoStr & " GROUP BY fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  xColl = GetCollectionCount(rs4)
+
+  Return xColl
+
+End
+
+Public Function GetTransactionTransferToColl($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As Collection
+
+  Dim rs5 As Result
+  Dim RepoStr As String
+  Dim xColl As Collection
+
+  xColl = New Collection
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs5 = $con.Exec("select fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>=&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldtocomp like &5" & RepoStr & " GROUP BY fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  xColl = GetCollectionCount(rs5)
+
+  Return xColl
+
+End
+
+Public Function GetTransactionAdjustmentColl($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sLocaType As String, sLocation As String) As Collection
+
+  Dim rs7 As Result
+  Dim RepoStr As String
+  Dim xColl As Collection
+
+  xColl = New Collection
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  rs7 = $con.Exec("select fldstockid as fldname,SUM(fldcompqty-fldcurrqty) as fldvalue from tbladjustment where fldtime>=&1 and fldtime<=&2 and fldcategory=&3 and fldsav=&4 and fldcomp like &5" & RepoStr & " GROUP BY fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  xColl = GetCollectionCount(rs7)
+
+  Return xColl
+
+End
+
+''''
+'''
+''
+'
+
+Public Function ShowSpecStockReportItemwise($con As Connection, sType As String, dt As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xcost As Float
+
+  Dim xval As Float
+  Dim sItem As String
+  Dim xtot As Float
+  Dim p As Integer
+  Dim xgo As Boolean
+  Dim aCollEntryAll As Collection
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+
+  ' $BillingReport = New CReportHTML([("SNO"), ("PARTICULARS"),  ("QTY"), ("PUR-RATE"),("CUR-VALUE")], "", "")
+  $BillingReport = New CReportHTML([("SNO"), ("PARTICULARS"), ("QTY")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+
+  aCollEntryAll = ShowOpeningStockQtyColl($con, sType, dt, sComp, sLocaType, sLocation)
+
+  i = 1
+  p = 1
+  xtot = 0
+  For Each sItem In sList
+    xcost = 0
+    xval = 0
+    If aCollEntryAll[sItem] Then
+      xval = aCollEntryAll[sItem]
+    Endif
+    ' xcost = modStock.GetAverageCostPriceByStockName(sItem)
+    ' xtot = xtot + xcost * xval
+    If ShowNull = True Then
+      xgo = True
+    Else
+      If xval = 0 Then
+        xgo = False
+      Else
+        xgo = True
+      Endif
+    Endif
+    If xgo = True Then
+      With asx
+        .Add(modReportVar.GetLocaleNumberFormat(i, 0))
+        .Add(sItem)
+        .Add(modReportVar.GetLocaleNumberFormat(xval, -2))
+        ' .Add(modReportVar.GetLocaleNumberFormat(xcost, gb.Currency))
+        ' .Add(modReportVar.GetLocaleNumberFormat(xcost * xval, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = p / sList.Count
+      Wait
+    Endif
+    p = p + 1
+  Next
+
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    ' .Add("")
+    ' .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("<b>GRAND TOTAL</b>")
+    .Add("")
+    ' .Add("")
+    ' .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  ' $BillingReport.AddSummary("Note: Purchase Rate is AVERAGE of available Stock. It may be zero if stock is not available.")
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowTransectionReportItemwise($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xvax As Float
+
+  Dim pur As Float
+  Dim blk As Float
+  Dim sale As Float
+  Dim sent As Float
+  Dim recv As Float
+  Dim adj As Float
+
+  Dim bulqty As Float
+  Dim purqty As Float
+  Dim salqty As Float
+  Dim sentqty As Float
+  Dim recvqty As Float
+  Dim adjqty As Float
+
+  Dim openqty As Float
+  Dim i As Integer
+
+  Dim aCollEntryAll As Collection
+  Dim bCollPurchPast As Collection
+  Dim bCollBulkPast As Collection
+  Dim bCollSalePast As Collection
+  Dim bCollSentPast As Collection
+  Dim bCollRecvPast As Collection
+  Dim bCollAdjusPast As Collection
+
+  Dim sItem As String
+  Dim p As Integer
+  Dim xgo As Boolean
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+
+  $BillingReport = New CReportHTML([("SNO"), ("PARTICULARS"), ("OPENING"), ("PURCHASE"), ("RECEIVED"), ("SALES"), ("CONSUMED"), ("SENT"), ("ADJUST"), ("ENDING")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+
+  aCollEntryAll = ShowOpeningStockQtyColl($con, sType, dt2, sComp, sLocaType, sLocation)
+  bCollPurchPast = GetTransactionPurchaseColl($con, sType, dt1, dt2, sComp, sLocaType, sLocation)
+  bCollBulkPast = GetTransactionBulkSaleColl($con, sType, dt1, dt2, sComp, sLocaType, sLocation)
+  bCollSalePast = GetTransactionBillingColl($con, sType, dt1, dt2, sComp, sLocaType, sLocation)
+  bCollSentPast = GetTransactionTransferFromColl($con, sType, dt1, dt2, sComp, sLocaType, sLocation)
+  bCollRecvPast = GetTransactionTransferToColl($con, sType, dt1, dt2, sComp, sLocaType, sLocation)
+  bCollAdjusPast = GetTransactionAdjustmentColl($con, sType, dt1, dt2, sComp, sLocaType, sLocation)
+
+  pur = 0
+  sale = 0
+  blk = 0
+  sent = 0
+  recv = 0
+  adj = 0
+  i = 1
+  p = 1
+  For Each sItem In sList
+    xvax = 0
+    purqty = 0
+    bulqty = 0
+    salqty = 0
+    sentqty = 0
+    recvqty = 0
+    adjqty = 0
+    If aCollEntryAll[sItem] Then
+      xvax = aCollEntryAll[sItem]
+    Endif
+    If bCollPurchPast[sItem] Then
+      purqty = bCollPurchPast[sItem]
+    Endif
+    If bCollBulkPast[sItem] Then
+      bulqty = bCollBulkPast[sItem]
+    Endif
+    If bCollSalePast[sItem] Then
+      salqty = bCollSalePast[sItem]
+    Endif
+    If bCollSentPast[sItem] Then
+      sentqty = bCollSentPast[sItem]
+    Endif
+    If bCollRecvPast[sItem] Then
+      recvqty = bCollRecvPast[sItem]
+    Endif
+    If bCollAdjusPast[sItem] Then
+      adjqty = bCollAdjusPast[sItem]
+    Endif
+
+    openqty = xvax - (purqty + recvqty) + (salqty + bulqty + sentqty + adjqty)
+    If ShowNull = True Then
+      xgo = True
+    Else
+      If openqty = 0 And If purqty = 0 And If recvqty = 0 And If salqty = 0 And bulqty = 0 And sentqty = 0 And adjqty = 0 And xvax = 0 Then
+        xgo = False
+      Else
+        xgo = True
+      Endif
+    Endif
+    If xgo = True Then
+      With asx
+        .Add(modReportVar.GetLocaleNumberFormat(i, 0))
+        .Add(sItem)
+        .Add(modReportVar.GetLocaleNumberFormat(openqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(purqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(recvqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(salqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(bulqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(sentqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(adjqty, -2))
+        .Add(modReportVar.GetLocaleNumberFormat(xvax, -2))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = p / sList.Count
+      Wait
+    Endif
+    p = p + 1
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''========================== distinct by stockno ============================================
+Public Function ShowSpecStockReport($con As Connection, sType As String, dt As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim dt2 As Date
+  Dim xitem As String
+  Dim i As Integer
+
+  Dim rs1 As Result
+  Dim rs2 As Result
+  Dim rs3 As Result
+  Dim rs4 As Result
+  Dim rs5 As Result
+  Dim rs6 As Result
+  Dim rs7 As Result
+
+  Dim bulqty As Float
+  Dim purqty As Float
+  Dim salqty As Float
+  Dim sentqty As Float
+  Dim recvqty As Float
+  Dim adjqty As Float
+  Dim curqty As Float
+  Dim xval As Float
+
+  Dim rex As Result
+  Dim rss3 As Result
+  Dim xcost As Float
+  Dim sumcost As Float
+  Dim sumsale As Float
+  Dim RepoStr As String
+  Dim xgo As Boolean
+
+  Dim aCollEntryAll As Collection
+  Dim bCollPurchPast As Collection
+  Dim bCollBulkPast As Collection
+  Dim bCollSalePast As Collection
+  Dim bCollSentPast As Collection
+  Dim bCollRecvPast As Collection
+  Dim bCollAdjusPast As Collection
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+
+  $BillingReport = New CReportHTML([("CODE"), ("PARTICULARS"), ("BATCH"), ("EXPIRY"), ("QTY"), ("PUR-RATE"), ("PUR-TOTAL"), ("SALE-RATE"), ("SALE-TOTAL")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  dt2 = Now()
+
+  aCollEntryAll = New Collection
+  rs6 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldvalue from tblentry where fldcategory=&1 and fldcomp like &2" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", sType, sComp)
+  aCollEntryAll = GetCollectionRecord(rs6)
+
+  bCollPurchPast = New Collection
+  rs1 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldtotalqty-fldreturnqty) as fldvalue from tblpurchase where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldcomp like &4 and fldsav=&5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt), dt2, sType, sComp, False)
+  bCollPurchPast = GetCollectionRecord(rs1)
+
+  bCollBulkPast = New Collection
+  rs2 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqtydisp-fldqtyret) as fldvalue from tblbulksale where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldsave=&4 and fldcomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt), dt2, sType, True, sComp)
+  bCollBulkPast = GetCollectionRecord(rs2)
+
+  bCollSalePast = New Collection
+  rs3 = $con.Exec("select CONVERT(t1.flditemno,CHAR) as fldcode,t2.fldstockid as fldname,SUM(t1.flditemqty) as fldvalue from tblpatbilling AS t1 inner join tblentry AS t2 on t1.flditemno=t2.fldstockno where t1.fldtime>&1 and t1.fldtime<=&2 and t1.flditemtype=&3 and t1.fldcomp like &4 and t1.fldsave=&5" & modDataRepo.GetWhereStringRepo(sLocaType, sLocation, "t1") & " GROUP BY CONVERT(t1.flditemno,CHAR),fldname", modDate.EndSqlDate(dt), dt2, sType, sComp, True)
+  bCollSalePast = GetCollectionRecord(rs3)
+
+  bCollSentPast = New Collection
+  rs4 = $con.Exec("select CONVERT(fldoldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldfromcomp like &5" & RepoStr & " GROUP BY CONVERT(fldoldstockno,CHAR),fldname", modDate.EndSqlDate(dt), dt2, sType, True, sComp)
+  bCollSentPast = GetCollectionRecord(rs4)
+
+  bCollRecvPast = New Collection
+  rs5 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldtocomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt), dt2, sType, True, sComp)
+  bCollRecvPast = GetCollectionRecord(rs5)
+
+  bCollAdjusPast = New Collection
+  rs7 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldcompqty-fldcurrqty) as fldvalue from tbladjustment where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldsav=&4 and fldcomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt), dt2, sType, True, sComp)
+  bCollAdjusPast = GetCollectionRecord(rs7)
+
+  i = 0
+  sumcost = 0
+  sumsale = 0
+  For Each xitem In sList
+
+    res = $con.Exec("select CONVERT(fldstockno,CHAR) as col,fldstockid,fldsellpr,fldpast from tblentry where fldcategory=&1 and fldstockid=&2" & RepoStr, sType, xitem)
+    For Each res
+      xcost = 0
+      xval = 0
+
+      curqty = 0
+      If aCollEntryAll[res["col"] & "|" & res["fldstockid"]] Then
+        curqty = aCollEntryAll[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      purqty = 0
+      If bCollPurchPast[res["col"] & "|" & res["fldstockid"]] Then
+        purqty = bCollPurchPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      bulqty = 0
+      If bCollBulkPast[res["col"] & "|" & res["fldstockid"]] Then
+        bulqty = bCollBulkPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      salqty = 0
+      If bCollSalePast[res["col"] & "|" & res["fldstockid"]] Then
+        salqty = bCollSalePast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+      If rex.Available Then
+        For Each rex
+          If rex["fldpatbilling"] = "tblpatbilling" Then
+          Else
+            rss3 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.EndSqlDate(dt), dt2, CInt(res["col"]), res["fldstockid"], sType, sComp, True)
+            If rss3.Available = True Then
+              If rss3["qty"] Then
+                salqty = salqty + rss3["qty"]
+              Endif
+            Endif
+          Endif
+        Next
+      Endif
+
+      sentqty = 0
+      If bCollSentPast[res["col"] & "|" & res["fldstockid"]] Then
+        sentqty = bCollSentPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      recvqty = 0
+      If bCollRecvPast[res["col"] & "|" & res["fldstockid"]] Then
+        recvqty = bCollRecvPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      adjqty = 0
+      If bCollAdjusPast[res["col"] & "|" & res["fldstockid"]] Then
+        adjqty = bCollAdjusPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      xval = curqty - (purqty + recvqty) + (salqty + bulqty + sentqty + adjqty)
+      If ShowNull = True Then
+        xgo = True
+      Else
+        If xval = 0 Then
+          xgo = False
+        Else
+          xgo = True
+        Endif
+      Endif
+      If xgo = True Then
+        xcost = modStock.GetAverageCostPriceByStockNo(res["col"])
+        sumcost = sumcost + xcost * xval
+        sumsale = sumsale + res["fldsellpr"] * xval
+
+        With asx
+          .Add(res["col"])
+          .Add(res["fldstockid"])
+          .Add(modStock.GetBatchFromStockNo(CInt(res["col"])))
+          .Add(modReportVar.GetDateTimeReport(modStock.GetExpiryFromStockNo(res["col"]), gb.MediumDate))
+          .Add(modReportVar.GetLocaleNumberFormat(xval, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(xcost, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xcost * xval, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(res["fldsellpr"], gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(res["fldsellpr"] * xval, gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+
+    Next
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / sList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+  With asx
+    .Add("")
+    .Add("<b>GRAND TOTAL</b>")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sumcost, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sumsale, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowTransectionReport($con As Connection, sType As String, dt1 As Date, dt2 As Date, sComp As String, sList As String[], sLocaType As String, sLocation As String, ShowNull As Boolean) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim res As Result
+  Dim xitem As String
+  Dim i As Integer
+
+  'for last stock calculation
+  Dim rsx1 As Result
+  Dim rsx2 As Result
+  Dim rsx3 As Result
+  Dim rsx4 As Result
+  Dim rsx5 As Result
+  Dim rsx6 As Result
+  Dim rsx7 As Result
+
+  Dim bulqx As Float
+  Dim purqx As Float
+  Dim salqx As Float
+  Dim sentqx As Float
+  Dim recvqx As Float
+  Dim adjqtx As Float
+  Dim curqty As Float
+  Dim xvax As Float
+
+  'for transection during interval
+  Dim rs1 As Result
+  Dim pur As Float
+  Dim rs2 As Result
+  Dim blk As Float
+  Dim rs3 As Result
+  Dim sale As Float
+  Dim rs4 As Result
+  Dim sent As Float
+  Dim rs5 As Result
+  Dim recv As Float
+  Dim rs7 As Result
+  Dim adj As Float
+
+  Dim bulqty As Float
+  Dim bulamt As Float
+  Dim purqty As Float
+  Dim puramt As Float
+  Dim salqty As Float
+  Dim salamt As Float
+  Dim sentqty As Float
+  Dim sentamt As Float
+  Dim recvqty As Float
+  Dim recvamt As Float
+  Dim adjqty As Float
+  Dim adjamt As Float
+
+  Dim openqty As Float
+  Dim dtx As Date
+  Dim RepoStr As String
+
+  Dim rex As Result
+  Dim rxx3 As Result
+  Dim rss3 As Result
+  Dim xgo As Boolean
+
+  Dim aCollEntryAll As Collection
+
+  Dim bCollPurchPast As Collection
+  Dim bCollBulkPast As Collection
+  Dim bCollSalePast As Collection
+  Dim bCollSentPast As Collection
+  Dim bCollRecvPast As Collection
+  Dim bCollAdjusPast As Collection
+
+  Dim bCollPurchDura As Collection
+  Dim bCollBulkhDura As Collection
+  Dim bCollSalehDura As Collection
+  Dim bCollSenthDura As Collection
+  Dim bCollRecvhDura As Collection
+  Dim bCollAdjushDura As Collection
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Tag = "Const"
+  Endif
+
+  $BillingReport = New CReportHTML([("CODE"), ("PARTICULARS"), ("BATCH"), ("OPEN(QTY)"), ("PUR(QTY)"), ("PUR(AMT)"), ("RECV(QTY)"), ("RECV(AMT)"), ("SALE(QTY)"), ("SALE(AMT)"), ("USE(QTY)"), ("USE(AMT)"), ("SENT(QTY)"), ("SENT(AMT)"), ("ADJ(QTY)"), ("ADJ(AMT)"), ("END(QTY)"), ("EST-Cost")], "", "")
+  $BillingReport.UserData.Add("CATEGORY: " & sType, "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate) & "   Comp: " & sComp, "PARAM2")
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  dtx = Now()
+
+  ''one variables
+  aCollEntryAll = New Collection
+  rsx6 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldvalue from tblentry where fldcategory=&1 and fldcomp like &2" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", sType, sComp)
+  aCollEntryAll = GetCollectionRecord(rsx6)
+
+  bCollPurchPast = New Collection
+  rsx1 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldtotalqty-fldreturnqty) as fldvalue from tblpurchase where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldcomp like &4 and fldsav=&5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt2), dtx, sType, sComp, False)
+  bCollPurchPast = GetCollectionRecord(rsx1)
+
+  bCollBulkPast = New Collection
+  rsx2 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqtydisp-fldqtyret) as fldvalue from tblbulksale where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldsave=&4 and fldcomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt2), dtx, sType, True, sComp)
+  bCollBulkPast = GetCollectionRecord(rsx2)
+
+  bCollSalePast = New Collection
+  rsx3 = $con.Exec("select CONVERT(t1.flditemno,CHAR) as fldcode,t2.fldstockid as fldname,SUM(t1.flditemqty) as fldvalue from tblpatbilling AS t1 inner join tblentry AS t2 on t1.flditemno=t2.fldstockno where t1.fldtime>&1 and t1.fldtime<=&2 and t1.flditemtype=&3 and t1.fldcomp like &4 and t1.fldsave=&5" & modDataRepo.GetWhereStringRepo(sLocaType, sLocation, "t1") & " GROUP BY CONVERT(t1.flditemno,CHAR),fldname", modDate.EndSqlDate(dt2), dtx, sType, sComp, True)
+  bCollSalePast = GetCollectionRecord(rsx3)
+
+  bCollSentPast = New Collection
+  rsx4 = $con.Exec("select CONVERT(fldoldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldfromcomp like &5" & RepoStr & " GROUP BY CONVERT(fldoldstockno,CHAR),fldname", modDate.EndSqlDate(dt2), dtx, sType, True, sComp)
+  bCollSentPast = GetCollectionRecord(rsx4)
+
+  bCollRecvPast = New Collection
+  rsx5 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldvalue from tbltransfer where fldtoentrytime>&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldtocomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt2), dtx, sType, True, sComp)
+  bCollRecvPast = GetCollectionRecord(rsx5)
+
+  bCollAdjusPast = New Collection
+  rsx7 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldcompqty-fldcurrqty) as fldvalue from tbladjustment where fldtime>&1 and fldtime<=&2 and fldcategory=&3 and fldsav=&4 and fldcomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.EndSqlDate(dt2), dtx, sType, True, sComp)
+  bCollAdjusPast = GetCollectionRecord(rsx7)
+
+  ''two variables
+  bCollPurchDura = New Collection
+  rs1 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldtotalqty-fldreturnqty) as fldcount,SUM(fldnetcost*(fldtotalqty-fldreturnqty)) as fldamount from tblpurchase where fldtime>=&1 and fldtime<=&2 and fldcategory=&3 and fldcomp like &4 and fldsav=&5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, sComp, False)
+  bCollPurchDura = GetCollectionDualRecord(rs1)
+
+  bCollBulkhDura = New Collection
+  rs2 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqtydisp-fldqtyret) as fldcount,SUM(fldnetcost*(fldqtydisp-fldqtyret)) as fldamount from tblbulksale where fldtime>=&1 and fldtime<=&2 and fldcategory=&3 and fldsave=&4 and fldcomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  bCollBulkhDura = GetCollectionDualRecord(rs2)
+
+  bCollSalehDura = New Collection
+  rs3 = $con.Exec("select CONVERT(t1.flditemno,CHAR) as fldcode,t2.fldstockid as fldname,SUM(t1.flditemqty) as fldcount,SUM(t1.fldditemamt) as fldamount from tblpatbilling AS t1 inner join tblentry AS t2 on t1.flditemno=t2.fldstockno where t1.fldtime>=&1 and t1.fldtime<=&2 and t1.flditemtype=&3 and t1.fldcomp like &4 and t1.fldsave=&5" & modDataRepo.GetWhereStringRepo(sLocaType, sLocation, "t1") & " GROUP BY CONVERT(t1.flditemno,CHAR),fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, sComp, True)
+  bCollSalehDura = GetCollectionDualRecord(rs3)
+
+  bCollSenthDura = New Collection
+  rs4 = $con.Exec("select CONVERT(fldoldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldcount,SUM(fldqty*fldnetcost) as fldamount from tbltransfer where fldtoentrytime>=&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldfromcomp like &5" & RepoStr & " GROUP BY CONVERT(fldoldstockno,CHAR),fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  bCollSenthDura = GetCollectionDualRecord(rs4)
+
+  bCollRecvhDura = New Collection
+  rs5 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldqty) as fldcount,SUM(fldqty*fldnetcost) as fldamount from tbltransfer where fldtoentrytime>=&1 and fldtoentrytime<=&2 and fldcategory=&3 and fldtosav=&4 and fldtocomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  bCollRecvhDura = GetCollectionDualRecord(rs5)
+
+  bCollAdjushDura = New Collection
+  rs7 = $con.Exec("select CONVERT(fldstockno,CHAR) as fldcode,fldstockid as fldname,SUM(fldcompqty-fldcurrqty) as fldcount,SUM((fldcompqty-fldcurrqty)*fldnetcost) as fldamount from tbladjustment where fldtime>=&1 and fldtime<=&2 and fldcategory=&3 and fldsav=&4 and fldcomp like &5" & RepoStr & " GROUP BY CONVERT(fldstockno,CHAR),fldname", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), sType, True, sComp)
+  bCollAdjushDura = GetCollectionDualRecord(rs7)
+
+  pur = 0
+  sale = 0
+  blk = 0
+  sent = 0
+  recv = 0
+  adj = 0
+  i = 0
+  For Each xitem In sList
+
+    res = $con.Exec("select CONVERT(fldstockno,CHAR) as col,fldstockid,fldbatch,fldpast from tblentry where fldcategory=&1 and fldstockid=&2" & RepoStr, sType, xitem)
+    For Each res
+      curqty = 0
+      purqx = 0
+      bulqx = 0
+      salqx = 0
+      sentqx = 0
+      recvqx = 0
+      adjqtx = 0
+
+      'calculate current stock
+      If aCollEntryAll[res["col"] & "|" & res["fldstockid"]] Then
+        curqty = aCollEntryAll[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      ''for last stock calculation
+      If bCollPurchPast[res["col"] & "|" & res["fldstockid"]] Then
+        purqx = bCollPurchPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      If bCollBulkPast[res["col"] & "|" & res["fldstockid"]] Then
+        bulqx = bCollBulkPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      If bCollSalePast[res["col"] & "|" & res["fldstockid"]] Then
+        salqx = bCollSalePast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+      If rex.Available Then
+        For Each rex
+          If rex["fldpatbilling"] = "tblpatbilling" Then
+          Else
+            rxx3 = $con.Exec("select SUM(flditemqty) as qty from " & rex["fldpatbilling"] & " where fldtime>&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.EndSqlDate(dt2), dtx, CInt(res["col"]), res["fldstockid"], sType, sComp, True)
+            If rxx3.Available = True Then
+              If rxx3["qty"] Then
+                salqx = salqx + rxx3["qty"]
+              Endif
+            Endif
+          Endif
+        Next
+      Endif
+
+      If bCollSentPast[res["col"] & "|" & res["fldstockid"]] Then
+        sentqx = bCollSentPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      If bCollRecvPast[res["col"] & "|" & res["fldstockid"]] Then
+        recvqx = bCollRecvPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      If bCollAdjusPast[res["col"] & "|" & res["fldstockid"]] Then
+        adjqtx = bCollAdjusPast[res["col"] & "|" & res["fldstockid"]]
+      Endif
+
+      'for transection during interval ------------------------------------------
+      purqty = 0
+      puramt = 0
+      If bCollPurchDura[res["col"] & "|" & res["fldstockid"]] Then
+        If bCollPurchDura[res["col"] & "|" & res["fldstockid"]][0] Then
+          purqty = bCollPurchDura[res["col"] & "|" & res["fldstockid"]][0]
+        Endif
+        If bCollPurchDura[res["col"] & "|" & res["fldstockid"]][1] Then
+          puramt = bCollPurchDura[res["col"] & "|" & res["fldstockid"]][1]
+        Endif
+      Endif
+
+      bulqty = 0
+      bulamt = 0
+      If bCollBulkhDura[res["col"] & "|" & res["fldstockid"]] Then
+        If bCollBulkhDura[res["col"] & "|" & res["fldstockid"]][0] Then
+          bulqty = bCollBulkhDura[res["col"] & "|" & res["fldstockid"]][0]
+        Endif
+        If bCollBulkhDura[res["col"] & "|" & res["fldstockid"]][1] Then
+          bulamt = bCollBulkhDura[res["col"] & "|" & res["fldstockid"]][1]
+        Endif
+      Endif
+
+      salqty = 0
+      salamt = 0
+      If bCollSalehDura[res["col"] & "|" & res["fldstockid"]] Then
+        If bCollSalehDura[res["col"] & "|" & res["fldstockid"]][0] Then
+          salqty = bCollSalehDura[res["col"] & "|" & res["fldstockid"]][0]
+        Endif
+        If bCollSalehDura[res["col"] & "|" & res["fldstockid"]][1] Then
+          salamt = bCollSalehDura[res["col"] & "|" & res["fldstockid"]][1]
+        Endif
+      Endif
+
+      rex = $con.Exec("select fldpatbilling from tblfisclosing where (fldstate=&1 or fldstate IS NULL)", "Active")
+      If rex.Available Then
+        For Each rex
+          If rex["fldpatbilling"] = "tblpatbilling" Then
+          Else
+            rss3 = $con.Exec("select SUM(flditemqty) as qty,SUM(fldditemamt) as col from " & rex["fldpatbilling"] & " where fldtime>=&1 and fldtime<=&2 and flditemno=&3 and flditemno in(select fldstockno from tblentry where fldstockid=&4) and flditemtype=&5 and fldcomp like &6 and fldsave=&7" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), CInt(res["col"]), res["fldstockid"], sType, sComp, True)
+            If rss3.Available = True Then
+              If rss3["qty"] Then
+                salqty = salqty + rss3["qty"]
+              Endif
+              If rss3["col"] Then
+                salamt = salamt + rss3["col"]
+              Endif
+            Endif
+          Endif
+        Next
+      Endif
+
+      sentqty = 0
+      sentamt = 0
+      If bCollSenthDura[res["col"] & "|" & res["fldstockid"]] Then
+        If bCollSenthDura[res["col"] & "|" & res["fldstockid"]][0] Then
+          sentqty = bCollSenthDura[res["col"] & "|" & res["fldstockid"]][0]
+        Endif
+        If bCollSenthDura[res["col"] & "|" & res["fldstockid"]][1] Then
+          sentamt = bCollSenthDura[res["col"] & "|" & res["fldstockid"]][1]
+        Endif
+      Endif
+
+      recvqty = 0
+      recvamt = 0
+      If bCollRecvhDura[res["col"] & "|" & res["fldstockid"]] Then
+        If bCollRecvhDura[res["col"] & "|" & res["fldstockid"]][0] Then
+          recvqty = bCollRecvhDura[res["col"] & "|" & res["fldstockid"]][0]
+        Endif
+        If bCollRecvhDura[res["col"] & "|" & res["fldstockid"]][1] Then
+          recvamt = bCollRecvhDura[res["col"] & "|" & res["fldstockid"]][1]
+        Endif
+      Endif
+
+      adjqty = 0
+      adjamt = 0
+      If bCollAdjushDura[res["col"] & "|" & res["fldstockid"]] Then
+        If bCollAdjushDura[res["col"] & "|" & res["fldstockid"]][0] Then
+          adjqty = bCollAdjushDura[res["col"] & "|" & res["fldstockid"]][0]
+        Endif
+        If bCollAdjushDura[res["col"] & "|" & res["fldstockid"]][1] Then
+          adjamt = bCollAdjushDura[res["col"] & "|" & res["fldstockid"]][1]
+        Endif
+      Endif
+
+      xvax = curqty - (purqx + recvqx) + (salqx + bulqx + sentqx + adjqtx)
+      openqty = xvax - (purqty + recvqty) + (salqty + bulqty + sentqty + adjqty)
+
+      pur = pur + puramt
+      sale = sale + salamt
+      blk = blk + bulamt
+      sent = sent + sentamt
+      recv = recv + recvamt
+      adj = adj + adjamt
+
+      If ShowNull = True Then
+        xgo = True
+      Else
+        If purqty = 0 And If salqty = 0 And If bulqty = 0 And If sentqty = 0 And If recvqty = 0 And If adjqty = 0 And If openqty = 0 And If xvax = 0 Then
+          xgo = False
+        Else
+          xgo = True
+        Endif
+      Endif
+      If xgo = True Then
+        With asx
+          .Add(res["col"])
+          .Add(res["fldstockid"])
+          .Add(res["fldbatch"])
+          .Add(modReportVar.GetLocaleNumberFormat(openqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(purqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(puramt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(recvqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(recvamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(salqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(salamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(bulqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(bulamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(sentqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(sentamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(adjqty, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(adjamt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xvax, -2))
+          .Add(modReportVar.GetLocaleNumberFormat(xvax * modStock.GetAverageCostPriceByStockNo(res["col"]), gb.Currency))
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Endif
+    Next
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = (i + 1) / sList.Count
+      Wait
+    Endif
+    i = i + 1
+  Next
+
+  With asx
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  With asx
+    .Add("")
+    .Add("GRAND TOTAL")
+    .Add("")
+    .Add("")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(pur, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(recv, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sale, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(blk, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(sent, gb.Currency))
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(adj, gb.Currency))
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End

@@ -1,0 +1,686 @@
+' Gambas class file
+
+Private $DepartList As String[]
+Private $CetegList As String[]
+Private $RepoStr As String
+Private $ServiceTypeList As String[] = ["Diagnostic Tests", "Radio Diagnostics", "General Services", "Procedures", "Equipment", "Other Items"]
+Private $PharmTypeList As String[] = ["Medicines", "Surgicals", "Extra Items"]
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  $CetegList = ["Hospital Share", "Instrument Share", "Department Share", "Anesthesia Share", "Other Share"]
+  $DepartList = modNonMedical.GetGroupNameAccount()
+
+  cmbcomp.List = modBasic.$AllCompPerList
+  cmbcomp.Text = "%"
+
+  cmbdiscount.List = modNonMedical.FillDiscountCombo()
+  cmbdiscount.Add("%")
+  cmbdiscount.Text = "%"
+
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+
+  modAccount.PasInvoiceSetting(cmbfiscal, True)
+  LoadTableNames()
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatbilldetail = "tblpatbilldetail"
+    $tbltempbilldetail = "tbltempbilldetail"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatbilldetail"] Then
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+      If res["fldtempbilldetail"] Then
+        $tbltempbilldetail = res["fldtempbilldetail"]
+      Else
+        $tbltempbilldetail = "tbltempbilldetail"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatbilldetail = "tblpatbilldetail"
+      $tbltempbilldetail = "tbltempbilldetail"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnexport_Click()
+
+  Dim xstr As String
+
+  If TabPanel1.Index = 0 Then
+  Else If TabPanel1.Index = 1 Then
+    xstr = "Scheme: " & cmbdiscount.Text & "  " & "Location: " & cmbcomp.Text
+    modCHTMLReport.ExportGridToHTML(GridView1, "MIS Report: " & xstr, modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate))
+  Endif
+
+End
+
+Public Sub btnshow_Click()
+
+  Inc Application.Busy
+  $RepoStr = modDataRepo.GetRepoLastStr($tblpatbilling)
+  If TabPanel1.Index = 0 Then
+    GetSummaryGrid()
+  Else If TabPanel1.Index = 1 Then
+    FormatGrid()
+  Else If TabPanel1.Index = 2 Then
+    DepartIncome()
+    ShowLocationGrids()
+  Endif
+  Dec Application.Busy
+
+End
+
+''--------------------- Income detail -------------------------
+Private Sub FormatGrid()
+
+  Dim Row As Integer
+  Dim res As Result
+  Dim i As Integer
+
+  Dim xcnt As Float
+  Dim xsubtot As Float
+  Dim xtax As Float
+  Dim xdsc As Float
+  Dim xsubs As Float
+  Dim xtotal As Float
+
+  Dim xhosp As Float
+  Dim xinstr As Float
+  Dim xdeprt As Float
+  Dim xanest As Float
+  Dim xother As Float
+
+  Dim asubtot As Float
+  Dim atax As Float
+  Dim adsc As Float
+  Dim asubs As Float
+  Dim atotal As Float
+
+  Dim ahosp As Float
+  Dim ainstr As Float
+  Dim adeprt As Float
+  Dim aanest As Float
+  Dim aother As Float
+
+  GridView1.Clear
+  GridView1.Columns.Count = 12
+  GridView1.Rows.Count = $DepartList.Count + 3
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Count"
+    .Columns[2].Text = "Gross Income"
+    .Columns[3].Text = "Subsidy"
+    .Columns[4].Text = "Discount"
+    .Columns[5].Text = "Tax"
+    .Columns[6].Text = "Net Income"
+    .Columns[7].Text = "Hospital"
+    .Columns[8].Text = "Instrument"
+    .Columns[9].Text = "Department"
+    .Columns[10].Text = "Anesthesia"
+    .Columns[11].Text = "Other"
+  End With
+
+  For i = 0 To $ServiceTypeList.Count - 1
+    $ServiceTypeList[i] = "'" & $ServiceTypeList[i] & "'"
+  Next
+  For i = 0 To $PharmTypeList.Count - 1
+    $PharmTypeList[i] = "'" & $PharmTypeList[i] & "'"
+  Next
+
+  asubtot = 0
+  atax = 0
+  adsc = 0
+  asubs = 0
+  atotal = 0
+  ahosp = 0
+  ainstr = 0
+  adeprt = 0
+  aanest = 0
+  aother = 0
+  For Row = 0 To $DepartList.Count - 1
+    GridView1[Row, 0].Text = $DepartList[Row]
+    res = modDatabase.$syConn.Exec("select SUM(t1.flditemqty) as itemcnt,SUM(t1.flditemrate*t1.flditemqty) as fldgross,SUM(COALESCE(t1.fldsubsidy, 0)) as fldsubsidy,SUM(t1.flddiscamt - COALESCE(t1.fldsubsidy, 0)) as flddisc,SUM(t1.fldtaxamt) as fldtax,SUM(t1.fldditemamt) as fldnetamt,SUM(t1.fldditemamt*t2.fldhospitalshare/100) as fldhospitalshare,SUM(t1.fldditemamt*t2.fldinstrumshare/100) as fldinstrumshare,SUM(t1.fldditemamt*t2.flddepartshare/100) as flddepartshare,SUM(t1.fldditemamt*t2.fldanesthshare/100) as fldanesthshare,SUM(t1.fldditemamt*t2.fldothershare/100) as fldothershare from " & $tblpatbilling & " AS t1 inner join tblservicecost as t2 on t1.flditemname=t2.flditemname where t1.flditemname in(select flditemname from tblreportgroup where fldgroup=&1) and t1.fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&2 and fldtime<=&3) and t1.fldsave=&4 and t1.fldcomp like &5 and t1.flddisctype like &6 and t1.flditemtype in(" & $ServiceTypeList.Join(",") & ")" & $RepoStr, $DepartList[Row], modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), True, cmbcomp.Text, cmbdiscount.Text)
+    xcnt = 0
+    xsubtot = 0
+    xtax = 0
+    xdsc = 0
+    xsubs = 0
+    xtotal = 0
+    xhosp = 0
+    xinstr = 0
+    xdeprt = 0
+    xanest = 0
+    xother = 0
+    If res.Available Then
+      If res["itemcnt"] Then
+        xcnt = res["itemcnt"]
+      Endif
+      If res["fldgross"] Then
+        xsubtot = res["fldgross"]
+      Endif
+      If res["flddisc"] Then
+        xdsc = res["flddisc"]
+      Endif
+      If res["fldsubsidy"] Then
+        xsubs = res["fldsubsidy"]
+      Endif
+      If res["fldtax"] Then
+        xtax = res["fldtax"]
+      Endif
+      If res["fldnetamt"] Then
+        xtotal = res["fldnetamt"]
+      Endif
+      If res["fldhospitalshare"] Then
+        xhosp = Round(res["fldhospitalshare"], -2)
+      Endif
+      If res["fldinstrumshare"] Then
+        xinstr = Round(res["fldinstrumshare"], -2)
+      Endif
+      If res["flddepartshare"] Then
+        xdeprt = Round(res["flddepartshare"], -2)
+      Endif
+      If res["fldanesthshare"] Then
+        xanest = Round(res["fldanesthshare"], -2)
+      Endif
+      If res["fldothershare"] Then
+        xother = Round(res["fldothershare"], -2)
+      Endif
+    Endif
+    asubtot = asubtot + xsubtot
+    atax = atax + xtax
+    adsc = adsc + xdsc
+    asubs = asubs + xsubs
+    atotal = atotal + xtotal
+    ahosp = ahosp + xhosp
+    ainstr = ainstr + xinstr
+    adeprt = adeprt + xdeprt
+    aanest = aanest + xanest
+    aother = aother + xother
+
+    GridView1[Row, 1].Text = xcnt
+    GridView1[Row, 2].Text = Format(xsubtot, gb.Fixed)
+    GridView1[Row, 3].Text = Format(xsubs, gb.Fixed)
+    GridView1[Row, 4].Text = Format(xdsc, gb.Fixed)
+    GridView1[Row, 5].Text = Format(xtax, gb.Fixed)
+    GridView1[Row, 6].Text = Format(xtotal, gb.Fixed)
+
+    GridView1[Row, 7].Text = Format(xhosp, gb.Fixed)
+    GridView1[Row, 8].Text = Format(xinstr, gb.Fixed)
+    GridView1[Row, 9].Text = Format(xdeprt, gb.Fixed)
+    GridView1[Row, 10].Text = Format(xanest, gb.Fixed)
+    GridView1[Row, 11].Text = Format(xother, gb.Fixed)
+
+    Wait
+  Next
+
+  ''Pharmacy
+  GridView1[$DepartList.Count, 0].Text = "Pharmacy Items"
+  res = modDatabase.$syConn.Exec("select SUM(t1.flditemqty) as itemcnt,SUM(t1.flditemrate*t1.flditemqty) as fldgross,SUM(COALESCE(t1.fldsubsidy, 0)) as fldsubsidy,SUM(t1.flddiscamt - COALESCE(t1.fldsubsidy, 0)) as flddisc,SUM(t1.fldtaxamt) as fldtax,SUM(t1.fldditemamt) as fldnetamt from " & $tblpatbilling & " AS t1 where t1.fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2) and t1.fldsave=&3 and t1.fldcomp like &4 and t1.flddisctype like &5 and t1.flditemtype in(" & $PharmTypeList.Join(",") & ")" & $RepoStr, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), True, cmbcomp.Text, cmbdiscount.Text)
+  xcnt = 0
+  xsubtot = 0
+  xtax = 0
+  xdsc = 0
+  xsubs = 0
+  xtotal = 0
+  If res.Available Then
+    If res["itemcnt"] Then
+      xcnt = res["itemcnt"]
+    Endif
+    If res["fldgross"] Then
+      xsubtot = res["fldgross"]
+    Endif
+    If res["flddisc"] Then
+      xdsc = res["flddisc"]
+    Endif
+    If res["fldsubsidy"] Then
+      xsubs = res["fldsubsidy"]
+    Endif
+    If res["fldtax"] Then
+      xtax = res["fldtax"]
+    Endif
+    If res["fldnetamt"] Then
+      xtotal = res["fldnetamt"]
+    Endif
+  Endif
+  asubtot = asubtot + xsubtot
+  atax = atax + xtax
+  adsc = adsc + xdsc
+  asubs = asubs + xsubs
+  atotal = atotal + xtotal
+  ahosp = ahosp + xtotal
+
+  GridView1[$DepartList.Count, 1].Text = xcnt
+  GridView1[$DepartList.Count, 2].Text = Format(xsubtot, gb.Fixed)
+  GridView1[$DepartList.Count, 3].Text = Format(xsubs, gb.Fixed)
+  GridView1[$DepartList.Count, 4].Text = Format(xdsc, gb.Fixed)
+  GridView1[$DepartList.Count, 5].Text = Format(xtax, gb.Fixed)
+  GridView1[$DepartList.Count, 6].Text = Format(xtotal, gb.Fixed)
+
+  GridView1[$DepartList.Count, 7].Text = Format(xhosp, gb.Fixed)
+  GridView1[$DepartList.Count, 8].Text = 0
+  GridView1[$DepartList.Count, 9].Text = 0
+  GridView1[$DepartList.Count, 10].Text = 0
+  GridView1[$DepartList.Count, 11].Text = 0
+
+  ''Not Grouoped
+  GridView1[$DepartList.Count + 1, 0].Text = "Not Grouped"
+  res = modDatabase.$syConn.Exec("select SUM(t1.flditemqty) as itemcnt,SUM(t1.flditemrate*t1.flditemqty) as fldgross,SUM(COALESCE(t1.fldsubsidy, 0)) as fldsubsidy,SUM(t1.flddiscamt - COALESCE(t1.fldsubsidy, 0)) as flddisc,SUM(t1.fldtaxamt) as fldtax,SUM(t1.fldditemamt) as fldnetamt,SUM(t1.fldditemamt*t2.fldhospitalshare/100) as fldhospitalshare,SUM(t1.fldditemamt*t2.fldinstrumshare/100) as fldinstrumshare,SUM(t1.fldditemamt*t2.flddepartshare/100) as flddepartshare,SUM(t1.fldditemamt*t2.fldanesthshare/100) as fldanesthshare,SUM(t1.fldditemamt*t2.fldothershare/100) as fldothershare from " & $tblpatbilling & " AS t1 inner join tblservicecost as t2 on t1.flditemname=t2.flditemname where t1.flditemname not in(select flditemname from tblreportgroup) and t1.fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2) and t1.fldsave=&3 and t1.fldcomp like &4 and t1.flddisctype like &5 and t1.flditemtype in(" & $ServiceTypeList.Join(",") & ")" & $RepoStr, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), True, cmbcomp.Text, cmbdiscount.Text)
+  xcnt = 0
+  xsubtot = 0
+  xtax = 0
+  xdsc = 0
+  xsubs = 0
+  xtotal = 0
+  xhosp = 0
+  xinstr = 0
+  xdeprt = 0
+  xanest = 0
+  xother = 0
+  If res.Available Then
+    If res["itemcnt"] Then
+      xcnt = res["itemcnt"]
+    Endif
+    If res["fldgross"] Then
+      xsubtot = res["fldgross"]
+    Endif
+    If res["flddisc"] Then
+      xdsc = res["flddisc"]
+    Endif
+    If res["fldsubsidy"] Then
+      xsubs = res["fldsubsidy"]
+    Endif
+    If res["fldtax"] Then
+      xtax = res["fldtax"]
+    Endif
+    If res["fldnetamt"] Then
+      xtotal = res["fldnetamt"]
+    Endif
+    If res["fldhospitalshare"] Then
+      xhosp = Round(res["fldhospitalshare"], -2)
+    Endif
+    If res["fldinstrumshare"] Then
+      xinstr = Round(res["fldinstrumshare"], -2)
+    Endif
+    If res["flddepartshare"] Then
+      xdeprt = Round(res["flddepartshare"], -2)
+    Endif
+    If res["fldanesthshare"] Then
+      xanest = Round(res["fldanesthshare"], -2)
+    Endif
+    If res["fldothershare"] Then
+      xother = Round(res["fldothershare"], -2)
+    Endif
+  Endif
+  asubtot = asubtot + xsubtot
+  atax = atax + xtax
+  adsc = adsc + xdsc
+  asubs = asubs + xsubs
+  atotal = atotal + xtotal
+  ahosp = ahosp + xhosp
+  ainstr = ainstr + xinstr
+  adeprt = adeprt + xdeprt
+  aanest = aanest + xanest
+  aother = aother + xother
+
+  GridView1[$DepartList.Count + 1, 1].Text = xcnt
+  GridView1[$DepartList.Count + 1, 2].Text = Format(xsubtot, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 3].Text = Format(xsubs, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 4].Text = Format(xdsc, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 5].Text = Format(xtax, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 6].Text = Format(xtotal, gb.Fixed)
+
+  GridView1[$DepartList.Count + 1, 7].Text = Format(xhosp, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 8].Text = Format(xinstr, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 9].Text = Format(xdeprt, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 10].Text = Format(xanest, gb.Fixed)
+  GridView1[$DepartList.Count + 1, 11].Text = Format(xother, gb.Fixed)
+
+  ''Grand Total
+  GridView1[$DepartList.Count + 2, 0].Text = "GRAND TOTAL"
+  GridView1[$DepartList.Count + 2, 1].Text = ""
+  GridView1[$DepartList.Count + 2, 2].Text = Format(asubtot, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 3].Text = Format(asubs, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 4].Text = Format(adsc, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 5].Text = Format(atax, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 6].Text = Format(atotal, gb.Fixed)
+
+  GridView1[$DepartList.Count + 2, 7].Text = Format(ahosp, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 8].Text = Format(ainstr, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 9].Text = Format(adeprt, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 10].Text = Format(aanest, gb.Fixed)
+  GridView1[$DepartList.Count + 2, 11].Text = Format(aother, gb.Fixed)
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim hForm As FmDepartMIS
+
+  Inc Application.Busy
+  hForm = New FmDepartMIS(GridView1[GridView1.Row, 0].Text, dtfir.Value, dtlast.Value, cmbcomp.Text, cmbdiscount.Text, $tblpatbilling, $tblpatbilldetail)
+  Dec Application.Busy
+  hForm.ShowModal
+
+End
+
+''--------------------- Depaertment income ------------------
+Private Sub DepartIncome()
+
+  Dim Row As Integer
+  Dim res As Result
+  Dim xfld As String
+
+  Dim xsubtot As Float
+  Dim xtax As Float
+  Dim xdsc As Float
+  Dim xsubs As Float
+  Dim xtotal As Float
+
+  Dim asubtot As Float
+  Dim atax As Float
+  Dim adsc As Float
+  Dim asubs As Float
+  Dim atotal As Float
+
+  GridView3.Clear
+  GridView3.Columns.Count = 6
+  GridView3.Rows.Count = $CetegList.Count + 1
+
+  With GridView3
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Gross Income"
+    .Columns[2].Text = "Subsidy"
+    .Columns[3].Text = "Discount"
+    .Columns[4].Text = "Tax"
+    .Columns[5].Text = "Net Income"
+  End With
+
+  asubtot = 0
+  atax = 0
+  adsc = 0
+  asubs = 0
+  atotal = 0
+  For Row = 0 To $CetegList.Count - 1
+    GridView3[Row, 0].Text = $CetegList[Row]
+    If $CetegList[Row] = "Hospital Share" Then
+      xfld = "t2.fldhospitalshare"
+    Else If $CetegList[Row] = "Instrument Share" Then
+      xfld = "t2.fldinstrumshare"
+    Else If $CetegList[Row] = "Department Share" Then
+      xfld = "t2.flddepartshare"
+    Else If $CetegList[Row] = "Anesthesia Share" Then
+      xfld = "t2.fldanesthshare"
+    Else If $CetegList[Row] = "Other Share" Then
+      xfld = "t2.fldothershare"
+    Endif
+    res = modDatabase.$syConn.Exec(Subst("select SUM(&1*t1.flditemrate*t1.flditemqty/100) as fldgross,SUM(&1 * COALESCE(t1.fldsubsidy, 0)/100) as fldsubsidy,SUM(&1*(t1.flddiscamt - COALESCE(t1.fldsubsidy, 0))/100) as flddisc,SUM(&1*t1.fldtaxamt/100) as fldtax,SUM(&1*t1.fldditemamt/100) as fldnetamt from ", xfld) & $tblpatbilling & " AS t1 inner join tblservicecost as t2 on t1.flditemname=t2.flditemname where t1.fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2) and t1.fldsave=&3 and t1.fldcomp like &4 and t1.flddisctype like &5" & $RepoStr, modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), True, cmbcomp.Text, cmbdiscount.Text)                    ''
+    xsubtot = 0
+    xtax = 0
+    xdsc = 0
+    xsubs = 0
+    xtotal = 0
+    If res.Available Then
+      If res["fldgross"] Then
+        xsubtot = res["fldgross"]
+      Endif
+      If res["flddisc"] Then
+        xdsc = res["flddisc"]
+      Endif
+      If res["fldsubsidy"] Then
+        xsubs = res["fldsubsidy"]
+      Endif
+      If res["fldtax"] Then
+        xtax = res["fldtax"]
+      Endif
+      If res["fldnetamt"] Then
+        xtotal = res["fldnetamt"]
+      Endif
+    Endif
+    asubtot = asubtot + xsubtot
+    atax = atax + xtax
+    adsc = adsc + xdsc
+    asubs = asubs + xsubs
+    atotal = atotal + xtotal
+
+    GridView3[Row, 1].Text = Format(xsubtot, gb.Fixed)
+    GridView3[Row, 2].Text = Format(xsubs, gb.Fixed)
+    GridView3[Row, 3].Text = Format(xdsc, gb.Fixed)
+    GridView3[Row, 4].Text = Format(xtax, gb.Fixed)
+    GridView3[Row, 5].Text = Format(xtotal, gb.Fixed)
+  Next
+
+  GridView3[$CetegList.Count, 0].Text = "GRAND TOTAL"
+  GridView3[$CetegList.Count, 1].Text = Format(asubtot, gb.Fixed)
+  GridView3[$CetegList.Count, 2].Text = Format(asubs, gb.Fixed)
+  GridView3[$CetegList.Count, 3].Text = Format(adsc, gb.Fixed)
+  GridView3[$CetegList.Count, 4].Text = Format(atax, gb.Fixed)
+  GridView3[$CetegList.Count, 5].Text = Format(atotal, gb.Fixed)
+
+End
+
+Public Sub ShowLocationGrids()
+
+  $rData = modDatabase.$syConn.Exec(Subst("select t1.fldcurrlocat as fldcurrlocat,SUM(&1*t1.flditemrate*t1.flditemqty/100) as fldgross,SUM(&1 * COALESCE(t1.fldsubsidy, 0)) as fldsubsidy,SUM(&1*(t1.flddiscamt - COALESCE(t1.fldsubsidy, 0))/100) as flddisc,SUM(&1*t1.fldtaxamt/100) as fldtax,SUM(&1*t1.fldditemamt/100) as fldnetamt from ", "t2.flddepartshare") & $tblpatbilling & " AS t1 inner join tblservicecost as t2 on t1.flditemname=t2.flditemname where t1.fldbillno in(select fldbillno from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2) and t1.fldsave=&3 and t1.fldcomp like &4 and t1.flddisctype like &5 and t2.flddepartshare>&6" & $RepoStr & " GROUP BY t1.fldcurrlocat", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), True, cmbcomp.Text, cmbdiscount.Text, 0)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView4, $rData, $aMyFields)
+
+  With GridView4
+    .Columns[0].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Gross Income"
+    .Columns[2].Text = "Subsidy"
+    .Columns[3].Text = "Discount"
+    .Columns[4].Text = "Tax"
+    .Columns[5].Text = "Net Income"
+  End With
+
+End
+
+Public Sub GridView4_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView4, Row)
+  GridView4.Data.Text = $rData[$aMyFields[Column]]
+
+End
+
+''------------------------ Summary -------------------------------
+Private Sub GetSummaryGrid()
+
+  Dim Row As Integer
+  Dim res As Result
+  Dim xlst As String[] = ["Counter Sales", "Counter Return", "Pharmacy Sales", "Pharmacy Return", "Due Clearance"]
+
+  Dim totamt As Float
+  Dim xtax As Float
+  Dim xdsc As Float
+  Dim xitem As Float
+  Dim totmt As Float
+
+  Dim pqty As Float
+  Dim pitem As Float
+  Dim ptax As Float
+  Dim pdisc As Float
+  Dim ptot As Float
+  Dim precv As Float
+
+  cmbdiscount.Text = "%"
+  cmbcomp.Text = "%"
+  GridView2.Clear
+  GridView2.Columns.Count = 7
+  GridView2.Rows.Count = xlst.Count + 1
+
+  With GridView2
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "CATEGORY"
+    .Columns[1].Text = "COUNT"
+    .Columns[2].Text = "GROSS INCOME"
+    .Columns[3].Text = "DISCOUNT"
+    .Columns[4].Text = "TAX"
+    .Columns[5].Text = "CREDIT"
+    .Columns[6].Text = "CASH"
+  End With
+
+  pqty = 0
+  pitem = 0
+  ptax = 0
+  pdisc = 0
+  ptot = 0
+  precv = 0
+
+  For Row = 0 To xlst.Count - 1
+    GridView2[Row, 0].Text = xlst[Row]
+    totamt = 0
+    xtax = 0
+    xdsc = 0
+    xitem = 0
+    totmt = 0
+    res = modDatabase.$syConn.Exec("select count(fldid) as fldcount,SUM(flditemamt) as fldgross,SUM(fldtaxamt) as fldtax,SUM(flddiscountamt) as fldisc,SUM(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as fldcredit,SUM(fldreceivedamt) as fldcash from " & $tblpatbilldetail & " where fldbillno like &1 and fldtime>=&2 and fldtime<=&3" & $RepoStr, modBillLock.InvSign(xlst[Row]) & "%", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value))
+    If res.Available Then
+      If res["fldgross"] Then
+        xitem = res["fldgross"]
+      Endif
+      If res["fldtax"] Then
+        xtax = res["fldtax"]
+      Endif
+      If res["fldisc"] Then
+        xdsc = res["fldisc"]
+      Endif
+      If res["fldcredit"] Then
+        totmt = res["fldcredit"]
+      Endif
+      If res["fldcash"] Then
+        totamt = res["fldcash"]
+      Endif
+
+      pqty = pqty + res["fldcount"]
+      pitem = pitem + xitem
+      ptax = ptax + xtax
+      pdisc = pdisc + xdsc
+      ptot = ptot + totmt
+      precv = precv + totamt
+    Endif
+
+    GridView2[Row, 1].Text = res["fldcount"]
+    GridView2[Row, 2].Text = Format(xitem, gb.Fixed)
+    GridView2[Row, 3].Text = Format(xdsc, gb.Fixed)
+    GridView2[Row, 4].Text = Format(xtax, gb.Fixed)
+    GridView2[Row, 5].Text = Format(totmt, gb.Fixed)
+    GridView2[Row, 6].Text = Format(totamt, gb.Fixed)
+  Next
+
+  GridView2[Row, 0].Text = "GRAND TOTAL"
+  GridView2[Row, 1].Text = pqty
+  GridView2[Row, 2].Text = Format(pitem, gb.Fixed)
+  GridView2[Row, 3].Text = Format(pdisc, gb.Fixed)
+  GridView2[Row, 4].Text = Format(ptax, gb.Fixed)
+  GridView2[Row, 5].Text = Format(ptot, gb.Fixed)
+  GridView2[Row, 6].Text = Format(precv, gb.Fixed)
+
+End

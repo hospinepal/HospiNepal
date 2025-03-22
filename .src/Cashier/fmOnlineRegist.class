@@ -1,0 +1,524 @@
+' Gambas class file
+
+Private hPatient As FmBillingEntry
+Private $BillingOption As String
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  $BillingOption = modBasic.$BillCashOption
+  hPatient = New FmBillingEntry(Panel3)
+
+  cmbscheme.List = modNonMedical.FillDiscountCombo()
+  cmbscheme.Add("%")
+  cmbscheme.Text = "%"
+  cmbdepart.List = modGeneral.GetDepartmentsForOPDBoth()
+  cmbdepart.Add("%")
+  cmbdepart.Text = "%"
+  dtconsult.Value = Now()
+
+  If ShowBilling() = False Then
+    hPatient.Enabled = False
+  Endif
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub dtnepdate_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtconsult.Value))
+  If xx Then
+    dtconsult.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub cmbscheme_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbscheme)
+  modFillContainer.RestrictComboToContent(cmbscheme)
+
+End
+
+Public Sub cmbdepart_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdepart)
+  modFillContainer.RestrictComboToContent(cmbdepart)
+
+End
+
+Public Sub btnshow_Click()
+
+  LoadGridData()
+
+End
+
+Private Sub LoadGridData()
+
+  Dim sql As String
+
+  sql = "select fldbookingval,fldbookingval,fldconsultdate,fldadmitlocat,fldpatientval,fldptnamefir,fldptnamelast,fldptsex,flddisctype,fldpayreference,fldencounterval,fldbillno,fldconsultdate,fldbookingval from tblonlinebook where flddisctype like &1 and fldconsultdate>=&2 and fldconsultdate<=&3 and fldadmitlocat like &4 and fldstate=&5"
+  $rData = modDatabase.$myConn.Exec(sql, cmbscheme.Text, modDate.StartSqlDate(dtconsult.Value), modDate.EndSqlDate(dtconsult.Value), cmbdepart.Text, "Paid")
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 1   ''date
+    .Columns[13].Width = 1   ''id
+
+    .Columns[1].Text = "BookID"
+    .Columns[2].Text = "Time"
+    .Columns[3].Text = "Depart"
+    .Columns[4].Text = "PatNo"
+    .Columns[5].Text = "Name"
+    .Columns[6].Text = "Surname"
+    .Columns[7].Text = "Gender"
+    .Columns[8].Text = "Scheme"
+    .Columns[9].Text = "RefNo"
+    .Columns[10].Text = "EncID"
+    .Columns[11].Text = "Invoice"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 0 Then
+    GridView1.Data.Picture = Picture["icons/unchecked.png"]
+  Else If Column = 2 Then
+    GridView1.Data.Text = Format($rData[$aMyFields[Column]], gb.ShortTime)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+  Dim xdate As Date
+
+  If GridView1.Column = 0 Then
+    modGridView.CheckUncheckGridNoDB(GridView1, 0)
+  Else If GridView1.Column = 2 Then
+    xdate = GetDateValue("Alter Consultation Date Time of " & GridView1[GridView1.Row, 5].Text & Space(1) & GridView1[GridView1.Row, 6].Text, "Consultation DateTime", GridView1[GridView1.Row, 12].Text)
+    If xdate Then
+      res = modDatabase.$myConn.Edit("tblonlinebook", "fldbookingval=&1", GridView1[GridView1.Row, 13].Text)
+      res["fldconsultdate"] = xdate
+      res.Update
+      LoadGridData()
+    Endif
+  Endif
+
+End
+
+Public Sub btnregist_Click()
+
+  Dim i As Integer
+  Dim xEncID As String
+  Dim $hReport As CRegistLabel
+  Dim xbillno As String
+  Dim res As Result
+  Dim xpass As String
+
+  If dtconsult.Value >= modDate.StartSqlDate(Now()) Then
+    For i = 0 To GridView1.Rows.Count - 1
+      If GridView1[i, 0].Picture = Picture["icons/checked.png"] Then
+        hPatient.RefreshAll()
+        If GridView1[i, 10].Text Then
+          xEncID = GridView1[i, 10].Text
+        Else
+          xEncID = GetRegistration(GridView1[i, 1].Text)
+          Wait
+        Endif
+
+        If xEncID Then
+          If Not GridView1[i, 11].Text Then
+            GetRegistrationBilling(xEncID, GridView1[i, 8].Text)
+            Wait
+            xbillno = hPatient.GetCurrentInvoice()
+            res = modDatabase.$myConn.Edit("tblonlinebook", "fldbookingval=&1", GridView1[i, 1].Text)
+            res["fldbillno"] = xbillno
+            res.Update
+          Endif
+          xpass = modGeneral.SendPatientPasswordForRemote(xEncID)
+
+          If chklabel.Value = True Then
+            If modNonMedical.AllowRegistSlipWithInvoiceEncid(xEncID) = True Then
+              $hReport = New CRegistLabel(xEncID)
+              modControlSub.OpenHTMLPreview(xEncID, $hReport.RegistLabelPath(), "LabelSize")
+            Endif
+            Wait
+          Endif
+          If chkprescr.Value = True Then
+            modPatientSub.PrintRegistExtraReport(xEncID)
+            Wait
+          Endif
+        Endif
+
+      Endif
+    Next
+    LoadGridData()
+  Endif
+
+End
+
+''========== Billing =========================
+Private Sub GetRegistrationBilling(encID As String, sPackage As String)
+
+  Dim xBillMode As String
+  Dim xAccLedger As String
+  Dim xRefrence As String
+
+  Dim resx As Result
+  Dim xbilltype As String
+  Dim xledger As String
+  Dim xlock As Boolean
+
+  If sPackage Then
+    hPatient.$encid = encID
+    hPatient.$billtype = "CashBilling"
+
+    xlock = False
+    resx = modDatabase.$myConn.Exec("select fldmode,fldbillingmode,fldacledger,fldbilltype,fldreference,fldlimit from tbldiscount where fldtype=&1", sPackage)
+    If resx.Available Then
+      ''billingmode
+      If resx["fldbillingmode"] Then
+        xBillMode = resx["fldbillingmode"]
+      Else
+        xBillMode = modBasic.$BillDefaultMode
+      Endif
+      ''claim code button
+      If resx["fldreference"] Then
+        If resx["fldreference"] = "Claim Code" Then
+          xRefrence = modClaim.GetClaimCidePatient(encID)
+        Else If resx["fldreference"] = "Accident SSF" Then
+          xRefrence = modSSF.GetSSFClaimCodePatient(encID, "Accident SSF")
+        Else If resx["fldreference"] = "Critical SSF" Then
+          xRefrence = modSSF.GetSSFClaimCodePatient(encID, "Critical SSF")
+        Else If resx["fldreference"] = "Medical SSF" Then
+          xRefrence = modSSF.GetSSFClaimCodePatient(encID, "Medical SSF")
+        Endif
+      Endif
+      ''ledger A/C
+      xledger = resx["fldacledger"]
+      If xledger Then
+        xAccLedger = xledger
+      Endif
+      ''BillType
+      xbilltype = resx["fldbilltype"]
+      If xbilltype Then
+        xlock = True
+      Endif
+    Endif
+    If Not xbilltype Then
+      If xAccLedger Then
+        xbilltype = modNonMedical.GetDefaultACBillType(xAccLedger)
+      Endif
+    Endif
+
+    If xbilltype Then
+      hPatient.SetDefaultModeCashCredit(xbilltype, xlock)
+    Else
+      hPatient.SetDefaultModeCashCredit(modBasic.$BillFixBilling, xlock)
+    Endif
+
+    If ShowBilling() = True Then
+      If hPatient.Enabled = True Then
+        hPatient.$ACLedger = xAccLedger
+        hPatient.$ACReference = xRefrence
+        hPatient.DirectCashBilling()
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Private Function ShowBilling() As Boolean
+
+  Dim xx As Boolean
+
+  If $BillingOption = "No" Then
+    xx = False
+  Else
+    xx = True
+  Endif
+  Return xx
+
+End
+
+''=========== Registration =========================
+Private Function GetRegistration(sBookID As String) As String
+
+  Dim xPatNo As String
+  Dim xEncID As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim resx As Result
+  Dim idLock As Boolean
+  Dim xvisit As String
+  Dim autobil As Boolean
+  Dim xcomm As String
+  Dim xtotamt As Float
+  Dim xformat As String
+  Dim xdate As Date
+  Dim xpdamt As Float
+
+  res = modDatabase.$myConn.Exec("select fldpatientval,fldconsultdate,fldadmitlocat,flduserid,flddisctype,fldbillingmode,fldencounterval,fldbillno,fldpayreference,flditemamt,fldstate from tblonlinebook where fldbookingval=&1", sBookID)
+  If res.Available Then
+    xpdamt = 0
+    If res["fldstate"] = "Paid" Then
+      xpdamt = res["flditemamt"]
+    Else
+      resx = modDatabase.$myConn.Exec("select fldstate,fldtransid,fldtransamt,fldtranstoken,fldfeeamt,flduserid,fldtime from tblwebpayment where fldbillno=&1 and fldencounterval=&2 and flditemid=&3", res["fldpayreference"], sBookID, "Booking")
+      If resx.Available Then
+        xpdamt = resx["fldtransamt"]
+      Endif
+    Endif
+
+    xtotamt = 0
+    xtotamt = modBillings.GetAutoRegistCost(res["fldadmitlocat"], res["flddisctype"], res["fldbillingmode"], "New")
+    If xpdamt >= xtotamt Then
+
+      Inc Application.Busy
+      idLock = modBillLock.LockTableForID("Registration")
+      If idLock = True Then
+
+        modDatabase.$myConn.Begin
+        If res["fldpatientval"] Then
+          xvisit = modPatient.GetPatientHMISStattus(res["fldpatientval"])
+          xPatNo = res["fldpatientval"]
+        Else
+          xvisit = "NEW"
+          xPatNo = RegisterFirstTime(sBookID)
+        Endif
+
+        If xPatNo Then
+          xEncID = modBillLock.EncounterIDValue()
+          If xEncID Then
+            res1 = modDatabase.$myConn.Create("tblencounter")
+            res1["fldencounterval"] = xEncID
+            res1["fldpatientval"] = xPatNo
+            res1["fldadmitlocat"] = res["fldadmitlocat"]
+            res1["flddisctype"] = res["flddisctype"]
+            res1["fldbillingmode"] = res["fldbillingmode"]
+            res1["fldadmission"] = "Registered"
+            res1["fldregdate"] = Now()
+            res1["fldcomp"] = modBasic.$compID
+            res1["fldvisit"] = xvisit
+            res1["fldfollow"] = "New"
+
+            res1["fldcurrlocat"] = ""
+            res1["flddoa"] = ""
+            res1["flddod"] = ""
+            res1["fldheight"] = ""
+            res1["flduserid"] = res["flduserid"]
+            res1["fldcashdeposit"] = 0
+            res1["fldcashcredit"] = 0
+            res1["fldcharity"] = 0
+            res1["fldvalidity"] = DateAdd(Now(), gb.Year, 1)
+            res1["fldfollowdate"] = ""
+            res1["fldreferto"] = ""
+
+            res1["fldregistid"] = modPatient.GetPatientHMISRegVal(xPatNo)
+            res1["fldadmitid"] = ""
+            res1["xyz"] = False
+            res1.Update()
+
+            autobil = modBillings.InsertRegistrationBilling("Full", xEncID, res["fldadmitlocat"], res["flddisctype"], res["fldbillingmode"], "New", res["flduserid"])
+            If autobil = True Then
+              xcomm = "Paid Consultation"
+
+              xformat = modGeneral.GetCategoryFromDept(res["fldadmitlocat"])
+              xdate = modGeneral.GetDepartConsultTime(xformat, res["fldadmitlocat"], res["fldconsultdate"])
+              If xformat = "Consultation" Then
+                modPatientSub.AddConsultData(xEncID, res["fldadmitlocat"], xdate, res["fldbillingmode"], xcomm, res["flduserid"])
+              Else
+                modPatientSub.AddOPVisitData(xEncID, res["fldadmitlocat"], xdate, res["fldbillingmode"], xcomm)
+              Endif
+
+              res2 = modDatabase.$myConn.Edit("tblonlinebook", "fldbookingval=&1", sBookID)
+              If Not res["fldpatientval"] Then
+                res2["fldpatientval"] = xPatNo
+              Endif
+              res2["fldencounterval"] = xEncID
+              res2["fldconsultdate"] = xdate
+              res2.Update
+              modPatientSub.UpdateRemoteUserNo(modPatient.GetPatRemoteOnlineBooking(sBookID), xPatNo)
+              modDatabase.$myConn.Commit
+            Else
+              modDatabase.$myConn.Rollback
+              xEncID = ""
+              xPatNo = ""
+            Endif
+
+          Else
+            modDatabase.$myConn.Rollback
+            xEncID = ""
+            xPatNo = ""
+          Endif
+        Else
+          modDatabase.$myConn.Rollback
+          xEncID = ""
+          xPatNo = ""
+        Endif
+
+        modBillLock.ReleaseLockTable("Registration")
+      Endif
+      Dec Application.Busy
+
+    Else
+      Message.Warning("Insufficient payment", "OK")
+    Endif
+  Endif
+
+  Return xEncID
+
+Catch
+  modDatabase.$myConn.Rollback
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Registration")
+  Endif
+  Dec Application.Busy
+  xEncID = ""
+  xPatNo = ""
+  modHelpVariable.CreateErrorReport()
+  Return xEncID
+
+End
+
+Private Function RegisterFirstTime(sBookID As String) As String
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim xAuto As String
+  Dim xPatNo As String
+
+  res = modDatabase.$myConn.Exec("select fldpatientval,fldptnamefir,fldptnamelast,fldethniccode,fldptsex,fldptaddvill,fldptaddward,fldptadddist,fldptcontact,fldptguardian,fldrelation,fldptbirday,fldemail,fldptcode from tblonlinebook where fldbookingval=&1", sBookID)
+  If res.Available Then
+
+    xAuto = modBillLock.PatientNoValue()
+    If xAuto Then
+      res1 = modDatabase.$myConn.Create("tblpatientinfo")
+      res1["fldpatientval"] = xAuto
+      res1["fldptnamefir"] = String.UCaseFirst(res["fldptnamefir"])
+      res1["fldptnamelast"] = String.UCaseFirst(res["fldptnamelast"])
+      res1["fldethniccode"] = res["fldethniccode"]
+      res1["fldptcontact"] = res["fldptcontact"]
+      res1["fldemail"] = res["fldemail"]
+      res1["fldptaddvill"] = String.UCaseFirst(res["fldptaddvill"])
+      res1["fldptaddward"] = res["fldptaddward"]
+      res1["fldptadddist"] = String.UCaseFirst(res["fldptadddist"])
+      res1["fldptsex"] = String.UCaseFirst(res["fldptsex"])
+      res1["fldptguardian"] = String.UCaseFirst(res["fldptguardian"])
+      res1["fldrelation"] = String.UCaseFirst(res["fldrelation"])
+      If res["fldptbirday"] Then
+        res1["fldptbirday"] = res["fldptbirday"]
+      Endif
+      res1["fldptadmindate"] = Now()
+      res1["flddiscount"] = ""
+      res1["fldptcode"] = res["fldptcode"]
+      res1["fldadmitfile"] = ""
+      res1["fldcomment"] = ""
+      res1["fldencrypt"] = False
+      res1["fldpassword"] = ""
+
+      res1["flduserid"] = modBasic.$lbluser
+      res1["fldtime"] = Now()
+      res1["fldupuser"] = ""
+      res1["flduptime"] = ""
+      res1["xyz"] = False
+      res1.Update()
+      xPatNo = xAuto
+    Endif
+
+  Endif
+
+  Return xPatNo
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup()
+
+End
+
+Public Sub mnusticker_Click()
+
+  Dim $hReport As CRegistLabel
+
+  If GridView1.Rows.Selection.Count Then
+    If GridView1[GridView1.Row, 10].Text Then
+      If modNonMedical.AllowRegistSlipWithInvoiceEncid(GridView1[GridView1.Row, 10].Text) = True Then
+        $hReport = New CRegistLabel(GridView1[GridView1.Row, 10].Text)
+        modControlSub.OpenHTMLPreview(GridView1[GridView1.Row, 10].Text, $hReport.RegistLabelPath(), "LabelSize")
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub mnuprescr_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    If GridView1[GridView1.Row, 10].Text Then
+      modPatientSub.PrintRegistExtraReport(GridView1[GridView1.Row, 10].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub mnuinvoice_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    If GridView1[GridView1.Row, 11].Text Then
+      modBILLFormat.PrintSelectedInvoice(GridView1[GridView1.Row, 11].Text)
+    Endif
+  Endif
+
+End
+
+Public Sub mnuslipimage_Click()
+
+  Dim asx As String[]
+  Dim xFPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    asx = Split(GridView1[GridView1.Row, 9].Text, ":")
+    If asx.Count = 2 And If asx[0] = "PaySlip" Then
+      xFPath = modImage.GetBlobFileDataTable(asx[1], "tblpayimage")
+      If Exist(xFPath) Then
+        modDevice.DesktopOpenFile(xFPath)
+      Endif
+    Endif
+  Endif
+
+End

@@ -1,0 +1,706 @@
+' Gambas class file
+
+Private $xAuthString As String
+Private $HeadString As String
+
+Private $PatCode As String
+Private $EncID As String
+Private $ClaimCode As String
+Private $NoDiagno As Boolean
+
+Private $PatUUID As String
+Private $EmployerID As String
+Private $rData As Result
+
+Private $DiagnoVar As Variant[]
+Private $SSFExtension As Variant[]
+Private $SSFDocuments As Variant[]
+Private $ItemVar As Variant[]
+Private $ItemTot As Float
+
+Private Sub SetAuthentication()
+
+  If modBasic.$SSFQuote = "Yes" Then
+    $xAuthString = "'" & modBasic.$SSFUser & ":" & modBasic.$SSFPass & "'"
+  Else
+    $xAuthString = modBasic.$SSFUser & ":" & modBasic.$SSFPass
+  Endif
+  $HeadString = "remote-user:" & modBasic.$SSFRemoUser
+
+End
+
+Public Sub _new(sPatcode As String, sEncID As String, sClaimCode As String, NoDiagno As Boolean)
+
+  Dim xCssPat As CssfAPIPatient
+
+  $PatCode = sPatcode
+  $EncID = sEncID
+  $ClaimCode = sClaimCode
+  $NoDiagno = NoDiagno
+
+  $DiagnoVar = New Variant[]
+  $SSFExtension = New Variant[]
+  $SSFDocuments = New Variant[]
+  $ItemVar = New Variant[]
+
+  xCssPat = New CssfAPIPatient(sPatcode)
+  $PatUUID = xCssPat.GetPatientUUID()
+
+  ExecuteQuery()
+  GetICDNamesIMIS($EncID)
+  GetSSFExtension()
+
+End
+
+Private Sub ExecuteQuery()
+
+  Dim xList As String[]
+
+  xList = ["fldptcode", "fldstatus", "fldscheme", "fldemployer", "fldsubproduct", "fldwound", "fldinjury", "flddisable", "flddead", "fldaccident", "fldsickness", "flddischarge", "flddischsumm", "fldcancer", "fldhiv", "fldheart", "fldhighbp", "flddiabetes", "fldtime"]
+  $rData = modDatabase.$myConn.Exec("select " & xList.Join(",") & " from tblssfclaim where fldclaimid=&1 and fldencounterval=&2", $ClaimCode, $EncID)
+
+End
+
+Private Sub GetICDNamesIMIS(sEncid As String)
+
+  Dim res As Result
+  Dim i As Integer
+
+  Dim bColl As Collection
+  Dim cColl As Collection
+  Dim cVar As Variant[]
+  Dim dColl As Collection
+
+  Dim bSVar As Variant[]
+  Dim bScoll As Collection
+
+  If $NoDiagno = True Then
+    bColl = New Collection
+    cColl = New Collection
+    cVar = New Variant[]
+
+    dColl = New Collection
+    If modBasic.$SSFICDForm = "ICD10" Then
+      dColl.Add("R69", "code")
+    Else
+      dColl.Add("MG48", "code")
+    Endif
+    cVar.Add(dColl)
+    cColl.Add(cVar, "coding")
+    bColl.Add(cColl, "diagnosisCodeableConcept")
+
+    bColl.Add(1, "sequence")
+
+    bSVar = New Variant[]
+    bScoll = New Collection
+    bScoll.Add("icd_0", "text")
+    bSVar.Add(bScoll)
+    bColl.Add(bSVar, "type")
+
+    $DiagnoVar.Add(bColl)
+
+  Else
+    If modBasic.$SSFICDForm = "ICD10" Then
+      res = modDatabase.$myConn.Exec("select fldcodeid,fldcodenew from tblpatfindings where fldencounterval=&1 and (fldtype=&2 or fldtype=&3) and fldsave=&4 and fldcodeid<>&5 and fldcodeid<>&6", sEncid, "Provisional Diagnosis", "Final Diagnosis", True, "Obstetrics", "Other")
+    Else
+      res = modDatabase.$myConn.Exec("select fldcodeid,fldcodenew from tblpatfindings where fldencounterval=&1 and (fldtype=&2 or fldtype=&3) and fldsave=&4 and fldcodenew<>&5 and fldcodenew<>&6", sEncid, "Provisional Diagnosis", "Final Diagnosis", True, "Obstetrics", "Other")
+    Endif
+    If res.Available = False Then
+      bColl = New Collection
+      cColl = New Collection
+      cVar = New Variant[]
+
+      dColl = New Collection
+      If modBasic.$SSFICDForm = "ICD10" Then
+        dColl.Add("R69", "code")
+      Else
+        dColl.Add("MG48", "code")
+      Endif
+      cVar.Add(dColl)
+      cColl.Add(cVar, "coding")
+      bColl.Add(cColl, "diagnosisCodeableConcept")
+
+      bColl.Add(1, "sequence")
+
+      bSVar = New Variant[]
+      bScoll = New Collection
+      bScoll.Add("icd_0", "text")
+      bSVar.Add(bScoll)
+      bColl.Add(bSVar, "type")
+
+      $DiagnoVar.Add(bColl)
+    Else
+
+      i = 1
+      For Each res
+        bColl = New Collection
+        cColl = New Collection
+        cVar = New Variant[]
+
+        dColl = New Collection
+        If modBasic.$SSFICDForm = "ICD10" Then
+          If res["fldcodeid"] = "Obstetrics" Then
+            dColl.Add("Z32", "code")
+          Else If res["fldcodeid"] = "Other" Then
+            dColl.Add("R69", "code")
+          Else
+            dColl.Add(Left(Trim(res["fldcodeid"]), 3), "code")
+          Endif
+        Else
+          If res["fldcodenew"] = "Obstetrics" Then
+            dColl.Add("QA40", "code")
+          Else If res["fldcodenew"] = "Other" Then
+            dColl.Add("MG48", "code")
+          Else
+            dColl.Add(res["fldcodenew"], "code")
+          Endif
+        Endif
+        cVar.Add(dColl)
+        cColl.Add(cVar, "coding")
+        bColl.Add(cColl, "diagnosisCodeableConcept")
+
+        bColl.Add(i, "sequence")
+
+        bSVar = New Variant[]
+        bScoll = New Collection
+        bScoll.Add("icd_0", "text")
+        bSVar.Add(bScoll)
+        bColl.Add(bSVar, "type")
+
+        $DiagnoVar.Add(bColl)
+
+        i = i + 1
+      Next
+    Endif
+  Endif
+
+End
+
+Public Sub AddBilling(sList As Variant[])
+
+  Dim sNo As Variant
+  Dim sColl As Collection
+  Dim res As Result
+  Dim i As Integer
+  Dim xcode As String
+
+  Dim gColl As Collection
+  Dim hColl As Collection
+
+  Dim extVar As Variant[]
+  Dim extcol As Collection
+  Dim xitem As String
+
+  Dim xcateg As String
+  Dim xtot As Float
+
+  i = 1
+  xtot = 0
+  For Each sNo In sList
+    sColl = sNo
+    res = modDatabase.$myConn.Exec(Subst("select fldid,flditemname,flditemtype,flditemrate,flditemqty from &1", sColl["table"]) & " where fldid=&1", sColl["id"])
+    If res.Available Then
+      If res["flditemrate"] * res["flditemqty"] Then
+        xtot = xtot + res["flditemrate"] * res["flditemqty"]
+      Endif
+      gColl = New Collection
+      gColl.Add(i, "sequence")
+
+      hColl = New Collection
+      xitem = ""
+      Select res["flditemtype"]
+        Case "Diagnostic Tests", "Radio Diagnostics", "General Services", "Procedures", "Equipment"
+          xcateg = "service"
+          xcode = modNonMedical.GetBillItemHIAbbv(res["flditemname"], res["flditemtype"])
+          If Not xcode Then
+            xcode = "ADJS01"
+            xitem = res["flditemname"]
+          Endif
+        Case Else
+          xcateg = "item"
+          xcode = "ADJ02"
+          xitem = res["flditemname"]
+      End Select
+      hColl.Add(xcateg, "text")
+      gColl.Add(hColl, "category")
+
+      hColl = New Collection
+      hColl.Add(xcode, "text")
+      gColl.Add(hColl, "productOrService")
+
+      hColl = New Collection
+      hColl.Add(res["flditemqty"], "value")
+      gColl.Add(hColl, "quantity")
+
+      hColl = New Collection
+      hColl.Add(res["flditemrate"], "value")
+      gColl.Add(hColl, "unitPrice")
+
+      If xitem Then
+        extVar = New Variant[]
+        extcol = New Collection
+        extcol.Add("http://hl7.org/fhir/StructureDefinition/contactpoint-comment", "url")
+        extcol.Add(xitem, "valueString")
+        extVar.Add(extcol)
+        gColl.Add(extVar, "extension")
+      Endif
+
+      $ItemVar.Add(gColl)
+
+      i = i + 1
+    Endif
+  Next
+  $ItemTot = xtot
+
+End
+
+Private Sub GetSSFExtension()
+
+  Dim aColl As Collection
+  Dim res As Result
+
+  Dim xschemetype As Integer
+  Dim xsubProduct As Integer
+  Dim xAdmitted As String
+  Dim xWoundCondition As String
+  Dim xInjuredBodyPart As String
+  Dim xIsDisable As String
+  Dim xIsDead As String
+  Dim xAccidentDescription As String
+  Dim xReasonOfSickness As String
+  Dim xDischargeType As String
+  Dim xDischargeSummary As String
+  Dim xDischargeDate As String
+  Dim xCancer As String
+  Dim xHIV As String
+  Dim xHeartAttack As String
+  Dim xHighBp As String
+  Dim xDiabetes As String
+
+  If $rData.Available Then
+
+    If $rData["fldscheme"] = "Accident SSF" Then
+      xschemetype = 1
+      If $rData["fldsubproduct"] Then
+        xsubProduct = modSSF.GetSSFAccidentCode($rData["fldsubproduct"])
+      Else
+        xsubProduct = 18
+      Endif
+
+    Else If $rData["fldscheme"] = "Critical SSF" Then
+      xschemetype = 9
+      If $rData["fldstatus"] Then
+        If $rData["fldstatus"] = "Pre Diagnosis" Then
+          xsubProduct = 19
+        Else If $rData["fldstatus"] = "Post Diagnosis" Then
+          xsubProduct = 20
+        Else If $rData["fldstatus"] = "Post Discharge" Then
+          xsubProduct = 21
+        Endif
+      Else
+        xsubProduct = 19
+      Endif
+
+    Else If $rData["fldscheme"] = "Medical SSF" Then
+      xschemetype = 2
+      If $PatCode Like "S" & "*" Then
+        If $rData["fldstatus"] Then
+          If $rData["fldstatus"] = "Consultation" Then
+            xsubProduct = 4
+          Else If $rData["fldstatus"] = "Patient Ward" Then
+            xsubProduct = 3
+          Endif
+        Else
+          xsubProduct = 4
+        Endif
+      Else
+        If $rData["fldstatus"] Then
+          If $rData["fldstatus"] = "Consultation" Then
+            xsubProduct = 2
+          Else If $rData["fldstatus"] = "Patient Ward" Then
+            xsubProduct = 1
+          Endif
+        Else
+          xsubProduct = 2
+        Endif
+      Endif
+
+    Endif
+
+    If $rData["fldemployer"] Then
+      $EmployerID = $rData["fldemployer"]
+    Endif
+
+    res = modDatabase.$myConn.Exec("select fldadmission,fldregdate,flddoa,flddod,flddisctype from tblencounter where fldencounterval=&1", $EncID)
+    If res.Available Then
+      If res["flddoa"] Then
+        xAdmitted = "1"
+      Else
+        xAdmitted = "0"
+      Endif
+      If res["flddod"] Then
+        xDischargeDate = Format(res["flddod"], "dd/mm/yyyy")
+        If $rData["flddischarge"] Then
+          xDischargeType = $rData["flddischarge"]
+        Else
+          xDischargeType = "Normal"
+        Endif
+        If $rData["flddischsumm"] Then
+          xDischargeSummary = $rData["flddischsumm"]
+        Else
+          xDischargeSummary = ""
+        Endif
+      Else
+        xDischargeDate = ""
+        xDischargeType = ""
+        xDischargeSummary = ""
+      Endif
+    Endif
+
+    If $rData["fldwound"] = "Yes" Then
+      xWoundCondition = "1"
+    Else
+      xWoundCondition = "0"
+    Endif
+
+    If $rData["fldinjury"] = "Yes" Then
+      xInjuredBodyPart = "1"
+    Else
+      xInjuredBodyPart = "0"
+    Endif
+
+    If $rData["flddisable"] = "Yes" Then
+      xIsDisable = "1"
+    Else
+      xIsDisable = "0"
+    Endif
+
+    If $rData["flddead"] = "Yes" Then
+      xIsDead = "1"
+    Else
+      xIsDead = "0"
+    Endif
+
+    If $rData["fldaccident"] Then
+      xAccidentDescription = $rData["fldaccident"]
+    Else
+      xAccidentDescription = ""
+    Endif
+
+    If $rData["fldsickness"] Then
+      xReasonOfSickness = $rData["fldsickness"]
+    Else
+      xReasonOfSickness = ""
+    Endif
+
+    If $rData["fldcancer"] = "Yes" Then
+      xCancer = "1"
+    Else
+      xCancer = "0"
+    Endif
+
+    If $rData["fldhiv"] = "Yes" Then
+      xHIV = "1"
+    Else
+      xHIV = "0"
+    Endif
+
+    If $rData["fldheart"] = "Yes" Then
+      xHeartAttack = "1"
+    Else
+      xHeartAttack = "0"
+    Endif
+
+    If $rData["fldhighbp"] = "Yes" Then
+      xHighBp = "1"
+    Else
+      xHighBp = "0"
+    Endif
+
+    If $rData["flddiabetes"] = "Yes" Then
+      xDiabetes = "1"
+    Else
+      xDiabetes = "0"
+    Endif
+
+  Endif
+
+  aColl = New Collection
+  aColl.Add("IsReclaim", "url")
+  aColl.Add(False, "valueString")
+  $SSFExtension.Add(aColl)
+
+  ' aColl = New Collection
+  ' aColl.Add("PreviousClaimCode", "url")
+  ' aColl.Add("ClaimCode", "valueString")
+  ' $SSFExtension.Add(aColl)
+
+  aColl = New Collection
+  aColl.Add("schemeType", "url")
+  aColl.Add(xschemetype, "valueString")
+  $SSFExtension.Add(aColl)
+
+  aColl = New Collection
+  aColl.Add("subProduct", "url")
+  aColl.Add(xsubProduct, "valueString")
+  $SSFExtension.Add(aColl)
+
+  ''only for accidents
+  If $rData["fldscheme"] = "Accident SSF" Then
+    aColl = New Collection
+    aColl.Add("EmployerId", "url")
+    aColl.Add($EmployerID, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Admitted", "url")
+    aColl.Add(xAdmitted, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("WoundCondition", "url")
+    aColl.Add(xWoundCondition, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("InjuredBodyPart", "url")
+    aColl.Add(xInjuredBodyPart, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("IsDisable", "url")
+    aColl.Add(xIsDisable, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("IsDead", "url")
+    aColl.Add(xIsDead, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("AccidentDescription", "url")
+    aColl.Add(xAccidentDescription, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("ReasonOfSickness", "url")
+    aColl.Add(xReasonOfSickness, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("DischargeType", "url")
+    aColl.Add(xDischargeType, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("DischargeSummary", "url")
+    aColl.Add(xDischargeSummary, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("DischargeDate", "url")
+    aColl.Add(xDischargeDate, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Cancer", "url")
+    aColl.Add(xCancer, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("HIV", "url")
+    aColl.Add(xHIV, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("HeartAttack", "url")
+    aColl.Add(xHeartAttack, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("HighBp", "url")
+    aColl.Add(xHighBp, "valueString")
+    $SSFExtension.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Diabetes", "url")
+    aColl.Add(xDiabetes, "valueString")
+    $SSFExtension.Add(aColl)
+  Endif
+
+End
+
+Public Sub AddDocuments(sList As String[])
+
+  Dim xPath As String
+  Dim zColl As Collection
+
+  Dim aColl As Collection
+  Dim bVar As Variant[]
+  Dim cVoll As Collection
+
+  Dim xcmd As String[]
+  Dim imgData As String
+
+  For Each xPath In sList
+    zColl = New Collection
+    aColl = New Collection
+    bVar = New Variant[]
+    cVoll = New Collection
+
+    cVoll.Add("attachment", "code")
+    cVoll.Add("Attachment", "display")
+    bVar.Add(cVoll)
+    aColl.Add(bVar, "coding")
+    aColl.Add("attachment", "text")
+    zColl.Add(aColl, "category")
+
+    imgData = ""
+    xcmd = ["base64", "-w", "0", xPath]
+    modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+    Exec xcmd To imgData
+
+    aColl = New Collection
+    aColl.Add(modImageSub.GetContentTypeFrom(xPath), "contentType")
+    aColl.Add(Format(Now(), "yyyy-mm-dd"), "creation")
+    aColl.Add(imgData, "data")
+    aColl.Add("", "hash")
+    aColl.Add(File.Name(xPath), "title")
+    zColl.Add(aColl, "valueAttachment")
+
+    $SSFDocuments.Add(zColl)
+  Next
+
+End
+
+Private Function GetUploadClaim() As String
+
+  Dim xstartdate As Date
+  Dim xenddate As Date
+
+  Dim acmd As String
+  Dim xurl As String
+  Dim xcont As String
+  Dim xhead As String
+
+  Dim xVar As Collection
+  Dim xpatout As String
+
+  Dim zColl As Collection
+  Dim aColl As Collection
+  Dim eColl As Collection
+  Dim fColl As Collection
+  Dim pColl As Collection
+  Dim iColl As Collection
+  Dim jColl As Collection
+
+  Dim imgPath As String
+  Dim xdisc As Date
+
+  If $rData.Available Then
+    Select $rData["fldstatus"]
+      Case "Consultation", "Pre Diagnosis", "Post Discharge"
+        xstartdate = modDate.StartSqlDate(modPatient.GetRecordDate($EncID))
+        xenddate = modDate.EndSqlDate(xstartdate)
+      Case "Accident"
+        xstartdate = modDate.StartSqlDate(modPatient.GetRecordDate($EncID))
+        xdisc = modPatient.GetDischargeDate($EncID)
+        If xdisc Then
+          xenddate = modDate.EndSqlDate(xdisc)
+        Else
+          xenddate = modDate.EndSqlDate(Now())
+        Endif
+      Case "Patient Ward", "Post Diagnosis"
+        xstartdate = modDate.StartSqlDate(modPatient.GetRecordDate($EncID))
+        xenddate = modDate.EndSqlDate(modPatient.GetDischargeDate($EncID))
+    End Select
+  Endif
+
+  xVar = New Collection
+  SetAuthentication()
+  xurl = modBasic.$SSFClaimURL
+  xcont = "Content-Type: application/json"
+
+  xVar.Add("Claim", "resourceType")
+  xVar.Add($ClaimCode, "clientClaimId")
+
+  zColl = New Collection
+  zColl.Add("0", "text")
+  xVar.Add(zColl, "type")
+
+  aColl = New Collection
+  aColl.Add(Format(xenddate, "yyyy-mm-dd"), "end")
+  aColl.Add(Format(xstartdate, "yyyy-mm-dd"), "start")
+  xVar.Add(aColl, "billablePeriod")
+
+  xVar.Add(Format(Now(), "yyyy-mm-dd"), "created")
+
+  eColl = New Collection
+  eColl.Add("Practitioner/" & modBasic.$SSFAdminUUID, "reference")
+  xVar.Add(eColl, "enterer")
+
+  fColl = New Collection
+  fColl.Add("Location/" & modBasic.$SSFHospUUID, "reference")
+  xVar.Add(fColl, "facility")
+
+  pColl = New Collection
+  pColl.Add("PractitionerRole/" & modBasic.$SSFPracRole, "reference")
+  xVar.Add(pColl, "provider")
+
+  xVar.Add($SSFExtension, "extension")
+
+  xVar.Add($DiagnoVar, "diagnosis")
+
+  xVar.Add($ItemVar, "item")
+
+  iColl = New Collection
+  iColl.Add($ItemTot, "value")
+  xVar.Add(iColl, "total")
+
+  jColl = New Collection
+  jColl.Add("Patient/" & $PatUUID, "reference")
+  xVar.Add(jColl, "patient")
+
+  xVar.Add($SSFDocuments, "supportingInfo")
+
+  imgPath = Temp() & ".txt"
+  ' modBasic.DebugAPIString("JSON: " & JSON.Encode(xVar))
+  File.Save(imgPath, JSON.Encode(xVar))
+
+  xhead = Space(1)
+  If modBasic.$SSFCACert = "Disable" Then
+    xhead = xhead & "-k" & Space(1)
+  Endif
+  If modBasic.$SSFUserAgent Then
+    xhead = xhead & "-A " & modBasic.$SSFUserAgent & Space(1)
+  Endif
+
+  acmd = "curl" & xhead & "-u " & $xAuthString & " -H " & Quote(xcont) & " -H " & Quote($HeadString) & " -d @" & imgPath & " -X POST " & xurl
+  modBasic.DebugAPIString(Replace("Execute " & acmd, $xAuthString, "****"))
+  Shell acmd To xpatout
+  modBasic.DebugAPIString("Response: " & xpatout)
+
+  Return xpatout
+
+End
+
+'''==================
+Public Function UploadClaim() As String
+
+  Dim xval As String
+
+  If $rData.Available Then
+    If $rData["fldscheme"] = "Accident SSF" Then
+      If $EmployerID Then
+        xval = GetUploadClaim()
+      Else
+        Message.Warning("Employer ID is missing", "OK")
+      Endif
+    Else
+      xval = GetUploadClaim()
+    Endif
+  Endif
+
+  Return xval
+
+End

@@ -1,0 +1,747 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  cmbshift.List = ["Morning", "Day", "Evening", "Night"]
+  dtfromdate.Value = Now()
+  dttodate.Value = Now()
+  rbwaiting.Value = True
+
+  If modBasic.$HandOverLockInvoice = "Disable" Then
+    txttoinv.ReadOnly = False
+    txttorecep.ReadOnly = False
+    btnshow.Visible = True
+  Else If modBasic.$HandOverLockInvoice = "Free" Then
+    Select modHelpVariable.$LogInCategory
+      Case "Account"
+        txtfrominv.ReadOnly = False
+        txtfromrecp.ReadOnly = False
+        txtfromvouch.ReadOnly = False
+        txttoinv.ReadOnly = False
+        txttorecep.ReadOnly = False
+        txttovouch.ReadOnly = False
+      Case Else
+        txttoinv.ReadOnly = False
+        txttorecep.ReadOnly = False
+        txttovouch.ReadOnly = False
+    End Select
+    btnshow.Visible = True
+  Else
+    txttoinv.ReadOnly = True
+    btnshow.Visible = False
+    btnadd.Enabled = True
+  Endif
+
+  If modBasic.$HandOverLockSubmission = "Enable" Then
+    txtreceivamt.ReadOnly = True
+  Else If modBasic.$HandOverLockSubmission = "Free" Then
+    txtreceivamt.ReadOnly = True
+  Else
+    txtreceivamt.ReadOnly = False
+  Endif
+
+  If modBasic.$HandOverOtherCash = "Enable" Then
+    txtfinout.ReadOnly = True
+  Else
+    txtfinout.ReadOnly = False
+  Endif
+
+  Select modHelpVariable.$LogInCategory
+    Case "Cashier", "Dispensar"
+      modAccount.PasInvoiceSetting(cmbfiscal, False)
+      txtuser.Text = modBasic.$lbluser
+      txtuser.ReadOnly = True
+      Panel2.Enabled = False
+      LoadTableNames()
+      btnrefresh_Click()
+    Case Else
+      modAccount.PasInvoiceSetting(cmbfiscal, True)
+      LoadTableNames()
+  End Select
+
+  txtconversion.Value = 1.6
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatbilldetail = "tblpatbilldetail"
+    $tbltempbilldetail = "tbltempbilldetail"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatbilldetail"] Then
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+      If res["fldtempbilldetail"] Then
+        $tbltempbilldetail = res["fldtempbilldetail"]
+      Else
+        $tbltempbilldetail = "tbltempbilldetail"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatbilldetail = "tblpatbilldetail"
+      $tbltempbilldetail = "tbltempbilldetail"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Public Sub btnnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfromdate.Value))
+  If xx Then
+    dtfromdate.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dttodate.Value))
+  If xx Then
+    dttodate.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btndenomin_Click()
+
+  Dim sColl As Variant[]
+
+  sColl = CDenomination(txtconversion.Value)
+  If sColl Then
+    txtreceivamt.Value = sColl[0]
+    btngetval.Tag = sColl[1]
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim resx As Result
+  Dim resx1 As Result
+  Dim resx2 As Result
+  Dim resy As Result
+  Dim resy1 As Result
+  Dim resy2 As Result
+  Dim resz As Result
+  Dim resz1 As Result
+  Dim resz2 As Result
+  Dim rsy As Result
+  Dim rsy1 As Result
+  Dim rsy2 As Result
+  Dim rsw As Result
+  Dim rsw1 As Result
+  Dim rsw2 As Result
+
+  Dim billid As Long
+  Dim recepid As Long
+  Dim vouchid As Long
+
+  btngetval.Tag = ""
+  txtreceivamt.Value = 0
+  txtfinout.Value = 0
+  If txtuser.Text Then
+    txtfrominv.Text = ""
+    txttoinv.Text = ""
+    txtfromrecp.Text = ""
+    txttorecep.Text = ""
+    txtfromvouch.Text = ""
+    txttovouch.Text = ""
+
+    ''last invoice asn receipts
+    res = modDatabase.$myConn.Exec("select fldbillno from " & $tblpatbilldetail & " where fldtime<=&1", modDate.EndSqlDate(dttodate.value))
+    If res.Available Then
+      res.MoveLast
+      txttoinv.Text = res["fldbillno"]
+    Endif
+    res1 = modDatabase.$myConn.Exec("select fldbillno from " & $tbltempbilldetail & " where fldtime<=&1", modDate.EndSqlDate(dttodate.value))
+    If res1.Available Then
+      res1.MoveLast
+      txttorecep.Text = res1["fldbillno"]
+    Endif
+    res2 = modDatabase.$myConn.Exec("select fldreference from tblextrareceipt where fldtime<=&1", modDate.EndSqlDate(dttodate.value))
+    If res2.Available Then
+      res2.MoveLast
+      txttovouch.Text = res2["fldreference"]
+    Endif
+
+    ''first invoice
+    resx = modDatabase.$myConn.Limit(2).Exec("select fldtoinvoice from tblusercollection where fldcashier=&1 and fldtoinvoice IS NOT NULL ORDER BY fldid DESC", Trim(txtuser.Text))
+    If resx.Available Then
+      resx.MoveFirst
+      If resx["fldtoinvoice"] Then
+        billid = modNonMedical.GetBillIDFromBillNo(resx["fldtoinvoice"], $tblpatbilldetail)
+        If billid Then
+          resz = modDatabase.$myConn.Exec("select fldbillno from " & $tblpatbilldetail & " where fldid=&1", billid + 1)
+          If resz.Available And If resz["fldbillno"] Then
+            txtfrominv.Text = resz["fldbillno"]
+          Else  ''for mariadb cluster nodes =2
+            rsy = modDatabase.$myConn.Exec("select fldbillno from " & $tblpatbilldetail & " where fldid=&1", billid + 2)
+            If rsy.Available And If rsy["fldbillno"] Then
+              txtfrominv.Text = rsy["fldbillno"]
+            Else
+              rsw = modDatabase.$myConn.Exec("select fldbillno from " & $tblpatbilldetail & " where fldid=&1", billid + 3)
+              If rsw.Available And If rsw["fldbillno"] Then
+                txtfrominv.Text = rsw["fldbillno"]
+              Endif
+            Endif
+          Endif
+        Endif
+      Endif
+    Else
+      resy = modDatabase.$myConn.Limit(2).Exec("select fldbillno from " & $tblpatbilldetail & " ORDER BY fldtime ASC")
+      If resy.Available Then
+        resy.MoveFirst
+        txtfrominv.Text = resy["fldbillno"]
+      Endif
+    Endif
+
+    ''first receipt
+    resx1 = modDatabase.$myConn.Limit(2).Exec("select fldtoreceipt from tblusercollection where fldcashier=&1 and fldtoreceipt IS NOT NULL ORDER BY fldid DESC", Trim(txtuser.Text))
+    If resx1.Available Then
+      resx1.MoveFirst
+      If resx1["fldtoreceipt"] Then
+        recepid = modNonMedical.GetBillIDFromReceipt(resx1["fldtoreceipt"], $tbltempbilldetail)
+        If recepid Then
+          resz1 = modDatabase.$myConn.Exec("select fldbillno from " & $tbltempbilldetail & " where fldid=&1", recepid + 1)
+          If resz1.Available And If resz1["fldbillno"] Then
+            txtfromrecp.Text = resz1["fldbillno"]
+          Else  ''for mariadb cluster nodes =2
+            rsy1 = modDatabase.$myConn.Exec("select fldbillno from " & $tbltempbilldetail & " where fldid=&1", recepid + 2)
+            If rsy1.Available And If rsy1["fldbillno"] Then
+              txtfromrecp.Text = rsy1["fldbillno"]
+            Else
+              rsw1 = modDatabase.$myConn.Exec("select fldbillno from " & $tbltempbilldetail & " where fldid=&1", recepid + 3)
+              If rsw1.Available And If rsw1["fldbillno"] Then
+                txtfromrecp.Text = rsw1["fldbillno"]
+              Endif
+            Endif
+          Endif
+        Endif
+      Endif
+    Else
+      resy1 = modDatabase.$myConn.Limit(2).Exec("select fldbillno from " & $tbltempbilldetail & " ORDER BY fldtime ASC")
+      If resy1.Available Then
+        resy1.MoveFirst
+        txtfromrecp.Text = resy1["fldbillno"]
+      Endif
+    Endif
+
+    ''first voucher
+    resx2 = modDatabase.$myConn.Limit(2).Exec("select fldtovouch from tblusercollection where fldcashier=&1 and fldtovouch IS NOT NULL ORDER BY fldid DESC", Trim(txtuser.Text))
+    If resx2.Available Then
+      resx2.MoveFirst
+      If resx2["fldtovouch"] Then
+        vouchid = modNonMedical.GetVOucherIDFromBillNo(resx2["fldtovouch"])
+        If vouchid Then
+          resz2 = modDatabase.$myConn.Exec("select fldreference from tblextrareceipt where fldid=&1 and fldreference like &2", vouchid + 1, "%")
+          If resz2.Available And If resz2["fldreference"] Then
+            txtfromvouch.Text = resz2["fldreference"]
+          Else  ''for mariadb cluster nodes =2
+            rsy2 = modDatabase.$myConn.Exec("select fldreference from tblextrareceipt where fldid=&1 and fldreference like &2", vouchid + 2, "%")
+            If rsy2.Available And If rsy2["fldreference"] Then
+              txtfromvouch.Text = rsy2["fldreference"]
+            Else
+              rsw2 = modDatabase.$myConn.Exec("select fldreference from tblextrareceipt where fldid=&1 and fldreference like &2", vouchid + 3, "%")
+              If rsw2.Available And If rsw2["fldreference"] Then
+                txtfromvouch.Text = rsw2["fldreference"]
+              Endif
+            Endif
+          Endif
+        Endif
+      Endif
+    Else
+      resy2 = modDatabase.$myConn.Limit(2).Exec("select fldreference from tblextrareceipt where fldreference like &1 ORDER BY fldtime ASC", "%")
+      If resy2.Available Then
+        resy2.MoveFirst
+        txtfromvouch.Text = resy2["fldreference"]
+      Endif
+    Endif
+
+    SHowTotalMsg(Trim(txtuser.Text))
+    ShowCOllection()
+  Endif
+  txtreceivamt.SetFocus
+
+End
+
+Public Sub btnshow_Click()
+
+  If modBasic.$HandOverLockSubmission = "Free" Then
+    SHowTotalMsg(Trim(txtuser.Text))
+    btnadd.Enabled = True
+  Else
+    If txtcollect.Value Then
+      SHowTotalMsg(Trim(txtuser.Text))
+      btnadd.Enabled = True
+    Endif
+  Endif
+
+End
+
+Private Sub SHowTotalMsg(sUser As String)
+
+  Dim xbillamt As Float
+  Dim xrecvamt As Float
+  Dim vouchamt As Float
+  Dim xqrpay1 As Float
+  Dim xqrpay2 As Float
+
+  xbillamt = 0
+  xrecvamt = 0
+  xqrpay1 = 0
+  xqrpay2 = 0
+  vouchamt = 0
+  If txtuser.Text Then
+    If txtfrominv.Text And If txttoinv.Text Then
+      xbillamt = modNonMedical.GetInvoiceAmountBetweenBills(sUser, txtfrominv.Text, txttoinv.Text, "%", $tblpatbilldetail)
+      xqrpay1 = modNonMedical.GetQRInvoiceAmountBetweenBills(sUser, txtfrominv.Text, txttoinv.Text, "%", $tblpatbilldetail)
+    Endif
+    If txtfromrecp.Text And If txttorecep.Text Then
+      xrecvamt = modNonMedical.GetReceiptAmountBetweenBills(sUser, txtfromrecp.Text, txttorecep.Text, "%", $tbltempbilldetail)
+      xqrpay2 = modNonMedical.GetQRReceiptAmountBetweenBills(sUser, txtfromrecp.Text, txttorecep.Text, "%", $tbltempbilldetail)
+    Endif
+    If txtfromvouch.Text And If txttovouch.Text Then
+      vouchamt = modNonMedical.GetVoucherAmountBetweenBills(sUser, txtfromvouch.Text, txttovouch.Text, "%")
+    Endif
+    txtcollect.Value = xbillamt + xrecvamt + vouchamt
+    txtfinout.Value = xqrpay1 + xqrpay2
+    txtreceivamt.Value = txtcollect.Value - txtfinout.Value
+  Endif
+
+End
+
+Public Sub txtcollect_Change()
+
+  txtreceivamt.Value = txtcollect.Value - txtfinout.Value
+
+End
+
+Public Sub txtfinout_Change()
+
+  txtreceivamt.Value = txtcollect.Value - txtfinout.Value
+
+End
+
+Public Sub btngetval_Click()
+
+  Message.Info(btngetval.Tag)
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim res As Result
+  Dim xtot As Float
+  Dim xbool As Boolean
+
+  If modBasic.$HandOverZeroSubmission = "Enable" Then
+    xbool = True
+  Else
+    If txtreceivamt.Value Then
+      xbool = True
+    Else
+      xbool = False
+    Endif
+  Endif
+
+  If txtuser.Text And If cmbshift.Text Then
+    If txtuser.Text = "%" Then
+    Else
+      If xbool = True Then
+        xtot = txtreceivamt.Value
+        If Message.Question(("Are you sure ?"), ("No"), ("Yes")) = 2 Then
+          res = modDatabase.$myConn.Create("tblusercollection")
+          res["fldcashier"] = Trim(txtuser.Text)
+          res["fldfrominvoice"] = Trim(txtfrominv.Text)
+          res["fldtoinvoice"] = Trim(txttoinv.Text)
+          res["fldfromreceipt"] = Trim(txtfromrecp.Text)
+          res["fldtoreceipt"] = Trim(txttorecep.Text)
+          res["fldfromvouch"] = Trim(txtfromvouch.Text)
+          res["fldtovouch"] = Trim(txttovouch.Text)
+          res["fldbillamt"] = txtconversion.Value
+          res["fldretinvoice"] = txtbankname.Text
+          res["fldretamt"] = txtfinout.Value
+          res["fldrecvamt"] = txtreceivamt.Value
+          If btngetval.Tag Then
+            res["flddenomination"] = btngetval.Tag
+          Endif
+          res["fldshift"] = cmbshift.Text
+          res["flduserid"] = modBasic.$lbluser
+          res["fldtime"] = Now()
+          res["fldcomp"] = modBasic.$compID
+
+          res["flduserid_verify"] = ""
+          res["fldtime_verify"] = ""
+          res["fldcomp_verify"] = ""
+          res["fldstatus"] = "Waiting"
+          res["fldsave"] = False
+          res.Update
+          ShowCOllection()
+          txtreceivamt.Value = 0
+          cmbshift.Text = ""
+          SHowUserError(xtot)
+
+          btngetval.Tag = ""
+          Balloon.Info(("Information saved"), btnadd)
+          Balloon.Delay = modBasic.$BalloonDelay
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Sub SHowUserError(xrecvamt As Float)
+
+  Dim xdeficit As Float
+
+  If txtuser.Text Then
+    xdeficit = txtcollect.Value - (xrecvamt + txtfinout.Value)
+    If xdeficit <> 0 Then
+      Message.Warning("Deficit Amount is : " & xdeficit, "OK")
+    Endif
+  Endif
+
+End
+
+Private Sub ShowCOllection()
+
+  Dim xtot As Float
+
+  If rbwaiting.Value = True Then
+    $rData = modDatabase.$myConn.Exec("select fldid,fldtime,fldcashier,fldrecvamt,fldretamt,fldbillamt,fldshift,fldfrominvoice,fldtoinvoice,fldfromreceipt,fldtoreceipt,fldfromvouch,fldtovouch,fldstatus,flduserid_verify from tblusercollection where fldcashier like &1 and fldtime>=&2 and fldtime<=&3 and fldsave=&4 and fldstatus=&5 ORDER BY fldtime", Trim(txtuser.Text), modDate.StartSqlDate(dtfromdate.value), modDate.EndSqlDate(dttodate.value), False, "Waiting")                                                       ''
+  Else If rbverified.Value = True Then
+    $rData = modDatabase.$myConn.Exec("select fldid,fldtime_verify,fldcashier,fldrecvamt,fldretamt,fldbillamt,fldshift,fldfrominvoice,fldtoinvoice,fldfromreceipt,fldtoreceipt,fldfromvouch,fldtovouch,fldstatus,flduserid_verify from tblusercollection where fldcashier like &1 and fldtime_verify>=&2 and fldtime_verify<=&3 and fldsave=&4 and fldstatus=&5 ORDER BY fldtime_verify", Trim(txtuser.Text), modDate.StartSqlDate(dtfromdate.value), modDate.EndSqlDate(dttodate.value), True, "Verified")
+  Endif
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  xtot = 0
+  If $rData.Count > 0 Then
+    btnadd.Enabled = False
+
+    For Each $rData
+      If $rData["fldrecvamt"] Then
+        xtot = xtot + $rData["fldrecvamt"]
+      Endif
+    Next
+  Endif
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "User"
+    .Columns[3].Text = "Submitted"
+    .Columns[4].Text = "Other Cash"
+    .Columns[6].Text = "Shift"
+    .Columns[7].Text = "Invoice1"
+    .Columns[8].Text = "Invoice2"
+    .Columns[9].Text = "Receipt1"
+    .Columns[10].Text = "Receipt2"
+    .Columns[11].Text = "Voucher1"
+    .Columns[12].Text = "Voucher2"
+    .Columns[13].Text = "Status"
+    .Columns[14].Text = "Verify"
+  End With
+  txttabletot.Value = Round(xtot, -2)
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 3 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else If Column = 4 Then
+    GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub rbwaiting_Click()
+
+  If txtuser.Text Then
+    ShowCOllection()
+  Endif
+
+End
+
+Public Sub rbverified_Click()
+
+  If txtuser.Text Then
+    ShowCOllection()
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select fldcashier,fldfrominvoice,fldtoinvoice,fldfromreceipt,fldtoreceipt,fldfromvouch,fldtovouch,fldrecvamt,fldretamt,fldbillamt,flddenomination,fldretinvoice,fldshift from tblusercollection where fldid=&1", GridView1[GridView1.Row, 0].Text)
+  If res.Available Then
+    txtuser.Text = res["fldcashier"]
+    txtfrominv.Text = res["fldfrominvoice"]
+    txttoinv.Text = res["fldtoinvoice"]
+    txtfromrecp.Text = res["fldfromreceipt"]
+    txttorecep.Text = res["fldtoreceipt"]
+    txtfromvouch.Text = res["fldfromvouch"]
+    txttovouch.Text = res["fldtovouch"]
+
+    txtfinout.Value = res["fldretamt"]
+    txtreceivamt.Value = res["fldrecvamt"]
+    txtconversion.Value = res["fldbillamt"]
+    If res["flddenomination"] Then
+      btngetval.Tag = res["flddenomination"]
+    Endif
+    txtbankname.Text = res["fldretinvoice"]
+    cmbshift.Text = res["fldshift"]
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnudelete_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If rbwaiting.Value = True Then
+      If Message.Question(("Are you sure ?"), ("No"), ("Yes")) = 2 Then
+        modDatabase.$myConn.Delete("tblusercollection", "fldid=&1 and fldsave=&2", GridView1[GridView1.Row, 0].Text, False)
+        ShowCOllection()
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnexpo_Click()
+
+  ' Dim sAmt As String[]
+  '
+  ' sAmt = New String[]
+  ' sAmt.Add("")
+  ' sAmt.Add("")
+  ' sAmt.Add("")
+  ' sAmt.Add("")
+  ' sAmt.Add(modReportVar.GetLocaleNumberFormat(txtpaidtotal.Value, gb.Currency))
+  modCHTMLReport.ExportGridToHTML(GridView1, "User: " & txtuser.Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+Public Sub txtfrominv_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+Public Sub txttoinv_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+Public Sub btnprint_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    xPath = modReportBilling.ShowUserCollection(GridView1[GridView1.Row, 0].Text, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btndeficit_Click()
+
+  Dim xPath As String
+
+  If txtuser.Text Then
+    Inc Application.Busy
+    xPath = modReportBilling.ShowUserDeficitReport(txtuser.Text, dtfromdate.Value, dttodate.Value, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btndeficiactual_Click()
+
+  Dim xPath As String
+
+  If txtuser.Text Then
+    Inc Application.Busy
+    xPath = modReportBilling.ShowUserDeficitActual(txtuser.Text, dtfromdate.Value, dttodate.Value, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnusercollect_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modReportBilling.GetUserCollectionCashCredit(dtfromdate.Value, dttodate.Value, $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail)
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+Public Sub btncolldate_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modReportBilling.GetUserCollectionDateWise(dtfromdate.Value, dttodate.Value, $tblpatbilldetail, $tbltempbilldetail)
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+Public Sub btncomplete_Click()
+
+  Dim xPath As String
+  Dim xState As String
+
+  xState = InputCombo("Select Invoice State", "Collection Report", ["All", "OPD", "IPD"], "All", True)
+  If xState Then
+    Inc Application.Busy
+    If xState = "All" Then
+      If rbwaiting.Value = True Then
+        xPath = modReportBilling.GetGroupWiseHorizontalCollection(dtfromdate.Value, dttodate.Value, "Waiting", $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail)
+      Else If rbverified.Value = True Then
+        xPath = modReportBilling.GetGroupWiseHorizontalCollection(dtfromdate.Value, dttodate.Value, "Verified", $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail)
+      Endif
+    Else
+      If rbwaiting.Value = True Then
+        xPath = modReportBilling.GetGroupWiseHorizontalCollection(dtfromdate.Value, dttodate.Value, "Waiting", $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail, xState)
+      Else If rbverified.Value = True Then
+        xPath = modReportBilling.GetGroupWiseHorizontalCollection(dtfromdate.Value, dttodate.Value, "Verified", $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail, xState)
+      Endif
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btngroupcoll_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count Then
+    Inc Application.Busy
+    xPath = modReportBilling.GetGroupWiseExpectedCollection(GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 7].Text, GridView1[GridView1.Row, 8].Text, GridView1[GridView1.Row, 9].Text, GridView1[GridView1.Row, 10].Text, $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnverify_Click()
+
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If rbwaiting.Value = True Then
+      If Message.Question(("Are you sure ?"), ("No"), ("Yes")) = 2 Then
+        res = modDatabase.$myConn.Edit("tblusercollection", "fldid=&1 and fldsave=&2", GridView1[GridView1.Row, 0].Text, False)
+        res["flduserid_verify"] = modBasic.$lbluser
+        res["fldtime_verify"] = Now()
+        res["fldcomp_verify"] = modBasic.$compID
+        res["fldstatus"] = "Verified"
+        res["fldsave"] = True
+        res.Update
+        Balloon.Info(("Information updated"), btnverify)
+        Balloon.Delay = modBasic.$BalloonDelay
+        ShowCOllection()
+      Endif
+    Endif
+  Endif
+
+End

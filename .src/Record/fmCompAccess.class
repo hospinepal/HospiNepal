@@ -1,0 +1,553 @@
+' Gambas class file
+
+Private $rData As Result
+Private $sType As String
+
+Private hProces As Process
+Private $ImgPath As String
+Private MySock As Socket
+Private hPros As Process
+Private $xDir As String
+Private $sysOn As Boolean
+
+Public Sub _new(sType As String)
+
+  $sType = sType
+
+End
+
+Public Sub Form_Open()
+
+  Dim xList As String[]
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  xList = modGeneral.CompList()
+  cmbcomp.List = xList
+  txtname.List = modGeneral.GetDepartmentAllList("%")
+  txtname.Text = ""
+  cmbselcomp.List = xList
+  cmbselcomp.Add("%")
+  cmbselcomp.Text = "%"
+  txtiptype.List = ["Fixed", "Dynamic"]
+
+  If $sType = "Admin" Then
+    Panel1.Enabled = True
+    MenuButton1.Menu = "mnuhide"
+  Else
+    Panel1.Enabled = False
+    MenuButton1.Menu = "mnumaintain"
+    chkxfor.Enabled = False
+  Endif
+  $sysOn = False
+
+  cmbactive.List = ["Active", "Inactive"]
+  $xDir = modHelpVariable.AppCacheDir &/ "sishremote"
+  ShowGridAccess()
+
+End
+
+Public Sub Form_Close()
+
+  Dim arcmd As String[]
+
+  arcmd = ["fusermount", "-u", $xDir]
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub chkpass_Click()
+
+  If chkpass.Value = True Then
+    txtpass.Password = False
+  Else If chkpass.Value = False Then
+    txtpass.Password = True
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  ShowGridAccess()
+
+End
+
+Private Sub ShowGridAccess()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  sql = "select fldhostmac,fldhostip,fldhostname,fldhostuser,fldcomp,fldcompname,fldaccess,fldiptype,fldhostpass,fldhostmac from tblmacaccess where fldcomp like &1 and lower(fldhostmac) like &2"
+  $rData = modDatabase.$myConn.Exec(sql, cmbselcomp.Text, LCase(txtmacsearch.Text) & "%")
+
+  GridView1.Clear
+  GridView1.Columns.Count = $rData.Fields.Count
+  GridView1.Rows.Count = $rData.Count
+
+  For Each $rData
+    Column = 0
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+      If Column = 9 Then
+        GridView1[$rData.Index, Column].Text = modGeneral.GetVersiononMac($rData[fld.Name])
+      Else
+        GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 110 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 1
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "MAC Address"
+    .Columns[1].Text = "Set IP"
+    .Columns[2].Text = "Host Name"
+    .Columns[3].Text = "Host User"
+    .Columns[4].Text = "CompID"
+    .Columns[5].Text = "Department"
+    .Columns[6].Text = "Access"
+    .Columns[7].Text = "IPType"
+    .Columns[9].Text = "Version"
+  End With
+
+End
+
+Public Sub cmbactive_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbactive)
+  modFillContainer.RestrictComboToContent(cmbactive)
+
+End
+
+Public Sub GridView1_Select()
+
+  GridView1_Click()
+
+End
+
+Public Sub GridView1_Click()
+
+  txtname.Text = ""
+  chkmac.Value = False
+  cmbcomp.Text = GridView1[GridView1.Row, 4].Text
+  txtmac.Text = GridView1[GridView1.Row, 0].Text
+  txtname.Text = GridView1[GridView1.Row, 5].Text
+  cmbactive.Text = GridView1[GridView1.Row, 6].Text
+  txtip.Value = GridView1[GridView1.Row, 1].Text
+  txtiptype.Text = GridView1[GridView1.Row, 7].Text
+  txthost.Text = GridView1[GridView1.Row, 2].Text
+  txtuser.Text = GridView1[GridView1.Row, 3].Text
+  txtpass.Text = UnBase64(GridView1[GridView1.Row, 8].Text)
+
+  lblip.Text = modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)
+  lbluser.Text = modGeneral.GetCurrentUseronMac(GridView1[GridView1.Row, 0].Text)
+
+End
+
+Public Sub btnupdall_Click()
+
+  Dim res As Result
+  Dim Row As Integer
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Row = GridView1.Row
+    If Message.Question("Are you sure ?", ("No"), ("OK")) = 2 Then
+      res = modDatabase.$myConn.Edit("tblmacaccess", "fldhostmac=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldcomp"] = cmbcomp.Text
+      res["fldhostip"] = txtip.Value
+      res["fldiptype"] = txtiptype.Text
+      res["fldcompname"] = Trim(txtname.Text)
+      res["fldaccess"] = cmbactive.Text
+      res["fldhostname"] = Trim(txthost.Text)
+      res["fldhostuser"] = Trim(txtuser.Text)
+      res["fldhostpass"] = Base64(Trim(txtpass.Text))
+      res.Update()
+      Balloon.Info(("Information updated"), btnupdall)
+      Balloon.Delay = modBasic.$BalloonDelay
+      ShowGridAccess()
+    Endif
+    GridView1.Row = Row
+  Endif
+
+End
+
+Public Sub btnadd_Click()
+
+  Dim res As Result
+
+  If Message.Question("Are you sure you want to add this MAC ?", ("No"), ("Yes")) = 2 Then
+    res = modDatabase.$myConn.Create("tblmacaccess")
+    res["fldhostmac"] = Trim(txtmac.Text)
+    res["fldhostuser"] = Trim(txtuser.Text)
+    res["fldhostpass"] = Base64(Trim(txtpass.Text))
+    res["fldhostip"] = txtip.Value
+    res["fldhostname"] = Trim(txthost.Text)
+    res["fldcomp"] = cmbcomp.Text
+    res["fldcompname"] = Trim(txtname.Text)
+    res["fldaccess"] = cmbactive.Text
+    res["fldiptype"] = txtiptype.Text
+    res["fldcode"] = modGeneral.GetMaxMacAddCode()
+    res.Update()
+    Balloon.Info(("Information added"), btnadd)
+    Balloon.Delay = modBasic.$BalloonDelay
+    ShowGridAccess()
+  Endif
+
+End
+
+Public Sub txtiptype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(txtiptype)
+  modFillContainer.RestrictComboToContent(txtiptype)
+
+End
+
+Public Sub cmbcomp_KeyRelease()
+
+  ' modFillContainer.RestrictComboToContent(cmbcomp)
+
+End
+
+Public Sub btnfullrep_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, "COMPUTERS", modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+''------------- webcam streaming ------------------------------------------------------
+'start image server
+Private Sub GetTransferImageServer()
+
+  Dim cmdshel As String
+
+  $ImgPath = Temp("recv") & ".jpeg"
+  If System.Exist("socat") = True Then
+    cmdshel = "socat -u TCP-LISTEN:" & modAppSupport.$ImagePort & ",reuseaddr OPEN:" & $ImgPath & ",creat && cat " & $ImgPath
+    modBasic.DebugString("Execute " & cmdshel)
+    hPros = Shell cmdshel                          ''
+  Else
+    modApplSub.InstallSelectedApplication(["socat"])
+  Endif
+
+End
+
+''send order to catch image
+Public Sub CreateNewSock()
+
+  MySock = New Socket As "MySock"
+  MySock.Host = lblip.Text
+  MySock.Port = modAppSupport.GetTransferPort(lbluser.Text)
+  modBasic.DebugString("Connect to Port " & CStr(MySock.Port) & " on Host " & MySock.Host)
+  MySock.Connect()
+
+End
+
+Private Sub SendMessageFile(strType As String)
+
+  CreateNewSock()
+  While (MySock.Status <> 7) And (MySock.Status > 0)
+    Wait 0.1
+  Wend
+  Write #MySock, strType, Len(strType)
+
+End
+
+Public Sub btnvideo_Click()
+
+  Dim cmdshel As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If lblip.Text Then
+      If lbluser.Text Then
+        $sysOn = True
+        Inc Application.Busy
+        SendMessageFile("Stream/Start")
+        Wait 10
+        If System.Exist("gst-launch-1.0") Then
+          cmdshel = "gst-launch-1.0 udpsrc port=5555 ! 'application/x-rtp, payload=127' ! rtph264depay ! ffdec_h264 ! xvimagesink sync=false"
+        Else
+          cmdshel = "gst-launch udpsrc port=5555 ! 'application/x-rtp, payload=127' ! rtph264depay ! ffdec_h264 ! xvimagesink sync=false"
+        Endif
+        modBasic.DebugString("Execute " & cmdshel)
+        hProces = Shell cmdshel
+        Dec Application.Busy
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub Timer1_Timer()
+
+  If $sysOn = True Then
+    If hProces Then
+      If hProces.State = 0 Then
+        SendMessageFile("Stream/Stop")
+      Endif
+    Endif
+  Endif
+
+End
+
+''------------------------------------- Remote Images -------------------------------------------------------------------
+Public Sub btndesktop_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    GetTransferImageServer()
+    SendMessageFile("Desktop/Image")
+    Wait 5
+    ShowImage()
+    Wait 2
+    hPros.Kill
+    Dec Application.Busy
+  Endif
+
+End
+
+Public Sub mnudesktopssh_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modControl.OpenRemoteScreen(GridView1[GridView1.Row, 3].Text, modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text), UnBase64(GridView1[GridView1.Row, 8].Text))
+  Endif
+
+End
+
+Public Sub btnuser_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If lbluser.Text Then
+      Inc Application.Busy
+      GetTransferImageServer()
+      SendMessageFile("Desktop/User")
+      Wait 5
+      ShowImage()
+      Wait 2
+      hPros.Kill
+      Dec Application.Busy
+    Else
+      modControl.OpenRemoteWebCam(GridView1[GridView1.Row, 3].Text, modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text), UnBase64(GridView1[GridView1.Row, 8].Text))
+    Endif
+  Endif
+
+End
+
+''load transferred images
+Private Sub ShowImage()
+
+  If Exist($ImgPath) Then
+    modDevice.DesktopOpenFile($ImgPath)
+  Endif
+
+End
+
+''--------------------------------------------------------- remote activity-------------------------------------------------
+Private Sub ExecuteSSHCommand(scmd As String, sPass As String)
+
+  Dim sEPass As String
+  Dim xcmd As String
+  Dim sshport As String
+  Dim sshcmd As String
+
+  sshport = modSettings.ShowSettingFromFIle("SSHAuthentication/Port")
+  If System.Exist("ssh") And If System.Exist("sshpass") Then
+    sEPass = "sshpass -p \"" & sPass & "\" "
+    If chkxfor.Value = True Then
+      If sshport Then
+        sshcmd = "ssh -X -t -p " & sshport & Space(1) & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)
+      Else
+        sshcmd = "ssh -X -t " & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)                                                          ''
+      Endif
+    Else
+      If sshport Then
+        sshcmd = "ssh -t -p " & sshport & Space(1) & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)
+      Else
+        sshcmd = "ssh -t " & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)                                                          ''
+      Endif
+    Endif
+    xcmd = modApplSub.GetDeskopTerminal() & " -e \"" & sEPass & sshcmd & Space(1) & scmd & "\""
+    modBasic.DebugString("Execute " & Replace(xcmd, sPass, "***"))
+    Shell xcmd                   ''"
+  Else
+    modApplSub.InstallSelectedApplication(["openssh-client", "sshpass"])
+  Endif
+
+End
+
+Public Sub mnuclose_Click()
+
+  Dim sPass As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    sPass = UnBase64(GridView1[GridView1.Row, 8].Text)
+    ExecuteSSHCommand("poweroff", sPass)
+  Endif
+
+End
+
+Public Sub mnucmd_Click()
+
+  Dim scmd As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    scmd = ""
+    ExecuteSSHCommand(scmd, UnBase64(GridView1[GridView1.Row, 8].Text))
+  Endif
+
+End
+
+Public Sub mnuexecnopass_Click()
+
+  Dim xcmd As String
+  Dim sshport As String
+  Dim sshcmd As String
+
+  sshport = modSettings.ShowSettingFromFIle("SSHAuthentication/Port")
+  If GridView1.Rows.Selection.Count > 0 Then
+    If System.Exist("ssh") = True Then
+      If chkxfor.Value = True Then
+        If sshport Then
+          sshcmd = "ssh -X -t -p " & sshport & Space(1) & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)
+        Else
+          sshcmd = "ssh -X -t " & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)
+        Endif
+      Else
+        If sshport Then
+          sshcmd = "ssh -t -p " & sshport & Space(1) & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)
+        Else
+          sshcmd = "ssh -t " & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text)
+        Endif
+      Endif
+      xcmd = modApplSub.GetDeskopTerminal() & " -e \"" & sshcmd & "\""
+      modBasic.DebugString("Execute " & xcmd)
+      Shell xcmd
+    Else
+      modApplSub.InstallSelectedApplication(["openssh-client"])
+    Endif
+  Endif
+
+End
+
+'''--------------------------- extra ssh functions ----------------------------
+Public Sub mnurestoresetting_Click()
+
+  Dim scmd As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    scmd = Application.Name & " --restore-settings"
+    ExecuteSSHCommand(scmd, UnBase64(GridView1[GridView1.Row, 8].Text))
+  Endif
+
+End
+
+Public Sub mnuprintersetting_Click()
+
+  Dim xcmd As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xcmd = "http://" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text) & ":631"
+    modControlSub.OpenBrowser(xcmd)
+  Endif
+
+End
+
+Public Sub mnumnulocal_Click()
+
+  Dim xpath As String
+  Dim xtem As String
+  Dim xcmd As String
+  Dim arcmd As String[]
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If System.Exist("sshfs") = True Then
+
+      arcmd = ["fusermount", "-u", $xDir]
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+      If Not Exist($xDir) Then
+        Mkdir $xDir
+      Endif
+
+      xtem = Temp()
+      File.Save(xtem, UnBase64(GridView1[GridView1.Row, 8].Text))
+
+      xpath = InputBox("Select Remote Folder to mount", "SSHFS", "/home" &/ GridView1[GridView1.Row, 3].Text &/ ".config/" & modHelpVariable.AppName)
+      If xpath Then
+        xcmd = "sshfs " & GridView1[GridView1.Row, 3].Text & "@" & modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 0].Text) & ":" & xpath & Space(1) & $xDir & " -o password_stdin < " & xtem
+        modBasic.DebugString("Execute " & xcmd)
+        Shell xcmd Wait                                ''''"
+        modDevice.DesktopOpenFile($xDir)
+      Endif
+
+    Else
+      modApplSub.InstallSelectedApplication(["sshfs"])
+    Endif
+  Endif
+
+End
+
+Public Sub mnumount_Click()
+
+  Dim arcmd As String[]
+
+  arcmd = ["fusermount", "-u", $xDir]
+  modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+  Exec arcmd Wait
+  Balloon.Info(("Remote Folder unmounted"), GridView1)
+  Balloon.Delay = modBasic.$BalloonDelay
+
+End
+
+Public Sub mnuprocesses_Click()
+
+  Dim scmd As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    scmd = "top"
+    ExecuteSSHCommand(scmd, UnBase64(GridView1[GridView1.Row, 8].Text))
+  Endif
+
+End
+
+Public Sub mnuupgrade_Click()
+
+  Dim sPath As String
+  Dim scmd As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    sPath = modWeb.GetLatestUpdateFile()
+    scmd = "wget " & sPath & " & sudo gdebi -n " & File.Name(sPath)
+    ExecuteSSHCommand(scmd, UnBase64(GridView1[GridView1.Row, 8].Text))
+  Endif
+
+End
+
+Public Sub chkmac_Click()
+
+  If chkmac.Value = True Then
+    txtmac.ReadOnly = False
+  Else
+    txtmac.ReadOnly = True
+  Endif
+
+End

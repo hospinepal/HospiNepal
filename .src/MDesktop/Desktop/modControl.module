@@ -1,0 +1,243 @@
+' Gambas module file
+
+Private hProc As Process
+Private $ImgPath As String
+
+'NOTE: ---------------------- APP FILE TRANSFER ------------------------------------
+Public Sub ShowTransferFile(RemoteIP As String, sOrder As String)
+
+  Dim hForm As FmAlert
+  Dim sPath As String
+  Dim xx As String
+  Dim adev As String[]
+  Dim xline As String
+
+  sPath = modHelpVariable.AppCacheDir &/ "receive.conf"
+
+  If sOrder = "Stream/Start" Then
+    GetWebCamStream("Start", RemoteIP)
+
+  Else If Left(sOrder, 12) = "Stream/Start" And If Len(sOrder) > 12 Then
+    adev = Split(sOrder, ":")
+    GetWebCamStream("Start", RemoteIP, adev[1])
+
+  Else If sOrder = "Stream/Stop" Then
+    GetWebCamStream("Stop", RemoteIP)
+
+  Else If sOrder = "Desktop/Image" Then
+    GetDesktopImage(RemoteIP)
+
+  Else If sOrder = "Desktop/User" Then
+    GetUserImage(RemoteIP)
+
+  Else If Left(sOrder, 9) = "TestAlert" Then
+    If modBasic.$AlertTestList Then
+      xline = "[" & modReportVar.GetDateTimeReport(Now(), gb.GeneralDate) & "] " & sOrder
+      File.Save(modBasic.$AlertTestList, File.Load(modBasic.$AlertTestList) & gb.NewLine & xline)
+    Endif
+    fmSampling.MessageView1.Open(sOrder, Picture["icon:/small/warning"])
+
+  Else If Left(sOrder, 10) = "RadioAlert" Then
+    If modBasic.$AlertRadioList Then
+      xline = "[" & modReportVar.GetDateTimeReport(Now(), gb.GeneralDate) & "] " & sOrder
+      File.Save(modBasic.$AlertRadioList, File.Load(modBasic.$AlertRadioList) & gb.NewLine & xline)
+    Endif
+    fmRadioReporting.MessageView1.Open(sOrder, Picture["icon:/small/warning"])
+
+  Else If Left(sOrder, 10) = "UserNotice" Then
+    modDevice.DesktopNotification(sOrder)
+
+  Else
+    File.Save(sPath, sOrder)
+    xx = modGeneral.GetCurrentUserFromIP(RemoteIP)
+    If xx = "" Then
+      xx = RemoteIP
+    Endif
+    hForm = New FmAlert("Message", "Received Message From " & RemoteIP, RemoteIP)
+    hForm.Show
+  Endif
+
+End
+
+Public Sub GetWebCamStream(sOrder As String, newIP As String, Optional sDevice As String)
+
+  Dim cmdshel As String
+  Dim xx As String
+
+  If sDevice Then
+    xx = sDevice
+  Else
+    xx = modDevice.WebCamDevice()
+  Endif
+
+  If sOrder = "Start" Then
+    If xx Then
+      If System.Exist("gst-launch-1.0") Then
+        cmdshel = "gst-launch-1.0 v4l2src device=" & xx & " ! 'video/x-raw-yuv,width=640,height=480' !  x264enc pass=qual quantizer=20 tune=zerolatency ! rtph264pay ! udpsink host=" & newIP & " port=5555"
+      Else
+        cmdshel = "gst-launch v4l2src device=" & xx & " ! 'video/x-raw-yuv,width=640,height=480' !  x264enc pass=qual quantizer=20 tune=zerolatency ! rtph264pay ! udpsink host=" & newIP & " port=5555"
+      Endif
+      modBasic.DebugString("Execute " & cmdshel)
+      hProc = Shell cmdshel
+    Endif
+  Else If sOrder = "Stop" Then
+    hProc.Kill
+  Endif
+
+Catch
+  modBasic.DebugString(Error.Text)
+
+End
+
+Public Sub OpenRemoteScreen(sUser As String, sIP As String, sPass As String)
+
+  Dim temFile As String
+  Dim scmd As String
+  Dim sFile As String
+  Dim sTar As String
+  Dim xcmd As String
+  Dim ycmd As String
+  Dim arcmd As String[]
+  Dim sshport As String
+  Dim sshcmd As String
+
+  sshport = modSettings.ShowSettingFromFIle("SSHAuthentication/Port")
+  If System.Exist("xwd") = True Then
+    If System.Exist("convert") = True Then
+      sFile = modString.GetNowString()
+      temFile = "/tmp" &/ sFile & ".xwd"
+      scmd = "xwd -out " & temFile & " -root -display :0.0"
+
+      Inc Application.Busy
+      If System.Exist("ssh") And If System.Exist("sshpass") Then
+        If sshport Then
+          sshcmd = "ssh -f -t -t -t -p " & sshport & Space(1) & sUser & "@" & sIP
+        Else
+          sshcmd = "ssh -f -t -t -t " & sUser & "@" & sIP
+        Endif
+        xcmd = "sshpass -p" & sPass & Space(1) & sshcmd & Space(1) & "\"" & scmd & "\""
+        modBasic.DebugString("Execute " & Replace(xcmd, sPass, "***"))
+        Shell xcmd Wait
+        Wait 5
+
+        ycmd = "sshpass -p" & sPass & " scp " & sUser & "@" & sIP & ":" & temFile & Space(1) & temFile
+        modBasic.DebugString("Execute " & Replace(ycmd, sPass, "***"))
+        Shell ycmd Wait
+      Else
+        modApplSub.InstallSelectedApplication(["openssh-client", "sshpass"])
+      Endif
+
+      sTar = "/tmp" &/ sFile & ".png"
+      arcmd = ["convert", temFile, sTar]
+      modBasic.DebugString("Execute " & arcmd.Join(Space(1)))
+      Exec arcmd Wait
+
+      Dec Application.Busy
+      modDevice.DesktopOpenFile(sTar)
+
+    Else
+      modApplSub.InstallSelectedApplication(["imagemagick"])
+    Endif
+  Endif
+
+End
+
+Public Sub OpenRemoteWebCam(sUser As String, sIP As String, sPass As String)
+
+  Dim temFile As String
+  Dim scmd As String
+  Dim xcmd As String
+  Dim ycmd As String
+  Dim sshport As String
+  Dim sshcmd As String
+
+  sshport = modSettings.ShowSettingFromFIle("SSHAuthentication/Port")
+  If System.Exist("streamer") = True Then
+    temFile = "/tmp" &/ modString.GetNowString() & ".jpeg"
+    scmd = "streamer -o " & temFile
+
+    Inc Application.Busy
+    If System.Exist("ssh") And If System.Exist("sshpass") Then
+      If sshport Then
+        sshcmd = "ssh -f -t -t -t -p " & sshport & Space(1) & sUser & "@" & sIP
+      Else
+        sshcmd = "ssh -f -t -t -t " & sUser & "@" & sIP
+      Endif
+      xcmd = "sshpass -p" & sPass & Space(1) & sshcmd & Space(1) & "\"" & scmd & "\""
+      modBasic.DebugString("Execute " & Replace(xcmd, sPass, "***"))
+      Shell xcmd Wait
+      Wait 10
+
+      ycmd = "sshpass -p" & sPass & " scp " & sUser & "@" & sIP & ":" & temFile & Space(1) & temFile
+      modBasic.DebugString("Execute " & Replace(ycmd, sPass, "***"))
+      Shell ycmd Wait
+    Else
+      modApplSub.InstallSelectedApplication(["openssh-client", "sshpass"])
+    Endif
+
+    Dec Application.Busy
+    modDevice.DesktopOpenFile(temFile)
+  Else
+    modApplSub.InstallSelectedApplication(["streamer"])
+  Endif
+
+End
+
+Public Sub GetDesktopImage(RemoteIP As String)
+
+  Dim scmd As String
+
+  $ImgPath = Temp("send") & ".jpeg"
+  Desktop.Screenshot().Save($ImgPath)
+  If System.Exist("socat") Then
+    scmd = "socat -u FILE:" & $ImgPath & " TCP:" & RemoteIP & ":" & modAppSupport.$ImagePort
+    modBasic.DebugString("Execute " & scmd)
+    hProc = Shell scmd
+  Else
+    modApplSub.InstallSelectedApplication(["socat"])
+  Endif
+
+Catch
+  modBasic.DebugString(Error.Text)
+
+End
+
+Public Sub GetUserImage(RemoteIP As String)
+
+  Dim scmd As String
+
+  $ImgPath = Temp("send") & ".jpeg"
+  modDevAll.GetWebCamSnapShot($ImgPath, modDevice.WebCamDevice())
+  If System.Exist("socat") Then
+    scmd = "socat -u FILE:" & $ImgPath & " TCP:" & RemoteIP & ":" & modAppSupport.$ImagePort
+    modBasic.DebugString("Execute " & scmd)
+    hProc = Shell scmd
+  Else
+    modApplSub.InstallSelectedApplication(["socat"])
+  Endif
+
+Catch
+  modBasic.DebugString(Error.Text)
+
+End
+
+''---------------------- Send notice from clinic to Lab/Radio -----------------------
+Public Sub SendLabAlert(xuserList As String[], sType As String, sText As String)
+
+  Dim xline As String
+  Dim xuser As String
+
+  If xuserList Then
+    xline = sType & " : " & sText
+    Inc Application.Busy
+    For Each xuser In xuserList
+      modDevice.TransferTextSocket(modGeneral.GetCurrentIPFromUser(xuser), modAppSupport.GetTransferPort(xuser), xline)
+    Next
+    Dec Application.Busy
+  Endif
+
+Catch
+  Dec Application.Busy
+  Message.Warning(Error.Text, ("OK"))
+
+End

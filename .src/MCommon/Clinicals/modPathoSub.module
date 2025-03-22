@@ -1,0 +1,341 @@
+' Gambas module file
+
+Public $ObstetricParam As String[] = ["Gravida", "Parity", "Abortion", "Living", "LMP", "EDD", "Gestation", "Presentation", "Status"]
+
+Public Function GetObstetricField(xType As String) As String
+
+  Dim xField As String
+
+  If xType = "Gravida" Then
+    xField = "fldgravida"
+  Else If xType = "Parity" Then
+    xField = "fldparity"
+  Else If xType = "Abortion" Then
+    xField = "fldbortion"
+  Else If xType = "Living" Then
+    xField = "fldlive"
+  Else If xType = "LMP" Then
+    xField = "fldlast"
+  Else If xType = "EDD" Then
+    xField = "fldexpect"
+  Else If xType = "Gestation" Then
+    xField = "fldgestation"
+  Else If xType = "Presentation" Then
+    xField = "fldpresent"
+  Else If xType = "Status" Then
+    xField = "fldstatus"
+  Endif
+
+  Return xField
+
+End
+
+Public Function GetEwarsGroup(xCodeNew As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select fldgroup from tblsurveillance where fldcodenew=&1", xCodeNew)
+  If res.Available Then
+    res.MoveFirst
+    If res["fldgroup"] Then
+      xx = res["fldgroup"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+
+  Return xx
+
+End
+
+Public Function GetDiagnosisCodePatient(encid As String, sDiagnosis As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select distinct(fldcodeid) as col from tblpatfindings where (fldtype=&1 or fldtype=&2) and fldencounterval=&3 and fldcode=&4", "Final Diagnosis", "Provisional Diagnosis", encid, sDiagnosis)                                                  ''
+  If res.Available Then
+    res.MoveLast
+    If res["col"] Then
+      xx = res["col"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+  Return xx
+
+End
+
+Public Function GetProvisionalDiagnosisList(encid As String) As String[]
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String[]
+
+  sql = "select fldcode as col from tblpatfindings where fldencounterval=&1 and fldtype=&2 and fldsave=&3"
+  res = modDatabase.$myConn.Exec(sql, encid, "Provisional Diagnosis", True)
+  xx = modControlSub.GetDirectFillresult(res)
+  Return xx
+
+End
+
+Public Function GetFinalDiagnosisList(encid As String) As String[]
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String[]
+
+  sql = "select fldcode as col from tblpatfindings where fldencounterval=&1 and fldtype=&2 and fldsave=&3"
+  res = modDatabase.$myConn.Exec(sql, encid, "Final Diagnosis", True)
+  xx = modControlSub.GetDirectFillresult(res)
+  Return xx
+
+End
+
+Public Function GetAllergyMedicineList(encid As String, selAllEnc As Boolean) As String[]
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String[]
+
+  If selAllEnc = False Then
+    sql = "select fldcode as col from tblpatfindings where fldencounterval=&1 and fldtype=&2 and fldsave=&3"
+    res = modDatabase.$myConn.Exec(sql, encid, "Allergic Drugs", True)
+  Else If selAllEnc = True Then
+    sql = "select fldcode as col from tblpatfindings where fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&1) and fldtype=&2 and fldsave=&3"
+    res = modDatabase.$myConn.Exec(sql, modPatient.GetPatientNoByEnc(encid), "Allergic Drugs", True)
+  Endif
+  xx = modControlSub.GetDirectFillresult(res)
+  Return xx
+
+End
+
+''=========================Triage ==========================
+Private Function GetTriageColorArray(xfinal As String[]) As Integer
+
+  Dim xcolor As Integer
+
+  If xfinal.Count Then
+    If xfinal.Exist("Red") = True Then
+      xcolor = Color.Red
+    Else If xfinal.Exist("Yellow") = True Then
+      xcolor = Color.Yellow
+    Else If xfinal.Exist("Green") = True Then
+      xcolor = Color.Green
+    Else If xfinal.Exist("Blue") = True Then
+      xcolor = Color.Blue
+    Else If xfinal.Exist("Black") = True Then
+      xcolor = Color.Black
+    Else
+      xcolor = Color.Transparent
+    Endif
+  Else
+    xcolor = Color.Transparent
+  Endif
+  Return xcolor
+
+End
+
+Public Function GetPatientColorDynamic(encid As String) As Integer
+
+  Dim xexam As String
+  Dim exmlst As String[]
+  Dim resexam As Result
+
+  Dim xtest As String
+  Dim tstlst As String[]
+  Dim restest As Result
+
+  Dim xsymp As String
+  Dim symplst As String[]
+  Dim ressymp As Result
+
+  Dim xfinal As String[]
+  Dim xcolor As Integer
+  Dim xvarval As String
+  Dim asx As String[]
+  Dim xType As String
+
+  xfinal = New String[]
+  For Each xexam In modFixPatho.$TriageExamCol
+    exmlst = Split(xexam, "@")
+    resexam = modDatabase.$myConn.Limit(2).Exec("select fldrepquali,fldrepquanti from tblpatientexam where fldencounterval=&1 and fldsave=&2 and fldhead=&3 ORDER BY fldid DESC", encid, True, exmlst[1])
+    If resexam.Available Then
+
+      resexam.MoveFirst
+      xType = modAllExam.GetVariableOptionType("Exam", exmlst[1])
+      If xType = "Clinical Scale" Then
+        If modString.GetStringComaprison(CStr(resexam["fldrepquanti"]), exmlst[2], exmlst[3]) = True Then
+          xfinal.Add(exmlst[0])
+        Endif
+      Else
+        If modString.GetStringComaprison(resexam["fldrepquali"], exmlst[2], exmlst[3]) = True Then
+          xfinal.Add(exmlst[0])
+        Endif
+      Endif
+
+    Endif
+  Next
+
+  For Each xtest In modFixPatho.$TriageTestCol
+    tstlst = Split(xtest, "@")
+    restest = modDatabase.$myConn.Limit(2).Exec("select fldid,fldtestid,fldreportquali,fldreportquanti,fldtest_type,fldtestunit,fldmethod from tblpatlabtest where fldencounterval=&1 and fldtestid=&2 and (fldstatus=&3 or fldstatus=&4) ORDER BY fldid DESC", encid, tstlst[1], "Reported", "Verified")
+    If restest.Available Then
+
+      restest.MoveFirst
+      If restest["fldtest_type"] = "Quantitative" Then
+        If modString.GetStringComaprison(CStr(modLabTest.GetLabQuantiValueAll(encid, restest["fldtestid"], restest["fldreportquanti"], restest["fldtestunit"], restest["fldmethod"], tstlst[4])), tstlst[2], tstlst[3]) = True Then
+          xfinal.Add(tstlst[0])
+        Endif
+      Else
+        xType = modAllExam.GetVariableOptionType("Test", restest["fldtestid"])
+        If xType = "Clinical Scale" Then
+          If modString.GetStringComaprison(CStr(restest["fldreportquanti"]), tstlst[2], tstlst[3]) = True Then
+            xfinal.Add(tstlst[0])
+          Endif
+        Else
+          If modString.GetStringComaprison(restest["fldreportquali"], tstlst[2], tstlst[3]) = True Then
+            xfinal.Add(tstlst[0])
+          Endif
+        Endif
+      Endif
+
+    Endif
+  Next
+
+  For Each xsymp In modFixPatho.$TriageSympCol
+    symplst = Split(xsymp, "@")
+    ressymp = modDatabase.$myConn.Limit(2).Exec("select fldreportquanti,fldreportquali from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldsave=&3 and flditem=&4 ORDER BY fldid DESC", encid, "Presenting Symptoms", True, symplst[1])
+    If ressymp.Available Then
+
+      ressymp.MoveFirst
+      If symplst[2] = "RANGE" Then
+        asx = Split(symplst[3], ":")
+        xvarval = asx[0] & ":" & asx[1]
+      Else
+        xvarval = symplst[3]
+      Endif
+      If modString.GetStringComaprison(CStr(ressymp["fldreportquanti"]), symplst[2], xvarval) = True Then
+        xfinal.Add(symplst[0])
+      Endif
+
+    Endif
+  Next
+
+  xcolor = GetTriageColorArray(xfinal)
+
+  Return xcolor
+
+End
+
+Public Function GetPatientColorByTriage(sid As Long) As Integer
+
+  Dim res As Result
+  Dim xexam As String
+  Dim exmlst As String[]
+
+  Dim xcolor As Integer
+  Dim xval As String[]
+  Dim xType As String
+
+  xval = New String[]
+  If modFixPatho.$TriageExamCol Then
+    res = modDatabase.$myConn.Exec("select fldhead,fldrepquali,fldrepquanti from tblpatientexam where fldid=&1", sid)
+    If res.Available Then
+      xType = modAllExam.GetVariableOptionType("Exam", res["fldhead"])
+      For Each xexam In modFixPatho.$TriageExamCol
+        exmlst = Split(xexam, "@")
+        If exmlst[1] = res["fldhead"] Then
+
+          If xType = "Clinical Scale" Then
+            If modString.GetStringComaprison(CStr(res["fldrepquanti"]), exmlst[2], exmlst[3]) = True Then
+              xval.Add(exmlst[0])
+              Break
+            Endif
+          Else
+            If modString.GetStringComaprison(res["fldrepquali"], exmlst[2], exmlst[3]) = True Then
+              xval.Add(exmlst[0])
+              Break
+            Endif
+          Endif
+
+        Endif
+      Next
+    Endif
+  Endif
+  xcolor = GetTriageColorArray(xval)
+
+  Return xcolor
+
+End
+
+Public Function AllowDischargeDiagno(encid As String) As Boolean
+
+  Dim xx As Boolean
+  Dim xList As String[]
+
+  If modBasic.$FixDiagnosisDischarge = "Yes" Then
+    xList = modPatient.PatientDiagnoCurrentList(encid)
+    If xList And If xList.Count Then
+      xx = True
+    Else
+      xx = False
+    Endif
+  Else
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+Public Function AllowOPOutcomeDiagno(encid As String) As Boolean
+
+  Dim xx As Boolean
+  Dim xList As String[]
+
+  If modBasic.$FixDiagnosisOPOutcome Then
+    If modBasic.$FixDiagnosisOPOutcome = "Provisional" Then
+      xList = modPatient.PatientFindingList(encid, "Provisional Diagnosis")
+    Else If modBasic.$FixDiagnosisOPOutcome = "Final" Then
+      xList = modPatient.PatientFindingList(encid, "Final Diagnosis")
+    Endif
+    If xList And If xList.Count Then
+      xx = True
+    Else
+      xx = False
+    Endif
+  Else
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+''------------------ Service ---------------------
+Public Function GetDiagnoGroupForService(sBed As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = modDatabase.$myConn.Exec("select flddiagnosis from tblipdservice where flditem in(select fldservice from tbldepartmentbed where fldbed=&1) and flddiagnosis IS NOT NULL", sBed)
+  If res.Available Then
+    res.MoveFirst
+    If res["flddiagnosis"] Then
+      xx = res["flddiagnosis"]
+    Else
+      xx = ""
+    Endif
+  Else
+    xx = ""
+  Endif
+
+  Return xx
+
+End

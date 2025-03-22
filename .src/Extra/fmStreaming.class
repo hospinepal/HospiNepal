@@ -1,0 +1,290 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Private hProces As Process
+Private MySock As Socket
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  ShowDepartment()
+  rbuser.Value = True
+  rbconuser.Value = True
+
+End
+
+''-------------------------------------- Streaming ------------------------------------------------------
+Private Sub FillCurUser()
+
+  Dim sql As String
+
+  If rbpatient.Value = True Then
+    sql = "select fldencounterval,fldencounterval,flddevicepath,fldhostmac,fldhostname,fldhostuser,fldhostmac,fldcomp,fldid from tblpatdevice where flddevicetype=&1 and fldencounterval in(select fldencounterval from tblencounter where fldadmission=&2)"                               ''
+    $rData = modDatabase.$syConn.Exec(sql, "Webcam", "Admitted")
+  Else If rbuser.Value = True Then
+    sql = "select flduser,flduser,flddevicepath,fldhostmac,fldhostname,fldhostuser,fldhostmac,fldcomp,fldindex from tblsystemlog"
+    $rData = modDatabase.$syConn.Exec(sql)
+  Endif
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 180 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 1
+    .Columns[7].Width = 1
+    .Columns[8].Width = 1
+
+    .Columns[0].Text = "Target"
+    .Columns[1].Text = "Name"
+    .Columns[2].Text = "DevicePath"
+    .Columns[3].Text = "CompIP"
+    .Columns[4].Text = "CompName"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    If rbpatient.Value = True Then
+      GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]])
+    Else If rbuser.Value = True Then
+      GridView1.Data.Text = modGeneral.GetUserFullName($rData[$aMyFields[Column]])
+    Endif
+  Else If Column = 3 Then
+    GridView1.Data.Text = modGeneral.GetCurrentIPonMac($rData[$aMyFields[Column]])
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+''-------------------------------- webcam streaming ----------------------------------------------------------------
+''send order to catch image
+Public Sub CreateNewSock()
+
+  MySock = New Socket As "MySock"
+  MySock.Host = modGeneral.GetCurrentIPonMac(GridView1[GridView1.Row, 6].Text)
+  MySock.Port = modAppSupport.GetTransferPort(modGeneral.GetCurrentUseronMac(GridView1[GridView1.Row, 6].Text))
+  modBasic.DebugString("Connect to Port " & CStr(MySock.Port) & " on Host " & MySock.Host)
+  MySock.Connect()
+
+End
+
+Private Sub SendMessageFile(strType As String)
+
+  CreateNewSock()
+  While (MySock.Status <> 7) And (MySock.Status > 0)
+    Wait 0.1
+  Wend
+  Write #MySock, strType, Len(strType)
+
+End
+
+Public Sub mnustream_Click()
+
+  Dim cmdshel As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    SendMessageFile("Stream/Start:" & GridView1[GridView1.Row, 2].Text)
+    Wait 10
+    If System.Exist("gst-launch-1.0") Then
+      cmdshel = "gst-launch-1.0 udpsrc port=5555 ! 'application/x-rtp, payload=127' ! rtph264depay ! ffdec_h264 ! xvimagesink sync=false"
+    Else
+      cmdshel = "gst-launch udpsrc port=5555 ! 'application/x-rtp, payload=127' ! rtph264depay ! ffdec_h264 ! xvimagesink sync=false"
+    Endif
+    hProces = Shell cmdshel
+    Dec Application.Busy
+  Endif
+
+Catch
+  SendMessageFile("Stream/Stop")
+  modBasic.DebugString(Error.Text)
+
+End
+
+Public Sub Timer1_Timer()
+
+  If hProces.State = 0 Then
+    SendMessageFile("Stream/Stop")
+  Endif
+
+Catch
+  modBasic.DebugString(Error.Text)
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modDatabase.$myConn.Delete("tblpatdevice", "fldid=&1", GridView1[GridView1.Row, 8].Text)
+    FillCurUser()
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  FillCurUser()
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, "REMOTE ACCESS", modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+''------------------------------------------ Contact -------------------------------------------------------------------
+Private Sub FillContactInfo()
+
+  Dim sql As String
+
+  If rbconpatient.Value = True Then
+    sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval from tblencounter where fldadmission=&1"                               ''
+    $rData1 = modDatabase.$syConn.Exec(sql, "Admitted")
+  Else If rbconuser.Value = True Then
+    sql = "select fldptcode,CONCAT(fldptnamefir,' ',fldptnamelast),CONCAT(fldptaddvill,' ', fldptadddist),fldptcontact,fldemail from tblstafflist"
+    $rData1 = modDatabase.$syConn.Exec(sql)
+  Endif
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData1, $aMyFields1)
+  With GridView2
+    .Columns[0].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 160 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 120 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "ID"
+    .Columns[1].Text = "Name"
+    .Columns[2].Text = "Address"
+    .Columns[3].Text = "Contact"
+    .Columns[4].Text = "E-Mail"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If rbconpatient.Value = True Then
+    If Column = 1 Then
+      GridView2.Data.Text = modPatient.GetPatientNameByEnc($rData1[$aMyFields1[Column]])
+    Else If Column = 2 Then
+      GridView2.Data.Text = modPatient.GetPatientAddressByEnc($rData1[$aMyFields1[Column]])
+    Else If Column = 3 Then
+      GridView2.Data.Text = modPatient.GetPatientContactByEnc($rData1[$aMyFields1[Column]])
+    Else If Column = 4
+      GridView2.Data.Text = modPatient.GetPatientEmail($rData1[$aMyFields1[Column]])
+    Else
+      GridView2.Data.Text = $rData1[$aMyFields1[Column]]
+    Endif
+  Else If rbconuser.Value = True Then
+    GridView2.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+
+End
+
+Public Sub btnconrefresh_Click()
+
+  FillContactInfo()
+
+End
+
+Public Sub btnconexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView2, "CONTACT INFO", modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+Public Sub GridView2_Menu()
+
+  mnuconhide.Popup
+
+End
+
+Public Sub mnusms_Click()
+
+  Dim sText As String
+  Dim sphno As String
+
+  If GridView2.Rows.Selection.Count > 0 Then
+    sText = GetTextArea("SMS Text")
+    If sText Then
+      sphno = GridView2[GridView2.Row, 3].Text
+      If sphno Then
+        If modBasic.$SMSQueDisable = "No" Then
+          modAppSupport.SaveSMSEntry(sphno, sText, "Waiting", "")
+        Else
+          modAppSupport.SendSMSSingle(sphno, sText)
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub mnuemail_Click()
+
+  Dim hForm As FmRemoteMail
+  Dim xmail As String[]
+
+  If GridView2.Rows.Selection.Count > 0 Then
+    If Desktop.NetworkAvailable = True Then
+      xmail = New String[]
+      xmail.Add(GridView2[GridView2.Row, 4].Text)
+      hForm = New FmRemoteMail(xmail, "", "", "")
+      hForm.ShowModal
+    Endif
+  Endif
+
+End
+
+''---------------------------------------------- Department -----------------------------------
+Private Sub ShowDepartment()
+
+  $rData2 = modDatabase.$syConn.Exec("select fldhostmac,fldhostname,fldcomp,fldcompname from tblmacaccess ORDER BY fldcomp ASC")
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView3, $rData2, $aMyFields2)
+  With GridView3
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "MACAddress"
+    .Columns[1].Text = "HostName"
+    .Columns[2].Text = "CompID"
+    .Columns[3].Text = "Department"
+  End With
+
+End
+
+Public Sub GridView3_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView3, Row)
+  GridView3.Data.Text = $rData2[$aMyFields2[Column]]
+
+End

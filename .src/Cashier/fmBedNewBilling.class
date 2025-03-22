@@ -1,0 +1,485 @@
+' Gambas class file
+
+Private $encid As String
+Private $bedNo As String
+Private $BillMode As String
+Private $sPackage As String
+Private $sLedger As String
+Private $sBillType As String
+
+Private $discDate As Date
+Private $admitDate As Date
+Private $LstDate As Date
+Private $rData As Result
+
+Public Sub _new(encid As String, sBedNo As String, sBillMode As String, sPackage As String, sLedger As String, sBillType As String)
+
+  $encid = encid
+  $bedNo = sBedNo
+  $BillMode = sBillMode
+  $sPackage = sPackage
+  $sLedger = sLedger
+  $sBillType = sBillType
+
+End
+
+Public Sub Form_Open()
+
+  cmbward.List = modBasic.$IPDDepartmentsAll
+  $discDate = modPatient.GetDischargeDate($encid)
+  $admitDate = modPatient.GetAdmissionDate($encid)
+  cmbward.Text = modGeneral.GetDepartmentNameFromBed($bedNo)
+  cmbbed.Text = $bedNo
+  $LstDate = GetLastUseDate()
+  ShowNewValue()
+  ShowTimingGrid()
+  btnsave.Enabled = CheckBillEntry()
+
+End
+
+Private Function GetBedDiffValue(dtfir As Date, dtlast As Date) As Integer
+
+  Dim xdiff As Integer
+
+  xdiff = DateDiff(modDate.EndSqlDate(dtfir), dtlast, gb.Day) + 1
+
+  Return xdiff
+
+End
+
+Private Function GetLastUseDate() As Date
+
+  Dim xdod As Date
+
+  xdod = $discDate
+  If Not xdod Then
+    xdod = Now()
+  Endif
+
+  Return xdod
+
+End
+
+Private Sub CheckLastDateTime()
+
+  If Date(dttodate.Value) > Date($LstDate) Then
+    Message.Warning("Incorrect Date", ("OK"))
+    dttodate.Value = $LstDate
+  Else If Date(dttodate.Value) < Date(dtfrom.Value) Then
+    Message.Warning("Incorrect Date", ("OK"))
+    dttodate.Value = dtfrom.Value
+  Endif
+
+  If dttodate.Value And If dtfrom.Value Then
+    txtdays.Value = GetBedDiffValue(dtfrom.Value, dttodate.Value)
+    txttodatebs.Text = modDate.ConvertToLocaldate(dttodate.Value)
+  Endif
+
+End
+
+Public Sub dttodate_Click()
+
+  CheckLastDateTime()
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dttodate.Value))
+  If xx Then
+    dttodate.Value = modDate.ConvertToEnglishdate(xx)
+    txttodatebs.Text = xx
+    CheckLastDateTime()
+  Endif
+
+End
+
+Public Sub cmbward_Click()
+
+  If cmbward.Text Then
+    cmbbed.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldbed as col from tbldepartmentbed where flddept=&1 and (fldstatus IS NULL or fldstatus=&2)", cmbward.Text, "Active"))
+    cmbitem.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldbedcharge) as col from tbldepartbedcharge where flddept=&1 and fldbillingmode=&2 and flddisctype=&3", cmbward.Text, $BillMode, $sPackage))
+  Endif
+
+End
+
+Private Sub ShowNewValue()
+
+  cmbitem.Clear()
+  cmbitem.Text = ""
+  dtfrom.Value = GetFirstDateTime()
+  txtfrombs.Text = modDate.ConvertToLocaldate(dtfrom.Value)
+  dttodate.Value = $discDate
+  txttodatebs.Text = modDate.ConvertToLocaldate(dttodate.Value)
+  If cmbward.Text Then
+    cmbitem.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldbedcharge) as col from tbldepartbedcharge where flddept=&1 and fldbillingmode=&2", cmbward.Text, $BillMode))
+  Endif
+  If dttodate.Value And If dtfrom.Value Then
+    txtdays.Value = GetBedDiffValue(dtfrom.Value, dttodate.Value)
+  Endif
+
+End
+
+Private Function GetFirstDateTime() As Date
+
+  Dim res As Result
+  Dim xdate As Date
+
+  res = modDatabase.$myConn.Exec("select fldid,flditem,fldsecondtime from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldfirstreport=&4 and (fldsave=&5 or fldsave IS NULL)", $encid, "General Services", True, "Bed", False)                                                                   ''
+  If res.Available Then
+    res.MoveLast
+    xdate = res["fldsecondtime"]
+  Else
+    xdate = $admitDate
+  Endif
+  Return xdate
+
+End
+
+Private Function GetLastRecordDate() As Date
+
+  Dim res As Result
+  Dim xdate As Date
+
+  res = modDatabase.$myConn.Exec("select fldsecondtime from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldfirstreport=&4 and fldsave=&5 ORDER BY fldsecondtime ASC", $encid, "General Services", True, "Bed", True)
+  If res.Available Then
+    res.MoveFirst
+    xdate = res["fldsecondtime"]
+  Else
+    xdate = modPatient.GetAdmissionDate($encid)
+  Endif
+  Return xdate
+
+End
+
+Public Sub cmbitem_Click()
+
+  Dim xrate As Float
+
+  If cmbitem.Text Then
+    xrate = modNonMedical.GetCashBillItemCost(cmbitem.Text, "General Services")
+    txttotamt.Value = Round(xrate * txtdays.Value, -2)
+  Endif
+
+End
+
+Private Sub ShowTimingGrid()
+
+  Dim sql As String
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim xlast As Date
+  Dim xdays As Integer
+
+  sql = "select fldid,flditem,fldbillitem,fldfirsttime,fldsecondtime,fldsecondreport,fldfirsttime,fldsecondtime,fldid,fldbillitem from tblpattiming where fldencounterval=&1 and fldtype=&2 and fldfirstsave=&3 and fldfirstreport=&4 and (fldsave=&5 or fldsave IS NULL) ORDER BY fldfirsttime ASC"
+  $rData = modDatabase.$myConn.Exec(sql, $encid, "General Services", True, "Bed", False)
+
+  GridView1.Clear
+  GridView1.Columns.Count = $rData.Fields.Count
+  GridView1.Rows.Count = $rData.Count
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 1
+    .Columns[7].Width = 1
+    .Columns[8].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Ward"
+    .Columns[2].Text = "Charge"
+    .Columns[3].Text = "Start"
+    .Columns[4].Text = "End"
+    .Columns[5].Text = "Bed"
+    .Columns[8].Text = "Day"
+    .Columns[9].Text = "Total"
+  End With
+
+  For Each $rData
+    Column = 0
+    If $rData["fldsecondtime"] Then
+      xlast = $rData["fldsecondtime"]
+    Else
+      xlast = Now()
+    Endif
+    If $rData["fldfirsttime"] Then
+      xdays = GetBedDiffValue($rData["fldfirsttime"], xlast)
+    Endif
+    For Each fld In $rData.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, $rData.Index, Column)
+      If Column = 2 Then
+        GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+        GridView1.Rows[$rData.Index].Height = Max(GridView1.Rows[$rData.Index].Height, GridView1[$rData.Index, Column].Font.RichTextHeight(GridView1[$rData.Index, Column].Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+      Else If Column = 3 Then
+        GridView1[$rData.Index, Column].Text = modReportVar.GetDateTimeReport($rData[fld.Name], gb.MediumDate)
+      Else If Column = 4 Then
+        If $rData[fld.Name] Then
+          GridView1[$rData.Index, Column].Text = modReportVar.GetDateTimeReport($rData[fld.Name], gb.MediumDate)
+        Else
+          GridView1[$rData.Index, Column].Text = modReportVar.GetDateTimeReport(Now(), gb.MediumDate)
+        Endif
+      Else If Column = 8 Then
+        GridView1[$rData.Index, Column].Text = xdays
+      Else If Column = 9 Then
+        GridView1[$rData.Index, Column].Text = xdays * modNonMedical.GetCashBillItemCost($rData[fld.Name], "General Services")
+      Else
+        GridView1[$rData.Index, Column].Text = $rData[fld.Name]
+      Endif
+      GridView1[$rData.Index, Column].WordWrap = True
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+End
+
+Private Function CheckBillEntry() As Boolean
+
+  Dim Row As Integer
+  Dim xval As Boolean
+
+  xval = True
+  If $discDate Then
+    For Row = 0 To GridView1.Rows.Count - 1
+      If Not GridView1[Row, 1].Text Then
+        xval = False
+      Endif
+      If Not GridView1[Row, 2].Text Then
+        xval = False
+      Endif
+    Next
+  Endif
+
+  Return xval
+
+End
+
+Public Sub btnedit_Click()
+
+  Dim res As Result
+  Dim xdoa As Date
+  Dim xidno As Long
+
+  If GridView1.Rows.Count And If GridView1.Rows.Selection.Count Then
+    If Not GridView1[GridView1.Row, 7].Text Then
+      If dttodate.Value Then
+        If cmbitem.Text And If txtdays.Value Then
+          res = modDatabase.$myConn.Edit("tblpattiming", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+          res["flditem"] = cmbward.Text
+          res["fldbillitem"] = cmbitem.Text
+          res["fldsecondreport"] = cmbbed.Text
+          res["fldseconduserid"] = modBasic.$lbluser
+          res["fldsecondtime"] = modDate.StartSqlDate(dttodate.Value)
+          res["fldsecondcomp"] = modBasic.$compID
+          res["fldsecondsave"] = True
+          res.Update
+          If Date(dttodate.Value) < Date($LstDate) Then
+            xidno = modPatientGeneral.AddPatientTableFirstTime($encid, "General Services", $sPackage, cmbward.Text, "Bed", modDate.StartSqlDate(dttodate.Value), "")
+          Endif
+        Endif
+        cmbward.Text = ""
+        txtdays.Value = 0
+        ShowNewValue()
+        ShowTimingGrid()
+        btnsave.Enabled = CheckBillEntry()
+      Endif
+    Else
+      Message.Warning("Update Last Row", ("OK"))
+    Endif
+  Else
+    xdoa = GetLastRecordDate()
+    modPatientSub.UpdateAdmissionWard($encid, cmbward.Text)
+    xidno = modPatientGeneral.AddPatientTableFirstTime($encid, "General Services", $sPackage, cmbward.Text, "Bed", xdoa, "")
+    cmbward.Text = ""
+    txtdays.Value = 0
+    ShowNewValue()
+    ShowTimingGrid()
+  Endif
+
+End
+
+Public Sub btnbreak_Click()
+
+  Dim xdod As Date
+  Dim res As Result
+  Dim xidno As Long
+
+  If GridView1.Rows.Selection.Count Then
+    xdod = GridView1[GridView1.Row, 7].Text
+    If dttodate.Value Then
+      If cmbitem.Text And If txtdays.Value Then
+        res = modDatabase.$myConn.Edit("tblpattiming", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+        res["flditem"] = cmbward.Text
+        res["fldbillitem"] = cmbitem.Text
+        res["fldsecondreport"] = cmbbed.Text
+        res["fldseconduserid"] = modBasic.$lbluser
+        res["fldsecondtime"] = modDate.StartSqlDate(dttodate.Value)
+        res["fldsecondcomp"] = modBasic.$compID
+        res["fldsecondsave"] = True
+        res.Update
+        If Date(dttodate.Value) < Date($LstDate) Then
+          ''add both first and last date simultaneously
+          xidno = modPatientGeneral.AddPatientTableFirstTime($encid, "General Services", $sPackage, cmbward.Text, "Bed", modDate.StartSqlDate(dttodate.Value), "", xdod)
+        Endif
+      Endif
+      cmbward.Text = ""
+      txtdays.Value = 0
+      ShowNewValue()
+      ShowTimingGrid()
+      btnsave.Enabled = CheckBillEntry()
+    Endif
+  Endif
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim Row As Integer
+  Dim xdays As Integer
+  Dim res As Result
+
+  If Message.Question("Are you sure ?", ("No"), ("Yes")) = 2 Then
+    Inc Application.Busy
+    If $discDate Then
+      If Date($discDate) = Date($admitDate) Then
+        modDatabase.$myConn.Begin
+        For Row = 0 To GridView1.Rows.Count - 1
+          If GridView1[Row, 2].Text And If GridView1[Row, 6].Text And If GridView1[Row, 7].Text Then
+            res = modDatabase.$myConn.Edit("tblpattiming", "fldid=&1", GridView1[Row, 0].Text)
+            res["fldsave"] = True
+            res.Update
+          Endif
+        Next
+        If modBasic.$AutoBillBed = "Partial" Then
+          modBillings.ServiceBillBlankLedgerPack($encid, $sBillType, $BillMode, $sPackage, $sLedger, "Service", GridView1[0, 2].Text, 1, "Punched", 0, False, False)
+        Else
+          modBillings.ServiceBillBlankLedgerPack($encid, $sBillType, $BillMode, $sPackage, $sLedger, "Service", GridView1[0, 2].Text, 1, "Done", 0, True, False)
+        Endif
+        modDatabase.$myConn.Commit
+
+      Else
+        For Row = 0 To GridView1.Rows.Count - 1
+          If GridView1[Row, 2].Text And If GridView1[Row, 6].Text And If GridView1[Row, 7].Text Then
+            xdays = GetBedDiffValue(GridView1[Row, 6].Text, GridView1[Row, 7].Text)
+            If xdays Then
+              modDatabase.$myConn.Begin
+              If modBasic.$AutoBillBed = "Partial" Then
+                modBillings.ServiceBillBlankLedgerPack($encid, $sBillType, $BillMode, $sPackage, $sLedger, "Service", GridView1[Row, 2].Text, xdays, "Punched", 0, False, False)
+              Else
+                modBillings.ServiceBillBlankLedgerPack($encid, $sBillType, $BillMode, $sPackage, $sLedger, "Service", GridView1[Row, 2].Text, xdays, "Done", 0, True, False)
+              Endif
+              res = modDatabase.$myConn.Edit("tblpattiming", "fldid=&1", GridView1[Row, 0].Text)
+              res["fldsave"] = True
+              res.Update
+              modDatabase.$myConn.Commit
+            Else If xdays = 0 Then
+              res = modDatabase.$myConn.Edit("tblpattiming", "fldid=&1", GridView1[Row, 0].Text)
+              res["fldsave"] = True
+              res.Update
+            Endif
+          Endif
+        Next
+
+      Endif
+    Endif
+    Dec Application.Busy
+    ShowTimingGrid()
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+  Dim xdept As String
+  Dim xList As String[]
+
+  If GridView1.Column = 1 Then
+    xdept = GridViewNew("Alter Department", modBasic.$IPDDepartmentsAll, False, GridView1, GridView1.Height)
+    If xdept Then
+      res = modDatabase.$myConn.Edit("tblpattiming", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["flditem"] = xdept
+      res.Update
+      ShowTimingGrid()
+    Endif
+  Else If GridView1.Column = 2 Then
+    xList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldbedcharge) as col from tbldepartbedcharge where flddept=&1 and fldbillingmode=&2", GridView1[GridView1.Row, 1].Text, $BillMode))
+    xdept = GridViewNew("Alter Charge", xList, False, GridView1, GridView1.Height)
+    If xdept Then
+      res = modDatabase.$myConn.Edit("tblpattiming", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldbillitem"] = xdept
+      res.Update
+      ShowTimingGrid()
+    Endif
+  Else
+    cmbward.Text = GridView1[GridView1.Row, 1].Text
+    cmbbed.Text = GridView1[GridView1.Row, 5].Text
+    cmbitem.Text = GridView1[GridView1.Row, 2].Text
+    dtfrom.Value = GridView1[GridView1.Row, 6].Text
+    txtfrombs.Text = modDate.ConvertToLocaldate(dtfrom.Value)
+    dttodate.Value = $discDate
+    txttodatebs.Text = modDate.ConvertToLocaldate(dttodate.Value)
+    If dttodate.Value And If dtfrom.Value Then
+      txtdays.Value = GetBedDiffValue(dtfrom.Value, dttodate.Value)
+    Endif
+  Endif
+  btnsave.Enabled = CheckBillEntry()
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+' Public Sub mnudelete_Click()
+'
+'   If GridView1.Rows.Selection.Count Then
+'     If GridView1.Row = GridView1.Rows.Count - 1 Then
+'       modDatabase.$myConn.Delete("tblpattiming", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+'       ShowNewValue()
+'       ShowTimingGrid()
+'     Else
+'       Message.Warning("Deletion allowed for last Row", ("OK"))
+'     Endif
+'   Endif
+'
+' End
+
+Public Sub btnbedrepo_Click()
+
+  Dim xList As String[]
+
+  xList = modPatReports.GetCourseOfTreatment($encid)
+  If xList Then
+    Message.Info(xList.Join(gb.NewLine), ("OK"))
+  Endif
+
+End
+
+Public Sub dttodate_Change()
+
+  If dttodate.Value And If dtfrom.Value Then
+    txtdays.Value = GetBedDiffValue(dtfrom.Value, dttodate.Value)
+  Endif
+
+End
+
+Public Sub btnclose_Click()
+
+  Me.Close()
+
+End

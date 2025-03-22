@@ -1,0 +1,1616 @@
+' Gambas class file
+
+Private stra As String
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $totalrec As Long
+Private $strType As String
+Private $BulkTarget As String[]
+Private $SuppList As String[]
+Private $BillModeList As String[]
+Private $quickReport As String
+
+Private $qtyChart As String[]
+Private $amtChart As String[]
+Private $ProgressBar1 As ProgressBar
+Private $SSQLFields As String[]
+Private $RepoStr As String
+Private $ColCount As Integer
+Private $newColumn As String[]
+
+Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Column")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+
+  Select modHelpVariable.$LogInCategory
+    Case "Pharmacist", "Purchase"
+      If modBasic.$ViewLockInventory = "Location" Then
+        cmbcomp.Text = modBasic.$compID
+        cmbcomp.Enabled = False
+      Else
+        cmbcomp.List = modBasic.$AllCompPerList
+        cmbcomp.Text = "%"
+      Endif
+    Case Else
+      cmbcomp.List = modBasic.$AllCompPerList
+      cmbcomp.Text = "%"
+  End Select
+
+  If MMain.$WebReport = "Multiple" Then
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      pnlocat.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+  Else
+    pnlocat.Visible = False
+  Endif
+
+  $SuppList = modSupplier.FillVendorNameCombo("%")
+  $BillModeList = modNonMedical.FillCashModeCombo()
+  $BulkTarget = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select flditem as col from tbltarget"))
+  cmbtarget.Text = "%"
+  $quickReport = modSettings.ShowSettingFromFIle("HealthReport/QuickInventory")
+
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  rball.Value = True
+  rbmed.Value = True
+  $strType = "Medicines"
+  rbpurchase.Value = True
+  modAccount.PasInvoiceSetting(cmbfiscal, True)
+  LoadTableNames()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub cmblocation_Click()
+
+  cmbvalue.Clear()
+  If cmblocation.Text Then
+    cmbvalue.List = modDataRepo.GetRepoValueListType(cmblocation.Text)
+  Endif
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatbilldetail = "tblpatbilldetail"
+    $tbltempbilldetail = "tbltempbilldetail"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatbilldetail"] Then
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+      If res["fldtempbilldetail"] Then
+        $tbltempbilldetail = res["fldtempbilldetail"]
+      Else
+        $tbltempbilldetail = "tbltempbilldetail"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatbilldetail = "tblpatbilldetail"
+      $tbltempbilldetail = "tbltempbilldetail"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub mnufiscal_Click()
+
+  Dim res As Result
+  Dim xyear As String
+
+  xyear = InputCombo("Select Fiscal Year Range", "Select Year", modBasic.$FiscalYearList, "", True)
+  If xyear Then
+    res = modDatabase.$myConn.Exec("select fldfrom,fldend from tblfiscalid where fldlabel=&1", xyear)
+    If res.Available Then
+      res.MoveFirst
+      dtfir.Value = res["fldfrom"]
+      dtlast.Value = res["fldend"]
+    Endif
+  Endif
+
+End
+
+'NOTE:TWO CON
+Public Sub btnload_Click()
+
+  Dim res As Result
+  Dim sstr1 As String
+  Dim xval As Integer
+
+  SpinBox1.Value = 0
+  rball.Value = True
+  If $strType Then
+    If rbmed.Value = True Then
+      xval = modStockSub.CompleteMedicineTreeEntered(TreeView1, 100 * SpinBox1.Value)
+      If xval = 1 Then
+        sstr1 = "select COUNT(fldcodename) as fldparent from tblcode where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid in(select fldstockid from tblentry)))"
+      Else
+        sstr1 = "select COUNT(distinct(fldstockid)) as fldparent from tblentry where fldcategory=&1"
+      Endif
+    Else If rbsurg.Value = True Then
+      xval = modStockSub.CompleteSurgicalTreeEntered(TreeView1, 100 * SpinBox1.Value)
+      If xval = 1 Then
+        sstr1 = "select COUNT(distinct(fldsurgname)) as fldparent from tblsurgicalname where fldsurgname in(select fldsurgname from tblsurgicals where fldsurgid in(select fldsurgid from tblsurgbrand where fldbrandid in(select fldstockid from tblentry)))"
+      Else
+        sstr1 = "select COUNT(distinct(fldstockid)) as fldparent from tblentry where fldcategory=&1"
+      Endif
+    Else If rbextra.Value = True Then
+      xval = modStockSub.CompleteExtraTreeEntered(TreeView1, 100 * SpinBox1.Value)
+      If xval = 1 Then
+        sstr1 = "select COUNT(distinct(fldextraid)) as fldparent from tblextra where fldextraid in(select fldextraid from tblextrabrand where fldbrandid in(select fldstockid from tblentry))"
+      Else
+        sstr1 = "select COUNT(distinct(fldstockid)) as fldparent from tblentry where fldcategory=&1"
+      Endif
+    Endif
+    Inc Application.Busy
+    res = modDatabase.$syConn.Exec(sstr1, $strType)
+    If res.Available Then
+      $totalrec = res["fldparent"]
+    Else
+      $totalrec = 0
+    Endif
+    Dec Application.Busy
+    If $totalrec Then
+      SpinBox1.MaxValue = Ceil($totalrec / 100)
+      lbltotal.Text = modMisc.RecordNumberLabel(100 * SpinBox1.Value, 100, $totalrec)
+    Endif
+  Endif
+
+End
+
+Public Sub TreeView1_Click()
+
+  If TreeView1.Current.Picture = Picture["icons/coll1.png"] Then
+    If TreeView1.Current.Count = 0 Then
+      If rbmed.Value = True Then
+        modStockSub.SelectMedicineTreeEnter(TreeView1, TreeView1.Current.Key)
+      Else If rbsurg.Value = True Then
+        modStockSub.SelectSurgicalTreeEnter(TreeView1, TreeView1.Current.Key)
+      Else If rbextra.Value = True Then
+        modStockSub.SelectExtraTreeEnter(TreeView1, TreeView1.Current.Key)
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnback_Click()
+
+  Dim xval As Integer
+
+  SpinBox1.Value = SpinBox1.Value - 1
+  If rbmed.Value = True Then
+    xval = modStockSub.CompleteMedicineTreeEntered(TreeView1, 100 * SpinBox1.Value)
+  Else If rbsurg.Value = True Then
+    xval = modStockSub.CompleteSurgicalTreeEntered(TreeView1, 100 * SpinBox1.Value)
+  Else If rbextra.Value = True Then
+    xval = modStockSub.CompleteExtraTreeEntered(TreeView1, 100 * SpinBox1.Value)
+  Endif
+  lbltotal.Text = modMisc.RecordNumberLabel(100 * SpinBox1.Value, 100, $totalrec)
+
+End
+
+Public Sub btnfront_Click()
+
+  Dim xval As Integer
+
+  SpinBox1.Value = SpinBox1.Value + 1
+  If rbmed.Value = True Then
+    xval = modStockSub.CompleteMedicineTreeEntered(TreeView1, 100 * SpinBox1.Value)
+  Else If rbsurg.Value = True Then
+    xval = modStockSub.CompleteSurgicalTreeEntered(TreeView1, 100 * SpinBox1.Value)
+  Else If rbextra.Value = True Then
+    xval = modStockSub.CompleteExtraTreeEntered(TreeView1, 100 * SpinBox1.Value)
+  Endif
+  lbltotal.Text = modMisc.RecordNumberLabel(100 * SpinBox1.Value, 100, $totalrec)
+
+End
+
+Private Function GetRepoType() As String
+
+  Dim xx As String
+
+  If rbpurchase.Value = True Then
+    xx = "Purchases"
+  Else If rbdisp.Value = True Then
+    xx = "Dispensed"
+  Else If rbbulk.Value = True Then
+    xx = "Consumed"
+  Endif
+  Return xx
+
+End
+
+Public Sub rbpurchase_Click()
+
+  GridView1.Rows.Count = 0
+  Wait
+  Try $aMyFields.Clear()
+  cmbtarget.Clear()
+  cmbtarget.List = $SuppList
+  cmbtarget.Add("%")
+
+End
+
+Public Sub rbbulk_Click()
+
+  GridView1.Rows.Count = 0
+  Wait
+  Try $aMyFields.Clear()
+  cmbtarget.Clear()
+  cmbtarget.List = $BulkTarget
+  cmbtarget.Add("%")
+
+End
+
+Public Sub rbdisp_Click()
+
+  GridView1.Rows.Count = 0
+  Wait
+  Try $aMyFields.Clear()
+  cmbtarget.Clear()
+  cmbtarget.List = $BillModeList
+  cmbtarget.Add("%")
+
+End
+
+Public Sub rbmed_Click()
+
+  $strType = "Medicines"
+
+End
+
+Public Sub rbsurg_Click()
+
+  $strType = "Surgicals"
+
+End
+
+Public Sub rbextra_Click()
+
+  $strType = "Extra Items"
+
+End
+
+Private Sub GetFieldList()
+
+  Dim xhospfld As String
+  Dim xList As String[]
+
+  xList = New String[]
+  xhospfld = modDataRepo.HospitalField()
+  If rbdisp.Value = True Then
+    $SSQLFields = ["fldencounterval", "fldencounterval", "flditemname", "flditemrate", "flditemqty", "flditemrate*flditemqty", "flddiscper", "fldtaxper", "fldditemamt", "fldtime", "fldbillno", "flditemno", "fldordcomp", "fldcomp", "fldid", "flditemno", "flditemno", "flditemno"]
+  Else If rbpurchase.Value = True Then
+    $SSQLFields = ["fldsuppname", "fldpurtype", "fldstockid", "flsuppcost", "fldnetcost", "(fldtotalqty-fldreturnqty)", "(fldtotalqty-fldreturnqty)*fldnetcost", "fldpurdate", "fldbillno", "fldreference", "fldcomp", "fldid", "fldstockno", "fldstockno", "fldstockno"]
+  Else If rbbulk.Value = True Then
+    $SSQLFields = ["fldtarget", "fldcategory", "fldstockid", "fldnetcost", "(fldqtydisp-fldqtyret)", "fldnetcost*(fldqtydisp-fldqtyret)", "fldbulktime", "fldreference", "fldcomp", "fldid", "fldstockno", "fldstockno", "fldstockno"]
+  Endif
+  If xhospfld Then
+    $SSQLFields.Add(xhospfld)
+  Endif
+
+End
+
+Private Function GetSQLColumns() As String[]
+
+  Dim xFldList As String[]
+  Dim i As Integer
+
+  GetFieldList()
+  xFldList = $SSQLFields.Copy()
+  If rbdisp.Value = True Then
+    modCustPatient.FillNewCOlumnCollection(Me.Tag)
+    $newColumn = modCustPatient.CustomNewColumnsTitle(Me.Tag)
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        xFldList.Add("fldencounterval")
+      Next
+    Endif
+  Endif
+  Return xFldList
+
+End
+
+'NOTE:TWO CON
+Private Function ExecuteQuery(xFldList As String[], strType As String, strItem As String, stp As Integer, $con As Connection) As Result
+
+  Dim sql As String
+  Dim res As Result
+
+  $RepoStr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  If rbdisp.Value = True Then
+    stra = ""
+    If strType = "Medicines" Then
+      If stp = 1 Then
+        stra = "fldstockid in(select fldbrandid from tblmedbrand where flddrug in(select flddrug from tbldrug where fldcodename like &7))"
+      Else If stp = 2 Then
+        stra = "fldstockid in(select fldbrandid from tblmedbrand where flddrug like &7)"
+      Else If stp = 3 Then
+        stra = "fldstockid like &7"
+      Else If stp = 0 Then
+        stra = "fldstockid like &7"
+      Endif
+    Else If strType = "Surgicals" Then
+      If stp = 1 Then
+        stra = "fldstockid in(select fldbrandid from tblsurgbrand where fldsurgid in(select fldsurgid from tblsurgicals where fldsurgname like &7))"
+      Else If stp = 2 Then
+        stra = "fldstockid in( Select fldbrandid From tblsurgbrand where fldsurgid like &7)"
+      Else If stp = 3 Then
+        stra = "fldstockid like &7"
+      Else If stp = 0 Then
+        stra = "fldstockid like &7"
+      Endif
+    Else If strType = "Extra Items" Then
+      If stp = 1 Then
+        stra = "fldstockid in(select fldbrandid From tblextrabrand where fldextraid like &7)"
+      Else If stp = 2 Then
+        stra = "fldstockid like &7"
+      Else If stp = 0 Then
+        stra = "fldstockid like &7"
+      Endif
+    Endif
+
+    sql = "select " & xFldList.Join(",") & " from " & $tblpatbilling & " where fldbillingmode like &1 and fldtime>=&2 and fldtime<=&3 and fldcomp like &4 and fldsave=&5 and flditemtype=&6 and flditemno in(select fldstockno from tblentry where " & stra & ")" & $RepoStr                               ''
+    res = $con.Exec(sql, cmbtarget.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbcomp.Text, True, strType, strItem)
+
+  Else If rbpurchase.Value = True Then
+    stra = ""
+    If strType = "Medicines" Then
+      If stp = 1 Then
+        stra = " and fldstockid in(select fldbrandid from tblmedbrand where flddrug in(select flddrug from tbldrug where fldcodename like &5)) and fldcategory=&6 and fldsav=&7"
+      Else If stp = 2 Then
+        stra = " and fldstockid in(select fldbrandid from tblmedbrand where flddrug like &5) and fldcategory=&6 and fldsav=&7"
+      Else If stp = 3 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsav=&7"
+      Else If stp = 0 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsav=&7"
+      Endif
+    Else If strType = "Surgicals" Then
+      If stp = 1 Then
+        stra = " and fldstockid in(select fldbrandid from tblsurgbrand where fldsurgid in(select fldsurgid from tblsurgicals where fldsurgname like &5)) and fldcategory=&6 and fldsav=&7"
+      Else If stp = 2 Then
+        stra = " and fldstockid in(select fldbrandid from tblsurgbrand where fldsurgid like &5) and fldcategory=&6 and fldsav=&7"
+      Else If stp = 3 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsav=&7"
+      Else If stp = 0 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsav=&7"
+      Endif
+    Else If strType = "Extra Items" Then
+      If stp = 1 Then
+        stra = " and fldstockid in(select fldbrandid From tblextrabrand where fldextraid like &5) and fldcategory=&6 and fldsav=&7"
+      Else If stp = 2 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsav=&7"
+      Else If stp = 0 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsav=&7"
+      Endif
+    Endif
+
+    sql = "select " & xFldList.Join(",") & " from tblpurchase where fldsuppname like &1 and fldtime>=&2 and fldtime<=&3 and fldcomp like &4" & stra & $RepoStr                               ''
+    res = $con.Exec(sql, cmbtarget.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbcomp.Text, strItem, strType, False)
+
+  Else If rbbulk.Value = True Then
+    stra = ""
+    If strType = "Medicines" Then
+      If stp = 1 Then
+        stra = " and fldstockid in(select fldbrandid from tblmedbrand where flddrug in(select flddrug from tbldrug where fldcodename like &5)) and fldcategory=&6 and fldsave=&7"
+      Else If stp = 2 Then
+        stra = " and fldstockid in(select fldbrandid from tblmedbrand where flddrug like &5) and fldcategory=&6 and fldsave=&7"
+      Else If stp = 3 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsave=&7"
+      Else If stp = 0 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsave=&7"
+      Endif
+    Else If strType = "Surgicals" Then
+      If stp = 1 Then
+        stra = " and fldstockid in(select fldbrandid from tblsurgbrand where fldsurgid in(select fldsurgid from tblsurgicals where fldsurgname like &5)) and fldcategory=&6 and fldsave=&7"
+      Else If stp = 2 Then
+        stra = " and fldstockid in( Select fldbrandid from tblsurgbrand where fldsurgid like &5) and fldcategory=&6 and fldsave=&7"
+      Else If stp = 3 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsave=&7"
+      Else If stp = 0 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsave=&7"
+      Endif
+    Else If strType = "Extra Items" Then
+      If stp = 1 Then
+        stra = " and fldstockid in(select fldbrandid from tblextrabrand where fldextraid like &5) and fldcategory=&6 and fldsave=&7"
+      Else If stp = 2 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsave=&7"
+      Else If stp = 0 Then
+        stra = " and fldstockid like &5 and fldcategory=&6 and fldsave=&7"
+      Endif
+    Endif
+
+    sql = "select " & xFldList.Join(",") & " from tblbulksale where fldtarget like &1 and fldtime>=&2 and fldtime<=&3 and fldcomp like &4" & stra & $RepoStr                                ''
+    res = $con.Exec(sql, cmbtarget.Text, modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value), cmbcomp.Text, strItem, strType, True)
+
+  Endif
+  Return res
+
+End
+
+Private Function GetGridViewValue(Column As Integer, xVariable As Variant) As Variant
+
+  Dim xxx As Variant
+  Dim i As Integer
+
+  If rbdisp.Value = True Then
+    If Column = 1 Then
+      xxx = modPatient.GetPatientNameByEnc(xVariable, modDatabase.$syConn)
+    Else If Column = 3 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 4 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+    Else If Column = 5 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 6 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+    Else If Column = 7 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+    Else If Column = 8 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 9 Then
+      Try xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+    Else If Column = 11 Then
+      xxx = modStock.GetStockNameFromStockno(xVariable)
+    Else If Column = 16 Then
+      xxx = modStock.GetBatchFromStockNo(xVariable)
+    Else If Column = 17 Then
+      xxx = modReportVar.GetDateTimeReport(modStock.GetExpiryFromStockNo(xVariable), gb.MediumDate)
+    Else If Column = 18 Then
+      xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+    Else
+      xxx = xVariable
+    Endif
+
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        If Column = $ColCount + i Then
+          xxx = modCustPatient.NewColValue(Me.Tag, $newColumn[i], xVariable)
+        Endif
+      Next
+    Endif
+
+  Else If rbpurchase.Value = True Then
+    If Column = 1 Then
+      If xVariable = "Cash Payment" Then
+        xxx = "Cash"
+      Else If xVariable = "Credit Payment" Then
+        xxx = "Credit"
+      Endif
+    Else If Column = 3 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 4 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 5 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+    Else If Column = 6 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 7 Then
+      Try xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+    Else If Column = 13 Then
+      xxx = modStock.GetBatchFromStockNo(xVariable)
+    Else If Column = 14 Then
+      xxx = modReportVar.GetDateTimeReport(modStock.GetExpiryFromStockNo(xVariable), gb.MediumDate)
+    Else If Column = 15 Then
+      xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+    Else
+      xxx = xVariable
+    Endif
+
+  Else If rbbulk.Value = True Then
+    If Column = 3 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 4 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, -2)
+    Else If Column = 5 Then
+      xxx = modReportVar.GetLocaleNumberFormat(xVariable, gb.Currency)
+    Else If Column = 6 Then
+      Try xxx = modReportVar.GetDateTimeReport(xVariable, gb.GeneralDate)
+    Else If Column = 11 Then
+      xxx = modStock.GetBatchFromStockNo(xVariable)
+    Else If Column = 12 Then
+      xxx = modReportVar.GetDateTimeReport(modStock.GetExpiryFromStockNo(xVariable), gb.MediumDate)
+    Else If Column = 13 Then
+      xxx = modDataRepo.GetHospitalTextLabel(xVariable)
+    Else
+      xxx = xVariable
+    Endif
+
+  Endif
+  Return xxx
+
+End
+
+Public Sub cmdrepo_Click()
+
+  Dim stp As Integer
+  Dim xx As String
+
+  Dim res As Result
+  Dim xFldList As String[]
+  Dim xfield As String[]
+
+  If Not cmbcomp.Text Then
+    cmbcomp.Text = "%"
+  Endif
+  If Not cmbtarget.Text Then
+    cmbtarget.Text = "%"
+  Endif
+
+  If rbsel.Value = True Then
+    If TreeView1.Current.Text Then
+      xx = TreeView1.Current.Text
+      If TreeView1.Current.Picture = Picture["icons/coll1.png"] Then
+        stp = 1
+      Else If TreeView1.Current.Picture = Picture["icons/coll2.png"] Then
+        stp = 2
+      Else If TreeView1.Current.Picture = Picture["icons/coll3.png"] Then
+        stp = 3
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    xx = "%"
+    stp = 0
+  Endif
+
+  TabStrip1.Index = 0
+  Inc Application.Busy
+
+  xFldList = GetSQLColumns()
+  $rData = ExecuteQuery(xFldList, $strType, xx, stp, modDatabase.$syConn)
+  If rbdisp.Value = True Then
+    ShowDispense()
+  Else If rbpurchase.Value = True Then
+    ShowPurchase()
+  Else If rbbulk.Value = True Then
+    SHowConsumed()
+  Endif
+
+  txtqty.Value = 0
+  txtamt.Value = 0
+  If chkgrid.Value = True Then
+    If rbdisp.Value = True Then
+      xfield = ["SUM(flditemqty) as itemtot", "SUM(fldditemamt) as amttot"]
+    Else If rbpurchase.Value = True Then
+      xfield = ["SUM(fldtotalqty-fldreturnqty) as itemtot", "SUM((fldtotalqty-fldreturnqty)*fldnetcost) as amttot"]
+    Else If rbbulk.Value = True Then
+      xfield = ["SUM(fldqtydisp-fldqtyret) as itemtot", "SUM(fldnetcost*(fldqtydisp-fldqtyret)) as amttot"]
+    Endif
+    res = ExecuteQuery(xfield, $strType, xx, stp, modDatabase.$syConn)
+    If res.Available Then
+      If res["itemtot"] Then
+        txtqty.Value = Round(res["itemtot"], -2)
+      Endif
+      If res["amttot"] Then
+        txtamt.Value = Round(res["amttot"], -2)
+      Endif
+    Endif
+  Endif
+
+  If chkqty.Value = True Or If chkamt.Value = True Then
+    FillChartData()
+    If chkqty.Value = True Then
+      FillItemChartQTY()
+    Endif
+    If chkamt.Value = True Then
+      FillItemChartAMT()
+    Endif
+  Endif
+
+  Dec Application.Busy
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column > $SSQLFields.Count - 1 Then
+    GridView1.Data.RichText = modString.TextToHTML(GetGridViewValue(Column, $rData[$aMyFields[Column]]))
+  Else
+    GridView1.Data.Text = GetGridViewValue(Column, $rData[$aMyFields[Column]])
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Private Sub ShowDispense()
+
+  Dim i As Integer
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  $ColCount = $SSQLFields.Count
+  With GridView1
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 1
+    .Columns[15].Width = 1
+    .Columns[16].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[17].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Encounter"
+    .Columns[1].Text = "Patient Name"
+    .Columns[2].Text = "Particulars"
+    .Columns[3].Text = "Rate"
+    .Columns[4].Text = "QTY"
+    .Columns[5].Text = "Gross"
+    .Columns[6].Text = "Disc%"
+    .Columns[7].Text = "Tax%"
+    .Columns[8].Text = "Total"
+    .Columns[9].Text = "DateTime"
+    .Columns[10].Text = "Invoice"
+    .Columns[11].Text = "Item Name"
+    .Columns[12].Text = "Order"
+    .Columns[13].Text = "Sale"
+    .Columns[16].Text = "Batch"
+    .Columns[17].Text = "Expiry"
+
+    If $newColumn.Count Then
+      For i = 0 To $newColumn.Count - 1
+        .Columns[$ColCount + i].Text = $newColumn[i]
+        .Columns[$ColCount + i].Width = 150 * modBasic.$AppWidthRatio
+      Next
+    Endif
+  End With
+
+End
+
+Private Sub ShowPurchase()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 1
+    .Columns[12].Width = 1
+    .Columns[13].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Supplier"
+    .Columns[1].Text = "Payment"
+    .Columns[2].Text = "Particulars"
+    .Columns[3].Text = "SupRate"
+    .Columns[4].Text = "NetRate"
+    .Columns[5].Text = "QTY"
+    .Columns[6].Text = "Total"
+    .Columns[7].Text = "DateTime"
+    .Columns[8].Text = "Invoice"
+    .Columns[9].Text = "Reference"
+    .Columns[10].Text = "CompID"
+    .Columns[13].Text = "Batch"
+    .Columns[14].Text = "Expiry"
+  End With
+
+End
+
+Private Sub SHowConsumed()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 1
+    .Columns[10].Width = 1
+    .Columns[11].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Target"
+    .Columns[1].Text = "Category"
+    .Columns[2].Text = "Particulars"
+    .Columns[3].Text = "Rate"
+    .Columns[4].Text = "QTY"
+    .Columns[5].Text = "Total"
+    .Columns[6].Text = "DateTime"
+    .Columns[7].Text = "Reference"
+    .Columns[8].Text = "CompID"
+    .Columns[11].Text = "Batch"
+    .Columns[12].Text = "Expiry"
+  End With
+
+End
+
+Private Sub FillChartData()
+
+  Dim fldtime As String
+  Dim fldamt As String
+  Dim fldqty As String
+
+  If rbdisp.Value = True Then
+    fldqty = "flditemqty"
+    fldtime = "fldtime"
+    fldamt = "fldditemamt"
+  Else If rbpurchase.Value = True Then
+    fldqty = "(fldtotalqty-fldreturnqty)"
+    fldtime = "fldpurdate"
+    fldamt = "(fldtotalqty-fldreturnqty)*fldnetcost"
+  Else If rbbulk.Value = True Then
+    fldqty = "(fldqtydisp-fldqtyret)"
+    fldtime = "fldbulktime"
+    fldamt = "fldnetcost*(fldqtydisp-fldqtyret)"
+  Endif
+
+  $qtyChart = New String[]
+  $amtChart = New String[]
+  $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+  $ProgressBar1.Visible = True
+  $ProgressBar1.Value = 0
+  For Each $rData
+    If chkqty.Value = True Then
+      $qtyChart.Add(DateDiff(dtfir.Value, $rData[fldtime], modChart.GetDateIntegerFromSetting()) & ";" & CStr($rData[fldqty] / modChart.GetQTYValueChart()))
+    Endif
+    If chkamt.Value = True Then
+      $amtChart.Add(DateDiff(dtfir.Value, $rData[fldtime], modChart.GetDateIntegerFromSetting()) & ";" & CStr($rData[fldamt] / modChart.GetAMTValueChart()))
+    Endif
+    $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+    Wait
+  Next
+  If $ProgressBar1 Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnugridview.Popup
+
+End
+
+Public Sub GridView1_DblClick()
+
+  Dim xx As Integer
+  Dim yy As Integer
+
+  xx = Mouse.StartX - GridView1.Left
+  yy = Mouse.StartY - GridView1.Top
+
+  Balloon.Info(("Current Column is ") & CStr(GridView1.Column + 1), GridView1, xx, yy)
+  Balloon.Delay = 1000
+
+End
+
+Public Sub mnuenchart_Click()
+
+  Dim stp As Integer
+  Dim xcurr As String
+
+  Dim xx As String
+  Dim xField As String
+  Dim Column As Integer
+  Dim res As Result
+  Dim xval As Variant
+  Dim hFile As CUnivariate
+  Dim sOrder As String[]
+
+  Dim hUniv As FmAnalyzeSett
+
+  hUniv = New FmAnalyzeSett("Univariate", modGridView.GetGridViewColumns(GridView1))
+  hUniv.ShowModal
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  Inc Application.Busy
+  hFile = New CUnivariate
+
+  Column = modCustPatient.GetUnivariateColumn(0)
+  GetFieldList()
+  xField = $SSQLFields[Column]
+
+  If rbsel.Value = True Then
+    If TreeView1.Current.Text Then
+      xcurr = TreeView1.Current.Text
+      If TreeView1.Current.Picture = Picture["icons/coll1.png"] Then
+        stp = 1
+      Else If TreeView1.Current.Picture = Picture["icons/coll2.png"] Then
+        stp = 2
+      Else If TreeView1.Current.Picture = Picture["icons/coll3.png"] Then
+        stp = 3
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    xcurr = "%"
+    stp = 0
+  Endif
+  res = ExecuteQuery([xField], $strType, xcurr, stp, modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Column, res[xField])
+      If xval Then
+        hFile.Add(xval)
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modSettings.ShowSettingFromFIle("UnivariateAnalysis/DataType") = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetEncChartGridNew(hFile.GetSPSSFile(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrosstab_Click()
+
+  Dim stp As Integer
+  Dim xcurr As String
+
+  Dim xx As String
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hFile As CBivariate
+  Dim sOrder As String[]
+  Dim hBivar As FmAnalyzeSett
+
+  hBivar = New FmAnalyzeSett("Bivariate", modGridView.GetGridViewColumns(GridView1))
+  hBivar.ShowModal
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  Inc Application.Busy
+  hFile = New CBivariate
+  GetFieldList()
+  Row = modCustPatient.GetCrossVarRow(0)
+  xFieRow = $SSQLFields[Row]
+  Column = modCustPatient.GetCrossVarColumn(0)
+  xFieColm = $SSQLFields[Column]
+
+  If rbsel.Value = True Then
+    If TreeView1.Current.Text Then
+      xcurr = TreeView1.Current.Text
+      If TreeView1.Current.Picture = Picture["icons/coll1.png"] Then
+        stp = 1
+      Else If TreeView1.Current.Picture = Picture["icons/coll2.png"] Then
+        stp = 2
+      Else If TreeView1.Current.Picture = Picture["icons/coll3.png"] Then
+        stp = 3
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    xcurr = "%"
+    stp = 0
+  Endif
+  res = ExecuteQuery([xFieRow, xFieColm], $strType, xcurr, stp, modDatabase.$syConn)
+
+  If res.Available Then
+    For Each res
+      xval = GetGridViewValue(Row, res[xFieRow])
+      yval = GetGridViewValue(Column, res[xFieColm])
+      If xval And If yval Then
+        hFile.Add([xval, yval])
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (res.Index + 1) / res.Count
+        Wait
+      Endif
+    Next
+  Endif
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+  If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+    sOrder = ListOrder("Select Order", hFile.DistinctValues())
+  Endif
+  xx = modPSPP.GetCrossTabStatNew(hFile.GetSPSSFile(), hFile.GetGroups(), sOrder)
+  If xx Then
+    modControlSub.OpenBrowser(xx)
+  Endif
+
+End
+
+Public Sub mnucrotab_Click()
+
+  Dim stp As Integer
+  Dim xcurr As String
+
+  Dim Row As Integer
+  Dim Column As Integer
+  Dim xFieRow As String
+  Dim xFieColm As String
+  Dim res As Result
+  Dim xval As Variant
+  Dim yval As Variant
+
+  Dim hForm As FmGridCrossTab
+  Dim xForm As CCrossTab
+  Dim hGdChr As FmAnalyzeSett
+
+  hGdChr = New FmAnalyzeSett("GridCrossTab", modGridView.GetGridViewColumns(GridView1))
+  hGdChr.ShowModal
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  If modCustPatient.$TabRowColumn And If modCustPatient.$TabFieldColumn Then
+    xForm = New CCrossTab
+    Inc Application.Busy
+    GetFieldList()
+    Row = CInt(modCustPatient.$TabRowColumn) - 1
+    xFieRow = $SSQLFields[Row]
+    Column = CInt(modCustPatient.$TabFieldColumn) - 1
+    xFieColm = $SSQLFields[Column]
+
+    If rbsel.Value = True Then
+      If TreeView1.Current.Text Then
+        xcurr = TreeView1.Current.Text
+        If TreeView1.Current.Picture = Picture["icons/coll1.png"] Then
+          stp = 1
+        Else If TreeView1.Current.Picture = Picture["icons/coll2.png"] Then
+          stp = 2
+        Else If TreeView1.Current.Picture = Picture["icons/coll3.png"] Then
+          stp = 3
+        Endif
+      Endif
+    Else If rball.Value = True Then
+      xcurr = "%"
+      stp = 0
+    Endif
+    res = ExecuteQuery([xFieRow, xFieColm], $strType, xcurr, stp, modDatabase.$syConn)
+
+    If res.Available Then
+      For Each res
+        xval = GetGridViewValue(Row, res[xFieRow])
+        yval = GetGridViewValue(Column, res[xFieColm])
+        If xval And If yval Then
+          xForm.Add([xval, yval])
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (res.Index + 1) / res.Count
+          Wait
+        Endif
+      Next
+    Endif
+    Dec Application.Busy
+
+    hForm = New FmGridCrossTab(GridView1.Columns[Row].Text, xForm.GetSPSSFile())
+    hForm.ShowModal
+    modExternal.$ExecValueColl.Clear()
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+
+End
+
+Public Sub mnugridsumm_Click()
+
+  Dim xx As String
+  Dim ChapCol As String
+  Dim GropCol As String
+  Dim xChapList As String[]
+  Dim xGropList As String[]
+
+  Dim stp As Integer
+  Dim xcurr As String
+  Dim res As Result
+  Dim valCol As String
+  Dim xFieldList As String[]
+
+  Dim xFinList As Variant[]
+  Dim xrowVar As Variant[]
+  Dim xchapval As String
+  Dim xgroup As String
+  Dim xPath As String
+
+  Dim hGdSum As FmAnalyzeSett
+
+  hGdSum = New FmAnalyzeSett("GridSummary", modGridView.GetGridViewColumns(GridView1))
+  hGdSum.ShowModal
+
+  Inc Application.Busy
+  xFieldList = New String[]
+  GetFieldList()
+  If modCustPatient.$SumChapterColumn Then
+    ChapCol = $SSQLFields[modCustPatient.$SumChapterColumn - 1]
+    xFieldList.Add(ChapCol)
+  Endif
+  GropCol = $SSQLFields[modCustPatient.$SumGroupColumn - 1]
+  valCol = $SSQLFields[modCustPatient.$SumValueColumn - 1]
+  xFieldList.Add(GropCol)
+  xFieldList.Add(valCol)
+
+  If rbsel.Value = True Then
+    If TreeView1.Current.Text Then
+      xcurr = TreeView1.Current.Text
+      If TreeView1.Current.Picture = Picture["icons/coll1.png"] Then
+        stp = 1
+      Else If TreeView1.Current.Picture = Picture["icons/coll2.png"] Then
+        stp = 2
+      Else If TreeView1.Current.Picture = Picture["icons/coll3.png"] Then
+        stp = 3
+      Endif
+    Endif
+  Else If rball.Value = True Then
+    xcurr = "%"
+    stp = 0
+  Endif
+
+  xChapList = New String[]
+  xGropList = New String[]
+  xFinList = New Variant[]
+  res = ExecuteQuery(xFieldList, $strType, xcurr, stp, modDatabase.$syConn)
+  If res.Available Then
+    For Each res
+      xrowVar = New Variant[]
+      If modCustPatient.$SumChapterColumn Then
+        xchapval = GetGridViewValue(modCustPatient.$SumChapterColumn - 1, res[ChapCol])
+        xrowVar.Add(xchapval)
+        xChapList.Add(xchapval)
+      Endif
+      xgroup = GetGridViewValue(modCustPatient.$SumGroupColumn - 1, res[GropCol])
+      xrowVar.Add(xgroup)
+      xGropList.Add(xgroup)
+
+      xrowVar.Add(GetGridViewValue(modCustPatient.$SumValueColumn - 1, res[valCol]))
+      xFinList.Add(xrowVar)
+    Next
+  Endif
+  Dec Application.Busy
+
+  xx = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate)
+  If modCustPatient.$SumGroupColumn And If modCustPatient.$SumValueColumn Then
+    If modCustPatient.$SumChapterColumn Then
+      If modCustPatient.$SummaryType = "Summation(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapterTableReport("Medicine Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else If modCustPatient.$SummaryType = "Count(Table)" Then
+        xPath = modCHTMLReport.SummaryGridChapCountTableReport("Medicine Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Else
+        xPath = modCHTMLReport.SummaryGridChapterReport("Medicine Report Summary", xx, modString.GetDistinctStringArray(xChapList), modString.GetDistinctStringArray(xGropList), xFinList)
+      Endif
+    Else
+      xPath = modCHTMLReport.SummaryGridReport("Medicine Report Summary", xx, modString.GetDistinctStringArray(xGropList), xFinList)
+    Endif
+    modControlSub.DisplayReportExport(xPath)
+  Endif
+
+End
+
+''--------------------------------------- QTY Chart --------------------------------------
+Private Sub FillItemChartQTY()
+
+  Dim sPath As String
+  Dim sNew As String
+
+  sPath = Temp()
+  File.Save(sPath, $qtyChart.Join(gb.NewLine))
+  sNew = modString.GetGroupSUmmaryCSV(sPath, 0, 1, ";", gb.Tab, gb.Float)
+
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox1, modChart.HistogramChart(sNew, "[Quantity in " & modChart.GetQTYLabelChart() & "]"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox1, modChart.HistogramChart(sNew, "[Quantity in " & modChart.GetQTYLabelChart() & "]"))
+  Endif
+  mnustatsqty.Tag = sNew
+
+End
+
+Public Sub PictureBox1_Menu()
+
+  mnuqty.Popup
+
+End
+
+Public Sub mnuexpoqty_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox1.Image.Save(Dialog.Path &/ "Medicine_Quantity" & ".png")
+
+End
+
+Public Sub mnustatsqty_Click()
+
+  modDevice.DesktopOpenFile(mnustatsqty.Tag)
+
+End
+
+''------------------------------------------------ AMT Chart --------------------------------------------------
+Private Sub FillItemChartAMT()
+
+  Dim sPath As String
+  Dim sNew As String
+
+  sPath = Temp()
+  File.Save(sPath, $amtChart.Join(gb.NewLine))
+  sNew = modString.GetGroupSUmmaryCSV(sPath, 0, 1, ";", gb.Tab, gb.Float)
+
+  If modBasic.$ChartExecStat = "PSPP" Then
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Else
+    modImage.StretchtPictureToBox(PictureBox2, modChart.HistogramChart(sNew, "[Amount in " & modChart.GetAMTLabelChart() & "]"))
+  Endif
+  mnustatsamt.Tag = sNew
+
+End
+
+Public Sub PictureBox2_Menu()
+
+  mnuamt.Popup
+
+End
+
+Public Sub mnuexpoamt_Click()
+
+  If Dialog.SelectDirectory() Then Return
+  PictureBox2.Image.Save(Dialog.Path &/ "MedicineAmount" & ".png")
+
+End
+
+Public Sub mnustatsamt_Click()
+
+  modDevice.DesktopOpenFile(mnustatsamt.Tag)
+
+End
+
+''---------------------------------------- Reports ------------------------------------
+Public Sub btnfullrep_Click()
+
+  Dim xHeader As String[]
+  Dim xhide As Integer[]
+  Dim Column As Integer
+  Dim xCollRow As Collection
+  Dim xColum As Integer
+
+  Dim $hGridExportTable As CExportResult
+  Dim xparam1 As String
+  Dim xparam2 As String
+  Dim encColumn As Integer
+  Dim prm As String
+  Dim xFldList As String[]
+
+  If rbsel.Value = True Then
+    prm = GetRepoType() & "(" & TreeView1.Current.Key & ")"
+  Else If rball.Value = True Then
+    prm = GetRepoType() & "(" & "All Items" & ")"
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  xHeader = New String[]
+  xhide = New Integer[]
+  For Column = 0 To GridView1.Columns.Count - 1
+    xHeader.Add(GridView1.Columns[Column].Text)
+    If GridView1.Columns[Column].Width < 5 Then
+      xhide.Add(Column)
+    Endif
+  Next
+  xparam1 = prm
+  xparam2 = "Date: " & modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate) & " Billing Comp: " & cmbcomp.Text
+  encColumn = 0
+  $hGridExportTable = New CExportResult(Me.Tag, xHeader, xhide, xparam1, xparam2, encColumn)
+
+  Inc Application.Busy
+  xFldList = GetSQLColumns()
+
+  For Each $rData
+    xCollRow = New Collection
+    For xColum = 0 To xFldList.Count - 1
+      xCollRow.Add(GetGridViewValue(xColum, $rData[xFldList[xColum]]), CStr(xColum))
+    Next
+    $hGridExportTable.Add($rData.Index, xCollRow)
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1.Value = ($rData.Index + 1) / $rData.Count
+      Wait
+    Endif
+  Next
+  Dec Application.Busy
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1.Visible = False
+  Endif
+  modControlSub.DisplayReportExport($hGridExportTable.HTMLPath())
+
+End
+
+Public Sub btnserach_Click()
+
+  Dim xx As String
+  Dim xval As Integer
+
+  xx = InputBox(("Search particulars Names starting with .."), ("Generic List"), "")
+  If rbmed.Value = True Then
+    xval = modStockSub.CompleteMedicineTreeEntered(TreeView1, 100 * SpinBox1.Value, xx)
+  Else If rbsurg.Value = True Then
+    xval = modStockSub.CompleteSurgicalTreeEntered(TreeView1, 100 * SpinBox1.Value, xx)
+  Else If rbextra.Value = True Then
+    xval = modStockSub.CompleteExtraTreeEntered(TreeView1, 100 * SpinBox1.Value, xx)
+  Endif
+  lbltotal.Text = ""
+
+End
+
+Public Sub btnprofit_Click()
+
+  Dim xPath As String
+
+  If $strType = "" Then
+  Else
+    cmbtarget.Text = "%"
+    Inc Application.Busy
+    xPath = modRHTMLSummary.ShowProfitReport(modDatabase.$syConn, $strType, dtfir.Value, dtlast.Value, cmbcomp.Text, cmblocation.Text, cmbvalue.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnprofitmap_Click()
+
+  Dim xPath As String
+
+  If $strType = "" Then
+  Else
+    cmbtarget.Text = "%"
+    Inc Application.Busy
+    xPath = modRHTMLSummary.ShowProfitReportMapped(modDatabase.$syConn, $strType, dtfir.Value, dtlast.Value, cmbcomp.Text, cmblocation.Text, cmbvalue.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btntrans_Click()
+
+  Dim xPath As String
+  Dim sList As String[]
+  Dim xList As String[]
+
+  If $strType = "" Then
+  Else
+    cmbtarget.Text = "%"
+    xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldstockid) as col from tblentry where fldcategory=&1", $strType))
+    If xList Then
+      xList.Sort()
+    Endif
+    sList = GridListView(("Select Particulars"), xList)
+    If sList Then
+      Inc Application.Busy
+      If $quickReport = "Disable" Then
+        xPath = modRHTMLSummary.ShowTransectionReport(modDatabase.$syConn, $strType, dtfir.Value, dtlast.Value, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+      Else
+        xPath = modTransaction.ShowTransectionReport(modDatabase.$syConn, $strType, dtfir.Value, dtlast.Value, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+      Endif
+      Dec Application.Busy
+      modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub btntranssumm_Click()
+
+  Dim xPath As String
+  Dim sList As String[]
+  Dim xList As String[]
+
+  If $strType = "" Then
+  Else
+    cmbtarget.Text = "%"
+    xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldstockid) as col from tblentry where fldcategory=&1", $strType))
+    If xList Then
+      xList.Sort()
+    Endif
+    sList = GridListView(("Select Particulars"), xList)
+    If sList Then
+      Inc Application.Busy
+      If $quickReport = "Disable" Then
+        xPath = modRHTMLSummary.ShowTransectionReportItemwise(modDatabase.$syConn, $strType, dtfir.Value, dtlast.Value, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+      Else
+        xPath = modTransaction.ShowTransectionReportItemwise(modDatabase.$syConn, $strType, dtfir.Value, dtlast.Value, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+      Endif
+      Dec Application.Busy
+      modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub btncurrstock_Click()
+
+  Dim xdate As Date
+  Dim xPath As String
+
+  Dim sList As String[]
+  Dim xList As String[]
+
+  If $strType = "" Then
+  Else
+    cmbtarget.Text = "%"
+    Dialog.Title = ("Inventory Value of ") & $strType & (" on Date")
+    If Dialog.SelectDate() Then Return
+    xdate = Dialog.Date
+    If xdate Then
+      xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldstockid) as col from tblentry where fldcategory=&1", $strType))
+      If xList Then
+        xList.Sort()
+      Endif
+      sList = GridListView(("Select Particulars"), xList)
+      If sList Then
+        Inc Application.Busy
+        If $quickReport = "Disable" Then
+          xPath = modRHTMLSummary.ShowSpecStockReport(modDatabase.$syConn, $strType, xdate, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+        Else
+          xPath = modTransaction.ShowSpecStockReport(modDatabase.$syConn, $strType, xdate, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+        Endif
+        Dec Application.Busy
+        modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btncurrstocksumm_Click()
+
+  Dim xdate As Date
+  Dim xPath As String
+
+  Dim sList As String[]
+  Dim xList As String[]
+
+  If $strType = "" Then
+  Else
+    cmbtarget.Text = "%"
+    Dialog.Title = ("Inventory Value of ") & $strType & (" on Date")
+    If Dialog.SelectDate() Then Return
+    xdate = Dialog.Date
+    If xdate Then
+      xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldstockid) as col from tblentry where fldcategory=&1", $strType))
+      If xList Then
+        xList.Sort()
+      Endif
+      sList = GridListView(("Select Particulars"), xList)
+      If sList Then
+        Inc Application.Busy
+        If $quickReport = "Disable" Then
+          xPath = modRHTMLSummary.ShowSpecStockReportItemwise(modDatabase.$syConn, $strType, xdate, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+        Else
+          xPath = modTransaction.ShowSpecStockReportItemwise(modDatabase.$syConn, $strType, xdate, cmbcomp.Text, sList, cmblocation.Text, cmbvalue.Text, chknullval.Value)
+        Endif
+        Dec Application.Busy
+        modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub btnsummary_Click()
+
+  Dim xPath As String
+
+  If $strType = "" Then
+  Else
+    Inc Application.Busy
+    If rbpurchase.Value = True Then
+      xPath = modHTMLStock.GetPurchaseSummaryReport($strType, dtfir.Value, dtlast.Value, cmbcomp.Text)
+    Else If rbdisp.Value = True Then
+      xPath = modHTMLStock.GetDispenseSummaryReport($strType, dtfir.Value, dtlast.Value, cmbcomp.Text)
+    Else If rbbulk.Value = True Then
+      xPath = modHTMLStock.GetConsumeSummaryReport($strType, dtfir.Value, dtlast.Value, cmbcomp.Text)
+    Endif
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub chkqty_Click()
+
+  TabStrip1.Index = 1
+
+End
+
+Public Sub chkamt_Click()
+
+  TabStrip1.Index = 2
+
+End
+
+Public Sub btntransaction_Click()
+
+  Dim hForm As FmTransaction
+
+  hForm = New FmTransaction(cmblocation.Text, cmbvalue.Text)
+  hForm.ShowModal
+
+End
+
+Public Sub mnucolumns_Click()
+
+  If Message.Question(modGridView.GetColumnsListString(GridView1), ("OK"), ("Setting")) = 2 Then
+    fmChartSetting.Close
+    fmChartSetting.ShowModal
+  Endif
+
+End
+
+Public Sub mnuaddcolm_Click()
+
+  Dim hForm As FmAddNewColumn
+
+  hForm = New FmAddNewColumn(Me.Tag)
+  hForm.ShowModal
+
+End
+
+Public Sub mnuexpocolumn_Click()
+
+  Dim hForm As FmCustColumnSet
+
+  hForm = New FmCustColumnSet(Me.Tag)
+  hForm.ShowModal
+
+End
+
+Public Sub mnunarcotic_Click()
+
+  Dim xList As String[]
+  Dim sList As String[]
+  Dim xPath As String
+
+  xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select fldbrandid from tblmedbrand where fldnarcotic=&1", "Yes"))
+  If xList.Count Then
+    sList = GridListView(("Select Particulars"), xList)
+    If sList.Count Then
+      Inc Application.Busy
+      xPath = modHTMLStock.GetDDANarcoticReport(sList, dtfir.Value, dtlast.Value)
+      Dec Application.Busy
+      modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub mnuTransferSumm_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHTMLStock.GetTransferFromCompSummary(dtfir.Value, dtlast.Value, cmbcomp.Text)
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+Public Sub mnuconsumSumm_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHTMLStock.GetConsumeFromCompSummary(dtfir.Value, dtlast.Value, cmbcomp.Text)
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End

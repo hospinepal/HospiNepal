@@ -1,0 +1,996 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $selDate As Boolean
+
+Private $sValue As String
+
+Public Sub Run() As String
+
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False", True)
+  DisplayTextBoxEnableSetting()
+
+  cmbsex.List = ["Male", "Female", "Other"]
+  chknull.Value = False
+
+  cmbdistrict.List = modBasic.$DistrictList
+  cmbrelation.List = modBasic.$RelationList
+
+  cmbdisctype.List = modBasic.$BillDiscountRegd
+  cmbconsult.List = modGeneral.RegistrationDeptList()
+  cmbbillmode.List = modBasic.$BillBillingMode
+
+  dtconsultdate.Value = Now()
+  dtconsultime.Value = Time()
+  btnyear.Text = "Year"
+  btnmon.Text = "Mon"
+
+  cmbsex.Text = modBasic.$RegGender
+  cmbdistrict.Text = modBasic.$RegDistrict
+  cmbrelation.Text = modBasic.$RegRelation
+  cmbconsult.Text = modBasic.$RegDepart
+  FillRegistrationGrid(dtconsultdate.Value)
+  cmbconsult.SetFocus
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key["Y"] And If Key.Alt Then
+    btnyear.Text = "Year"
+    btnmon.Text = "Mon"
+  Else If Key.Code = Key["M"] And If Key.Alt Then
+    btnyear.Text = "Mon"
+    btnmon.Text = "Day"
+  Else If Key.Code = Key["D"] And If Key.Alt Then
+    btnyear.Text = "Day"
+    btnmon.Text = "Hour"
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+''---------------------------- Button Procedures -----------------------------------------
+Public Sub btnOK_GotFocus()
+
+  btnOK.Font.Bold = True
+
+End
+
+Public Sub btnOK_LostFocus()
+
+  btnOK.Font.Bold = False
+
+End
+
+Public Sub btnCancel_GotFocus()
+
+  btnCancel_Click()
+
+End
+
+Public Sub btnCancel_Click()
+
+  Dim xx As String
+  Dim sms As Integer
+
+  If txtbookingid.Text Then
+    $sValue = Trim(txtbookingid.Text)
+    btnOK.Enabled = False
+    xx = "<b>" & "BOOKING ID: " & Trim(txtbookingid.Text) & "</b>" & gb.NewLine
+    xx = xx & "<b>" & "BOOKING Date: " & modReportVar.GetDateTimeReport(dtconsultdate.Value, gb.MediumDate) & "</b>" & gb.NewLine
+    xx = xx & "<b>" & "BOOKING DEPT: " & cmbconsult.Text & "</b>" & gb.NewLine
+    xx = xx & "<b>" & "CONSULTANT: " & btnconsult.Text & "</b>"
+    sms = Message.Question(xx, ("Show"), ("Close"), ("Edit"))
+    If sms = 3 Then
+      txtbookingid.SetFocus
+    Else If sms = 2 Then
+      Me.Close(True)
+    Else
+      sms = Message.Question(xx, ("Show"), ("Close"), ("Edit"))
+    Endif
+  Else
+    Me.Close
+  Endif
+
+End
+
+Public Sub btnOK_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnOK_Click()
+  Endif
+
+End
+
+Private Function GetConsultLock() As Boolean
+
+  Dim xLock As Boolean
+  Dim curqty As Integer
+  Dim bokdone As Integer
+  Dim quota As Integer
+  Dim totregist As Integer
+
+  curqty = 0
+  bokdone = 0
+  quota = 0
+  totregist = 0
+  If modBasic.$RegistLockToQuota = "Yes" Then
+    curqty = modConsult.GetPatientBooked("Planned", cmbconsult.Text, dtconsultdate.Value, cmbbillmode.Text, btnconsult.Tag)
+    txtbooked.Value = curqty
+    bokdone = modConsult.GetPatientBooked("Done", cmbconsult.Text, dtconsultdate.Value, cmbbillmode.Text, btnconsult.Tag)
+    txtbookdone.Value = bokdone
+    quota = modConsult.GetPatientQuota(cmbconsult.Text, dtconsultdate.Value, cmbbillmode.Text, btnconsult.Tag)
+    txtmaxquota.Value = quota
+    totregist = modConsult.GetPatientRegisteredValid(cmbconsult.Text, dtconsultdate.Value, cmbbillmode.Text, btnconsult.Tag)
+    txtregd.Value = totregist
+
+    If quota Then
+      If (curqty + totregist + 1) > quota Then
+        xLock = True
+        Message.Warning(("Patient Allocation Quota reached"), ("OK"))
+      Else
+        xLock = False
+      Endif
+    Else
+      xLock = False
+    Endif
+  Else
+    xLock = False
+  Endif
+
+  Return xLock
+
+End
+
+Private Sub RegisterBooking()
+
+  Dim res As Result
+  Dim dt As Date
+  Dim $DOBirth As Date
+
+  If $selDate = True Then
+    $DOBirth = dtdobmain.Value
+  Else
+    If txtmonths.Value = 0 Then
+      If btnyear.Text = "Year" Then
+        $DOBirth = DateAdd(Now(), gb.Year, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(txtyears.Value))
+      Endif
+
+    Else
+      If btnyear.Text = "Year" And If btnmon.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(12 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Mon" And If btnmon.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(30 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Day" And If btnmon.Text = "Hour" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(24 * txtyears.Value + txtmonths.Value))
+      Endif
+
+    Endif
+  Endif
+
+  If modPatient.SearchPatNo(Trim(txtpatno.Text)) = False Then
+    txtpatno.Text = ""
+  Endif
+
+  If txtbookingid.Text Then
+  Else
+    txtbookingid.Text = modBillLock.BookingNoValue()
+  Endif
+
+  Inc Application.Busy
+  dt = Date(Year(dtconsultdate.Value), Month(dtconsultdate.Value), Day(dtconsultdate.Value), Hour(dtconsultime.Value), Minute(dtconsultime.Value), Second(dtconsultime.Value))
+
+  res = modDatabase.$myConn.Create("tblpatientbook")
+  res["fldbookingval"] = Trim(txtbookingid.Text)
+  res["fldpatientval"] = Trim(txtpatno.Text)
+  res["fldptnamefir"] = Trim(txtnamefir.text)
+  res["fldptnamelast"] = Trim(txtnamelast.text)
+  res["fldethniccode"] = Trim(txtethcode.Text)
+  res["fldptaddward"] = Trim(txtward.Text)
+  res["fldptaddvill"] = String.UCaseFirst(Trim(txtaddfir.Text))
+  res["fldptadddist"] = Trim(cmbdistrict.Text)
+  res["fldptsex"] = cmbsex.text
+  res["fldptcontact"] = Trim(txtcontact.Text)
+  res["fldptguardian"] = Trim(txtguardian.Text)
+  res["fldrelation"] = Trim(cmbrelation.Text)
+  If chknull.Value = False Then
+    res["fldptbirday"] = $DOBirth
+  Endif
+  res["fldptadmindate"] = Now()
+  res["fldemail"] = Trim(txtemail.Text)
+  res["fldptcode"] = Trim(txtpatcode.Text)
+  res["fldconsultdate"] = dt
+  res["fldadmitlocat"] = cmbconsult.Text
+  res["flduserid"] = btnconsult.Tag
+  res["fldstate"] = "Planned"
+  res["flddisctype"] = cmbdisctype.Text
+  res["fldbillingmode"] = cmbbillmode.Text
+  res["fldcomp"] = modBasic.$compID
+  res["fldorduserid"] = modBasic.$lbluser
+  res["fldpayreference"] = ""
+  res["fldcomment"] = ""
+  res["fldencounterval"] = ""
+  res["xyz"] = False
+  res.Update()
+  Dec Application.Busy
+
+End
+
+Public Sub btnOK_Click()
+
+  If txtnamefir.Text And If txtnamelast.Text And If cmbsex.Text And If cmbconsult.Text And If cmbbillmode.Text Then
+    RegisterBooking()
+    btnOK.Enabled = False
+    FillRegistrationGrid(dtconsultdate.Value)
+  Endif  ''check if name, gender, dept are listed
+
+End
+
+Public Sub btnChange_Click()
+
+  Dim res As Result
+  Dim $DOBirth As Date
+  Dim dt As Date
+
+  If $selDate = True Then
+    $DOBirth = dtdobmain.Value
+  Else
+    If txtmonths.Value = 0 Then
+      If btnyear.Text = "Year" Then
+        $DOBirth = DateAdd(Now(), gb.Year, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(txtyears.Value))
+      Else If btnyear.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(txtyears.Value))
+      Endif
+
+    Else
+      If btnyear.Text = "Year" And If btnmon.Text = "Mon" Then
+        $DOBirth = DateAdd(Now(), gb.Month, 0 - CInt(12 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Mon" And If btnmon.Text = "Day" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(30 * txtyears.Value + txtmonths.Value))
+      Else If btnyear.Text = "Day" And If btnmon.Text = "Hour" Then
+        $DOBirth = DateAdd(Now(), gb.Day, 0 - CInt(24 * txtyears.Value + txtmonths.Value))
+      Endif
+
+    Endif
+  Endif
+
+  dt = Date(Year(dtconsultdate.Value), Month(dtconsultdate.Value), Day(dtconsultdate.Value), Hour(dtconsultime.Value), Minute(dtconsultime.Value), Second(dtconsultime.Value))
+  If txtbookingid.Text Then
+    res = modDatabase.$myConn.Edit("tblpatientbook", "fldbookingval=&1", Trim(txtbookingid.Text))
+    If res.Available Then
+      res["fldptnamefir"] = Trim(txtnamefir.text)
+      res["fldptnamelast"] = Trim(txtnamelast.text)
+      res["fldethniccode"] = Trim(txtethcode.Text)
+      res["fldptaddvill"] = Trim(txtaddfir.text)
+      res["fldptaddward"] = Trim(txtward.Text)
+      res["fldptadddist"] = Trim(cmbdistrict.text)
+      res["fldptsex"] = cmbsex.text
+      res["fldptcontact"] = Trim(txtcontact.text)
+      res["fldptguardian"] = Trim(txtguardian.text)
+      res["fldrelation"] = cmbrelation.Text
+      If chknull.Value = False Then
+        res["fldptbirday"] = $DOBirth
+      Endif
+      res["fldemail"] = Trim(txtemail.Text)
+      res["fldptcode"] = txtpatcode.Text
+      res["fldconsultdate"] = dt
+      res["fldadmitlocat"] = cmbconsult.Text
+      res["flduserid"] = btnconsult.Tag
+      res["xyz"] = False
+      res.Update()
+      FillRegistrationGrid(dtconsultdate.Value)
+      Balloon.Info(("Information updated"), btnChange)
+      Balloon.Delay = modBasic.$BalloonDelay
+    Endif
+  Else
+    Message.Warning(("Booking ID is NULL"), ("OK"))
+  Endif
+
+End
+
+''------------------------------------- form procedures ------------------------------------
+Public Sub txtpatno_LostFocus()
+
+  Dim res As Result
+  Dim sql As String
+  Dim xaddr As String[]
+
+  $selDate = False
+  dtdobmain.Value = ""
+  If txtpatno.Text Then
+    sql = "select fldptnamefir,fldptnamelast,fldptaddvill,fldptaddward,fldptadddist,fldptsex,fldptcontact,fldptguardian,fldptbirday,fldptadmindate,fldemail,fldptcode,fldrelation,fldencrypt from tblpatientinfo where fldpatientval=&1"
+    res = modDatabase.$myConn.Exec(sql, Trim(txtpatno.Text))
+    If res.Available = False Then
+      modLinkDB.CheckPatientDataRemote(Trim(txtpatno.Text))
+      txtpatno.SetFocus
+    Else
+      cmbdistrict.Text = res["fldptadddist"] ''district always before address
+      cmbsex.Text = res["fldptsex"]
+
+      If res["fldptaddward"] Then
+        txtward.Text = res["fldptaddward"]
+        txtaddfir.Text = res["fldptaddvill"]
+      Else
+        xaddr = Split(res["fldptaddvill"], "-")
+        If xaddr.Count > 1 Then
+          If IsInteger(xaddr[xaddr.Count - 1]) Then
+            txtward.Text = xaddr[xaddr.Count - 1]
+            txtaddfir.Text = xaddr.Copy(0, xaddr.Count - 1).Join("-")
+          Else
+            txtward.Text = ""
+            txtaddfir.Text = xaddr.Join("-")
+          Endif
+        Else
+          txtward.Text = ""
+          txtaddfir.Text = xaddr.Join("-")
+        Endif
+      Endif
+
+      txtguardian.Text = res["fldptguardian"]
+      cmbrelation.Text = res["fldrelation"]
+      If modBasic.$SuperUser = True Then
+        txtnamefir.Text = modPassword.DecryptPatData(res["fldptnamefir"], res["fldencrypt"])
+        txtnamelast.Text = modPassword.DecryptPatData(res["fldptnamelast"], res["fldencrypt"])
+        txtcontact.Text = modPassword.DecryptPatData(res["fldptcontact"], res["fldencrypt"])
+        txtemail.Text = modPassword.DecryptPatData(res["fldemail"], res["fldencrypt"])
+      Else
+        txtnamefir.Text = res["fldptnamefir"]
+        txtnamelast.Text = res["fldptnamelast"]
+        txtcontact.Text = res["fldptcontact"]
+        txtemail.Text = res["fldemail"]
+      Endif
+      txtpatcode.Text = res["fldptcode"]
+      If res["fldptbirday"] Then
+        chknull.Value = False
+        dtdobmain.Value = res["fldptbirday"]
+        $selDate = True
+        modDateSub.DateToYearandMonth(res["fldptbirday"], txtyears, txtmonths, btnyear, btnmon)
+      Else
+        chknull.Value = True
+      Endif
+      btnOK.SetFocus
+    Endif
+
+  Endif
+
+End
+
+Public Sub txtnamefir_LostFocus()
+
+  txtnamefir.Text = String.UCaseFirst(Trim(txtnamefir.Text))
+
+End
+
+Public Sub txtnamelast_KeyRelease()
+
+  If Not txtnamelast.Text Then
+    If modBasic.$SurNameList Then
+
+      If Key.Code = Key.Down Then
+        txtnamelast.Text = GridViewNew("Select SurName", modBasic.$SurNameList, False, txtnamelast)
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub txtnamelast_LostFocus()
+
+  txtnamelast.Text = String.UCaseFirst(Trim(txtnamelast.Text))
+
+End
+
+Public Sub txtaddfir_LostFocus()
+
+  txtaddfir.Text = String.UCaseFirst(Trim(txtaddfir.Text))
+
+End
+
+Public Sub cmbdistrict_LostFocus()
+
+  cmbdistrict.Text = String.UCaseFirst(Trim(cmbdistrict.Text))
+
+End
+
+Public Sub txtguardian_LostFocus()
+
+  txtguardian.Text = String.UCaseFirst(Trim(txtguardian.Text))
+
+End
+
+Public Sub cmbrelation_LostFocus()
+
+  cmbrelation.Text = String.UCaseFirst(Trim(cmbrelation.Text))
+
+End
+
+Public Sub txtcontact_LostFocus()
+
+  txtcontact.Text = Trim(txtcontact.Text)
+
+End
+
+Public Sub txtemail_LostFocus()
+
+  txtemail.Text = Trim(txtemail.Text)
+
+End
+
+Public Sub txtaddfir_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(txtaddfir)
+  If modBasic.$UnLockAddress = "Yes" Then
+  Else
+    modFillContainer.RestrictComboToContent(txtaddfir)
+  Endif
+
+End
+
+Public Sub cmbdistrict_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdistrict)
+  If modBasic.$UnLockDistrict = "Yes" Then
+  Else
+    modFillContainer.RestrictComboToContent(cmbdistrict)
+  Endif
+
+End
+
+Public Sub cmbsex_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbsex)
+  modFillContainer.RestrictComboToContent(cmbsex)
+
+End
+
+Public Sub cmbsex_LostFocus()
+
+  modFillContainer.RestrictCombo(cmbsex)
+
+End
+
+Public Sub cmbrelation_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbrelation)
+  If modBasic.$UnLockRelation = "Yes" Then
+  Else
+    modFillContainer.RestrictComboToContent(cmbrelation)
+  Endif
+
+End
+
+Public Sub cmbconsult_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbconsult)
+  modFillContainer.RestrictComboToContent(cmbconsult)
+
+End
+
+Public Sub cmbconsult_LostFocus()
+
+  modFillContainer.RestrictCombo(cmbconsult)
+
+End
+
+Public Sub dtdobmain_Click()
+
+  If dtdobmain.Value Then
+    $selDate = True
+    modDateSub.DateToYearandMonth(dtdobmain.Value, txtyears, txtmonths, btnyear, btnmon)
+  Endif
+
+End
+
+Public Sub btnyear_Click()
+
+  If btnyear.Text = "Year" Then
+    btnyear.Text = "Mon"
+    btnmon.Text = "Day"
+  Else If btnyear.Text = "Mon" Then
+    btnyear.Text = "Day"
+    btnmon.Text = "Hour"
+  Else If btnyear.Text = "Day" Then
+    btnyear.Text = "Year"
+    btnmon.Text = "Mon"
+  Endif
+
+End
+
+Public Sub txtmonths_LostFocus()
+
+  If txtyears.Value = 0 And If txtmonths.Value = 0 Then
+    chknull.Value = True
+  Else If txtmonths.Value > 12 And If btnmon.Text = "Mon" Then
+    txtmonths.Value = 0
+    Message.Warning(("Wrong Age value"), ("OK"))
+  Else If txtmonths.Value > 30 And If btnmon.Text = "Day" Then
+    txtmonths.Value = 0
+    Message.Warning(("Wrong Age value"), ("OK"))
+  Else If txtmonths.Value > 24 And If btnmon.Text = "Hour" Then
+    txtmonths.Value = 0
+    Message.Warning(("Wrong Age value"), ("OK"))
+  Endif
+
+End
+
+Private Function FillCOnsultantList() As Variant[]
+
+  Dim doclist As Variant[]
+
+  If modBasic.$LockConsultant = "LockByQuota" Then
+    doclist = modConsult.GetUserPostingList(cmbconsult.Text, dtconsultdate.Value, cmbbillmode.Text)
+  Else
+    doclist = modBasic.$OPConsulUserList
+  Endif
+  Return doclist
+
+End
+
+Public Sub btnconsult_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Consultant"), FillCOnsultantList())
+  If xMedUser And If xMedUser.Count Then
+    btnconsult.Tag = xMedUser[0]
+    btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
+  Endif
+
+End
+
+Public Sub btnconsult_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    If btnconsult.Tag Then
+    Else
+      btnconsult_Click()
+    Endif
+  Endif
+
+End
+
+Public Sub btnconsult_Change()
+
+  If btnconsult.Text = "" Then
+    btnconsult.Tag = ""
+  Endif
+
+End
+
+Public Sub btnhospcode_Click()
+
+  Dim xval As String
+
+  xval = InputBox(("Enter Patient's Code/PAN"), "Code/PAN", "")
+  If xval Then
+    txtpatno.Text = modPatient.GetPatientNoByHospCode(xval)
+  Endif
+
+End
+
+''------------------------------------------- Reports------------------------------------
+Public Sub dtnepcal_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtconsultdate.Value))
+  If xx Then
+    dtconsultdate.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnfullrep_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, "BOOKING REPORT", modReportVar.GetDateTimeReport(btnreport.Tag, gb.MediumDate))
+
+End
+
+Public Sub btnreport_Click()
+
+  Dim sDate As Date
+
+  sDate = GetDateValue("Select Date", "Booking", Date())
+  If sDate Then
+    FillRegistrationGrid(sDate)
+  Endif
+
+End
+
+''-----------------------------------Grid View and menu items ----------------------------------------
+Private Sub FillRegistrationGrid(sDate As Date)
+
+  Dim sql As String
+
+  btnreport.Tag = sDate
+  sql = "select fldbookingval,fldconsultdate,fldbillingmode,fldadmitlocat,fldptnamefir,fldptnamelast,fldptsex,fldptcontact,flduserid,fldpatientval,fldpayreference from tblpatientbook where fldptadmindate>=&1 and fldptadmindate<=&2 and fldcomp=&3 ORDER BY fldptadmindate DESC"
+  $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(sDate), modDate.EndSqlDate(sDate), modBasic.$compID)
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 85 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 1
+    .Columns[10].Width = 1
+
+    .Columns[0].Text = "BookID"
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "RatePlan"
+    .Columns[3].Text = "Department"
+    .Columns[4].Text = "Name"
+    .Columns[5].Text = "Surname"
+    .Columns[6].Text = "Gender"
+    .Columns[7].Text = "Contact"
+    .Columns[8].Text = "Consult"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 8 Then
+    GridView1.Data.Text = modGeneral.GetUserFullName($rData[$aMyFields[Column]])
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+'
+''
+'''
+''--------------------------------------enable/disable textbox ------------------------------
+Private Sub TextBoxEnableSetting(chk As CheckBox, TxtBox As TextBox)
+
+  If chk.Value = True Then
+    TxtBox.Enabled = True
+  Else If chk.Value = False Then
+    TxtBox.Enabled = False
+  Endif
+
+End
+
+Private Sub ComboBoxEnableSetting(chk As CheckBox, CmboBox As ComboBox)
+
+  If chk.Value = True Then
+    CmboBox.Enabled = True
+  Else If chk.Value = False Then
+    CmboBox.Enabled = False
+  Endif
+
+End
+
+Private Sub ButtonEnableSetting(chk As CheckBox, CmboBox As ButtonBox)
+
+  If chk.Value = True Then
+    CmboBox.Enabled = True
+  Else If chk.Value = False Then
+    CmboBox.Enabled = False
+  Endif
+
+End
+
+Public Sub chkaddfir_Click()
+
+  modSettings.EnterCheckSetting(chkaddfir, "RegistrationForm/Enable_Address")
+  ComboBoxEnableSetting(chkaddfir, txtaddfir)
+
+End
+
+Public Sub chkdistrict_Click()
+
+  modSettings.EnterCheckSetting(chkdistrict, "RegistrationForm/Enable_District")
+  ComboBoxEnableSetting(chkdistrict, cmbdistrict)
+
+End
+
+Public Sub chkcontact_Click()
+
+  modSettings.EnterCheckSetting(chkcontact, "RegistrationForm/Enable_Contact")
+  TextBoxEnableSetting(chkcontact, txtcontact)
+
+End
+
+Public Sub chkemail_Click()
+
+  modSettings.EnterCheckSetting(chkemail, "RegistrationForm/Enable_EMail")
+  TextBoxEnableSetting(chkemail, txtemail)
+
+End
+
+Public Sub chkguardian_Click()
+
+  modSettings.EnterCheckSetting(chkguardian, "RegistrationForm/Enable_Guardian")
+  TextBoxEnableSetting(chkguardian, txtguardian)
+
+End
+
+Public Sub chkrelation_Click()
+
+  modSettings.EnterCheckSetting(chkrelation, "RegistrationForm/Enable_Relation")
+  ComboBoxEnableSetting(chkrelation, cmbrelation)
+
+End
+
+Public Sub chkptcode_Click()
+
+  modSettings.EnterCheckSetting(chkptcode, "RegistrationForm/Enable_ExtCode")
+  TextBoxEnableSetting(chkptcode, txtpatcode)
+
+End
+
+Public Sub chkconsult_Click()
+
+  modSettings.EnterCheckSetting(chkconsult, "RegistrationForm/Enable_Consultant")
+  ButtonEnableSetting(chkconsult, btnconsult)
+
+End
+
+Private Sub DisplayTextBoxEnableSetting()
+
+  modSettings.ShowCheckBox(chkaddfir, "RegistrationForm/Enable_Address")
+  ComboBoxEnableSetting(chkaddfir, txtaddfir)
+
+  modSettings.ShowCheckBox(chkdistrict, "RegistrationForm/Enable_District")
+  ComboBoxEnableSetting(chkdistrict, cmbdistrict)
+
+  modSettings.ShowCheckBox(chkcontact, "RegistrationForm/Enable_Contact")
+  TextBoxEnableSetting(chkcontact, txtcontact)
+
+  modSettings.ShowCheckBox(chkemail, "RegistrationForm/Enable_EMail")
+  TextBoxEnableSetting(chkemail, txtemail)
+
+  modSettings.ShowCheckBox(chkguardian, "RegistrationForm/Enable_Guardian")
+  TextBoxEnableSetting(chkguardian, txtguardian)
+
+  modSettings.ShowCheckBox(chkrelation, "RegistrationForm/Enable_Relation")
+  ComboBoxEnableSetting(chkrelation, cmbrelation)
+
+  modSettings.ShowCheckBox(chkptcode, "RegistrationForm/Enable_ExtCode")
+  TextBoxEnableSetting(chkptcode, txtpatcode)
+
+  modSettings.ShowCheckBox(chkconsult, "RegistrationForm/Enable_Consultant")
+  ButtonEnableSetting(chkconsult, btnconsult)
+
+End
+
+Public Sub cmbdisctype_Click()
+
+  LoadDiscCreditVal()
+
+End
+
+Public Sub cmbdisctype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdisctype)
+  modFillContainer.RestrictComboToContent(cmbdisctype)
+
+End
+
+Public Sub cmbdisctype_LostFocus()
+
+  modFillContainer.RestrictCombo(cmbdisctype)
+
+End
+
+Private Sub LoadDiscCreditVal()
+
+  Dim resx As Result
+
+  txtreference.Text = ""
+  txtdiscnt.Value = 0
+  txtcredit.Value = 0
+  If cmbdisctype.Text Then
+    resx = modDatabase.$myConn.Exec("select fldbillingmode,fldamount,fldcredit,fldreference,fldlimit,fldyear from tbldiscount where fldtype=&1", cmbdisctype.Text)
+    If resx.Available Then
+      ''billingmode
+      If resx["fldbillingmode"] Then
+        cmbbillmode.Text = resx["fldbillingmode"]
+        cmbbillmode.Enabled = False
+      Else
+        cmbbillmode.Text = modBasic.$RegistDefaultMode
+      Endif
+      ''claim code
+      If resx["fldreference"] Then
+        If resx["fldreference"] = "Claim Code" Then
+          txtreference.Text = "Claim Code"
+        Else If resx["fldreference"] = "Accident SSF" Then
+          txtreference.Text = "Accident SSF"
+        Else If resx["fldreference"] = "Critical SSF" Then
+          txtreference.Text = "Critical SSF"
+        Else If resx["fldreference"] = "Medical SSF" Then
+          txtreference.Text = "Medical SSF"
+        Endif
+      Endif
+      ''credit/discount limit
+      If resx["fldlimit"] Then
+        If resx["fldlimit"] = "YearlyDiscount" Then
+          If resx["fldamount"] Then
+            txtdiscnt.Value = resx["fldamount"]
+          Endif
+        Else If resx["fldlimit"] = "YearlyCreditAMT" Then
+          If resx["fldcredit"] Then
+            txtcredit.Value = resx["fldcredit"]
+          Endif
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnshowrefr_Click()
+
+  If cmbconsult.Text Then
+    If dtconsultdate.Value Then
+      If GetConsultLock() = True Then
+        btnOK.Enabled = False
+      Else
+        Panel2.Enabled = True
+      Endif
+    Endif
+    btnshowrefr.Picture = Picture["icon:/small/down"]
+  Endif
+
+End
+
+Public Sub btnshowrefr_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnshowrefr_Click()
+  Endif
+
+End
+
+Public Sub cmbbillmode_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbbillmode)
+  modFillContainer.RestrictComboToContent(cmbbillmode)
+
+End
+
+Public Sub cmbbillmode_LostFocus()
+
+  modFillContainer.RestrictCombo(cmbbillmode)
+
+End
+
+Public Sub btnfindpatno_Click()
+
+  Dim res As Result
+  Dim xaddr As String[]
+
+  If txtbookingid.Text Then
+    res = modDatabase.$myConn.Exec("select fldpatientval,fldptnamefir,fldptnamelast,fldptaddvill,fldptaddward,fldptadddist,fldptsex,fldptcontact,fldptguardian,fldptbirday,fldptadmindate,fldemail,fldptcode,fldrelation,fldadmitlocat,fldbillingmode,fldconsultdate,flduserid from tblpatientbook where fldbookingval=&1", Trim(txtbookingid.Text))                                      ''
+    If res.Available Then
+      txtpatno.Text = res["fldpatientval"]
+      cmbdistrict.Text = res["fldptadddist"]  ''district always before address
+      cmbsex.Text = res["fldptsex"]
+
+      If res["fldptaddward"] Then
+        txtward.Text = res["fldptaddward"]
+        txtaddfir.Text = res["fldptaddvill"]
+      Else
+        xaddr = Split(res["fldptaddvill"], "-")
+        If xaddr.Count > 1 Then
+          If IsInteger(xaddr[xaddr.Count - 1]) Then
+            txtward.Text = xaddr[xaddr.Count - 1]
+            txtaddfir.Text = xaddr.Copy(0, xaddr.Count - 1).Join("-")
+          Else
+            txtward.Text = ""
+            txtaddfir.Text = xaddr.Join("-")
+          Endif
+        Else
+          txtward.Text = ""
+          txtaddfir.Text = xaddr.Join("-")
+        Endif
+      Endif
+
+      txtcontact.Text = res["fldptcontact"]
+      txtguardian.Text = res["fldptguardian"]
+      cmbrelation.Text = res["fldrelation"]
+      txtnamefir.Text = res["fldptnamefir"]
+      txtnamelast.Text = res["fldptnamelast"]
+      txtemail.Text = res["fldemail"]
+      txtpatcode.Text = res["fldptcode"]
+      cmbconsult.Text = res["fldadmitlocat"]
+      cmbbillmode.Text = res["fldbillingmode"]
+      dtconsultdate.Value = res["fldconsultdate"]
+      If res["fldptbirday"] Then
+        chknull.Value = False
+        dtdobmain.Value = res["fldptbirday"]
+        modDateSub.DateToYearandMonth(res["fldptbirday"], txtyears, txtmonths, btnyear, btnmon)
+      Else
+        chknull.Value = True
+      Endif
+      FillCOnsultantList()
+      btnconsult.Tag = res["flduserid"]
+      btnconsult.Text = modGeneral.GetUserFullName(btnconsult.Tag)
+    Endif
+  Endif
+
+End
+
+Public Sub btnfindpatno_KeyPress()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnfindpatno_Click()
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  txtbookingid.Text = GridView1[GridView1.Row, 0].Text
+
+End
+
+Public Sub txtpatno_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+Public Sub txtbookingid_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+Public Sub cmbdistrict_Click()
+
+  txtaddfir.Clear()
+  If cmbdistrict.Text Then
+    txtaddfir.List = modDataRepo.GetMunicipalsByDistrict(cmbdistrict.Text)
+  Endif
+
+End
+
+Public Sub txtyears_GotFocus()
+
+  txtyears.SelectAll
+
+End
+
+Public Sub txtmonths_GotFocus()
+
+  txtmonths.SelectAll
+
+End

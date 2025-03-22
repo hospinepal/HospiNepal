@@ -1,0 +1,413 @@
+' Gambas class file
+
+Private $Index As Long
+Private $sType As String
+Private $sTable As String
+Private $sBnW As Boolean
+Private $sClaim As String
+Private xFilePath As String
+
+Private $hPDF As PdfDocument
+
+Public Sub _new(sIndex As Long, sType As String, sTable As String, sBnW As Boolean, sClaim As String)
+
+  $Index = sIndex
+  $sType = sType
+  If sTable Then
+    $sTable = sTable
+  Else
+    $sTable = "tblpatreport"
+  Endif
+  $sBnW = sBnW
+  If sClaim Then
+    $sClaim = sClaim
+  Else
+    $sClaim = ""
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  Dim aPath As String
+
+  If $sType = "Report" Then
+    aPath = GetBlobData($Index)
+  Else If $sType = "Invoice" Then
+    aPath = GetInvoiceData($Index)
+  Else If $sType = "Receipt" Then
+    aPath = GetReceiptData($Index)
+  Endif
+  Select Case Lower(File.Ext(aPath))
+    Case "bmp", "jpg", "jpeg", "png", "gif", "svg", "tiff"
+      If $sBnW = True Then
+        xFilePath = modDevAll.ConvertToBlackInWhite(aPath)
+      Else
+        xFilePath = aPath
+      Endif
+      DisplayImage(xFilePath)
+    Case Else
+      xFilePath = aPath
+      DisplayPDF(xFilePath)
+  End Select
+  Wait
+  If Exist(xFilePath) Then
+    btnupload.Enabled = True
+  Endif
+
+End
+
+Private Sub MarkPrinted(serial As Long)
+
+  Dim res As Result
+
+  If $sType = "Report" Then
+    res = modDatabase.$myConn.Edit($sTable, "fldid=&1", serial)
+    res["fldtitle"] = txtclaimcode.Text
+    res["fldflag"] = True
+    res.Update
+  Else If $sType = "Invoice" Then
+    res = modDatabase.$myConn.Exec("select fldbillno from tblpatbilldetail where fldid=&1", serial)
+    modAccount.InsertClaimInvoice(res["fldbillno"])
+  Else If $sType = "Receipt" Then
+    res = modDatabase.$myConn.Exec("select fldbillno from tbltempbilldetail where fldid=&1", serial)
+    modAccount.InsertClaimInvoice(res["fldbillno"])
+  Endif
+
+End
+
+Public Sub btnupload_Click()
+
+  Dim aOutPath As String
+
+  If txtclaimcode.Text Then
+    Inc Application.Busy
+    If Exist(xFilePath) Then
+      aOutPath = UploadImagesFilesClaimServer(Trim(txtclaimcode.Text))
+
+      If aOutPath = xFilePath Then
+        MarkPrinted($Index)
+      Endif
+
+    Endif
+    Dec Application.Busy
+  Endif
+
+End
+
+Private Function UploadImagesFilesClaimServer(xProvideClaimCode As String) As String
+
+  Dim xCheckData As JSONCollection
+  Dim xClaimStr As String
+  Dim checkColl As Collection
+  Dim xAccessCode As String
+
+  Dim xCreateData As JSONCollection
+  Dim xCheckStr As String
+  Dim crateColl As Collection
+  Dim xClaimID As Variant
+
+  Dim xUploadData As JSONCollection
+  Dim xUploadStr As String
+  Dim uploadColl As Collection
+  Dim imgData As String
+  Dim imgPath As String
+
+  Dim xcontent As String
+  Dim certPath As String
+  Dim aOutPath As String
+
+  Dim acmd As String
+  Dim bcmd As String
+  Dim ccmd As String
+  Dim xcmd As String[]
+
+  ProgressBar1.Value = 0
+  xcontent = "Content-Type: application/json"
+  certPath = modSettings.ShowSettingFromFIle("GeneralSettings/CurlCertificate")
+  If Not certPath Or If Not Exist(certPath) Then
+    certPath = modHelpVariable.$appetcFolder &/ "cacert.pem"
+  Endif
+
+  ''''generate access code
+  xCheckData = New JSONCollection
+  xCheckData.Add(modBasic.$ClaimUser, "username")
+  xCheckData.add(modBasic.$ClaimPass, "password")
+  acmd = "curl" & " -d '" & JSON.Encode(xCheckData) & "' -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimCheckURL
+  modBasic.DebugAPIString("Execute " & acmd)
+  Shell acmd To xClaimStr
+  modBasic.DebugAPIString("Response: " & xClaimStr)
+  ProgressBar1.Value = 0.25
+  Wait
+
+  If xClaimStr Then
+    Try checkColl = JSON.Decode(xClaimStr)
+    If checkColl["status"] = "success" Then
+      xAccessCode = Trim(checkColl["data"]["access_code"])
+
+      ''''save claim code provided above and get unique claim ID
+      If xAccessCode Then
+        xCreateData = New JSONCollection
+        xCreateData.Add(xProvideClaimCode, "claim_code")
+        xCreateData.Add(xAccessCode, "access_code")
+        bcmd = "curl" & " --cacert " & certPath & " -A " & xAccessCode & " -d '" & JSON.Encode(xCreateData) & "' -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimSaveURL
+        modBasic.DebugAPIString("Execute " & bcmd)
+        Shell bcmd To xCheckStr
+        modBasic.DebugAPIString("Response: " & xCheckStr)
+        ProgressBar1.Value = 0.5
+        Wait
+
+        If xCheckStr Then
+          Try crateColl = JSON.Decode(xCheckStr)
+          If crateColl["status"] = "success" Then
+            xClaimID = crateColl["data"]["id"]
+
+            '''''upload file with path provided
+            If xClaimID Then
+              If Exist(xFilePath) Then
+                xcmd = ["base64", "-w", "0", xFilePath]
+                modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+                Exec xcmd To imgData
+
+                xUploadData = New JSONCollection
+                xUploadData.Add(xClaimID, "claim_id")
+                xUploadData.Add(File.BaseName(xFilePath), "name")
+                xUploadData.Add(xAccessCode, "access_code")
+                xUploadData.Add(imgData, "file")
+                imgPath = Temp()
+                File.Save(imgPath, JSON.Encode(xUploadData))
+                ccmd = "curl" & " --cacert " & certPath & " -A " & xAccessCode & " -d @" & imgPath & " -H " & Quote(xcontent) & "  -X POST " & modBasic.$ClaimLoadURL
+                modBasic.DebugAPIString("Execute " & ccmd)
+                Shell ccmd To xUploadStr
+                modBasic.DebugAPIString("Response: " & xUploadStr)
+                ProgressBar1.Value = 0.75
+                Wait
+
+                If xUploadStr Then
+                  Try uploadColl = JSON.Decode(xUploadStr)
+                  If uploadColl["status"] = "success" Then
+                    aOutPath = xFilePath
+                    ProgressBar1.Value = 1
+                    Wait
+                    Balloon.Info(("File Upload Completed"), btnupload)
+                    Balloon.Delay = modBasic.$BalloonDelay
+                    modBasic.DebugString(Trim(uploadColl["data"]["message"]))
+                  Else
+                    Message.Warning("Reached to server but unsuccessful to get upload status", ("OK"))
+                  Endif  ''if upload is succcessful
+                Else
+                  Message.Warning("File Upload status not returned by server", ("OK"))
+                Endif  ''if upload string is returned
+              Endif
+
+            Else
+              Message.Warning("Unique Claim ID is null", ("OK"))
+            Endif ''if unique id is present
+
+          Else
+            Message.Warning("Reached to server but unsuccessful to get Unique Claim ID" & "<br>" & xCheckStr, ("OK"))
+          Endif  ''if create is successful
+        Else
+          Message.Warning("Unique Claim ID not returned by server", ("OK"))
+        Endif ''if create string is returned
+
+      Else
+        Message.Warning("Access Code is null" & "<br>" & xAccessCode, ("OK"))
+      Endif  ''if access code is present
+
+    Else
+      Message.Warning("Reached to server but unsuccessful to get Access code" & "<br>" & xClaimStr, ("OK"))
+    Endif ''if check is successful
+
+  Else
+
+    Message.Warning("Access Code not returned by server", "OK")
+  Endif ''if claim string is returned
+
+  Return aOutPath
+
+End
+
+''For Reports
+Private Function GetBlobData(serial As Variant) As String
+
+  Dim res As Result
+  Dim sql As String
+  Dim tempFile As String
+  Dim hFile As Blob
+  Dim ypdf As String
+  Dim aFile As String
+
+  If MMain.$WebEntry = True Then
+    sql = "select fldencounterval,fldtitle,fldcateg,fldextension,fldpic,fldlink,fldcomp from " & $sTable & " where fldrepoid=&1"
+  Else
+    sql = "select fldencounterval,fldtitle,fldcateg,fldextension,fldpic,fldlink,fldcomp from " & $sTable & " where fldid=&1"
+  Endif
+  res = modDatabase.$syConn.Exec(sql, serial)
+  If res.Available = True Then
+    txtencid.Text = res["fldencounterval"]
+    txtname.Text = modPatient.GetPatientNameByEnc(res["fldencounterval"])
+    If $sClaim Then
+      txtclaimcode.Text = $sClaim
+    Else
+      txtclaimcode.Text = modClaim.GetCurrentClaimCodePrint(res["fldencounterval"])
+    Endif
+    txttitle.Text = res["fldtitle"]
+
+    If res["fldlink"] Then
+      btnfolder.Tag = File.Dir(res["fldlink"])
+      Inc Application.Busy
+      aFile = modFTPSub.GetFileFromLocalFTP(res["fldlink"])
+      Dec Application.Busy
+    Else
+      aFile = Temp()
+      hFile = res["fldpic"]
+      If hFile.Length Then
+        File.Save(aFile, hFile.Data)
+      Endif
+    Endif
+
+    If res["fldextension"] Then
+      tempFile = Temp() & "." & res["fldextension"]
+    Else
+      tempFile = Temp() & "." & modImageSub.GetExtFromFile(aFile)
+    Endif
+    If Exist(aFile) Then
+      Move aFile Kill tempFile
+    Endif
+
+    If File.Ext(tempFile) = "pdf" Then
+      If modGlobalSetting.ShowSettingFromDBAny("GeneralSettings/PDFEncrypt", res!fldcomp) = "Yes" Then
+        ypdf = Temp() & ".pdf"
+        modDevAll.GetDecryptPDF(tempFile, ypdf, modHelpVariable.$CryptPDF)
+      Else
+        ypdf = tempFile
+      Endif
+    Else
+      ypdf = tempFile
+    Endif
+
+  Endif
+
+  Return ypdf
+
+End
+
+Private Function GetInvoiceData(serial As Long) As String
+
+  Dim res As Result
+  Dim xPath As String
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldbillno,fldencounterval,fldtaxamt,flddiscountamt,fldchequeno from tblpatbilldetail where fldid=&1", serial)
+  If res.Available Then
+    txtencid.Text = res["fldencounterval"]
+    txtname.Text = modPatient.GetPatientNameByEnc(res["fldencounterval"])
+    txtclaimcode.Text = res["fldchequeno"]
+    txtclaimcode.ReadOnly = True
+    txttitle.Text = res["fldbillno"]
+
+    If res["fldtaxamt"] = 0 Then
+      ShowTax = False
+    Else
+      ShowTax = True
+    Endif
+    If res["flddiscountamt"] = 0 Then
+      ShowDisc = False
+    Else
+      ShowDisc = True
+    Endif
+
+    xPath = modBILLFormat.GetInvoiceCopyPDFPath(res["fldbillno"], ShowTax, ShowDisc)
+  Endif
+
+  Return xPath
+
+End
+
+Private Function GetReceiptData(serial As Long) As String
+
+  Dim res As Result
+  Dim xPath As String
+
+  res = modDatabase.$myConn.Exec("select fldbillno,fldencounterval,fldtaxamt,flddiscountamt,fldchequeno from tbltempbilldetail where fldid=&1", serial)
+  If res.Available Then
+    txtencid.Text = res["fldencounterval"]
+    txtname.Text = modPatient.GetPatientNameByEnc(res["fldencounterval"])
+    txtclaimcode.Text = res["fldchequeno"]
+    txtclaimcode.ReadOnly = True
+    txttitle.Text = res["fldbillno"]
+
+    xPath = modBILLFormat.GetReceiptCopyPDFPath(res["fldbillno"])
+  Endif
+
+  Return xPath
+
+End
+
+Public Sub btnfolder_Click()
+
+  Dim asx As String[]
+
+  If Not txtclaimcode.Text Then
+    If btnfolder.Tag Then
+      asx = Split(btnfolder.Tag, "/")
+      If asx.Count Then
+        txtclaimcode.Text = asx[asx.Count - 1]
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Sub DisplayImage(sPath As String)
+
+  docviewleft.Visible = False
+  DocumentView1.Visible = False
+  modImage.StretchtPictureToBox(PictureBox1, sPath)
+
+End
+
+Private Sub DisplayPDF(sPath As String)
+
+  PictureBox1.Visible = False
+  If $hPDF And If $hPDF.Count Then
+    $hPDF.Close()
+  Endif
+
+  $hPDF = New PdfDocument
+  $hPDF.Open(sPath)
+  DocumentView1.Count = $hPDF.Count
+  docviewleft.Count = 0
+  docviewleft.DocHeight = $hPDF[1].Height / 0.72
+  docviewleft.DocWidth = $hPDF[1].Width / 0.72
+  DocumentView1.DocWidth = $hPDF[1].Width / 0.72
+  DocumentView1.DocHeight = $hPDF[1].Height / 0.72
+
+  DocumentView1.Arrangement = 0
+  DocumentView1.Refresh()
+
+End
+
+Public Sub DocumentView1_Layout(Page As Integer)
+
+  Last.Layout.Height = $hPDF[Page + 1].Height / 0.72
+  Last.Layout.Width = $hPDF[Page + 1].Width / 0.72
+
+End
+
+Public Sub DocumentView1_Draw(Page As Integer, Width As Integer, Height As Integer)
+
+  If Page > $hPDF.Count - 1 Then Return
+
+  $hPDF.Zoom = Last.Zoom / 0.72
+  Draw.Image($hPDF[Page + 1].Image, 0, 0)
+
+End
+
+Public Sub DocumentView1_MouseDown()
+
+  Print DocumentView1.Find(Mouse.x, Mouse.y)
+
+End

@@ -1,0 +1,1314 @@
+' Gambas module file
+
+''=== USE ONLY FOR DESKTOP APPLICATION (NOT USED IN CLI OR WEB) ===
+
+Public $LeftAdView As WebView
+Public $RightAdView As WebView
+Private $xslider As Slider
+
+''Public Variables
+Public Const $strLogo As String = "icon:/small/file"
+Public $DeskWidth As Integer
+Private $DeskHeight As Integer
+Private $HideFormList As String[]
+Private $advForm As FmAdvertise
+
+Private $hTimer As Timer
+Private $macCode As Integer
+
+Public Sub GetFirstValues(SvrSock As ServerSocket, SvrTrans As ServerSocket)
+
+  Dim xlock As String
+  Dim sCon As Connection
+
+  xlock = Format(Date(), "yymmdd")
+  modHelpVariable.SetApplicationGUI()
+  $macCode = modGeneral.GetMacCodeFromMacAdd(modHelpVariable.$MACAddress)
+  MMain.GetApplVersionType()
+  modAdvertise.ConnectAdLocalDB()
+
+  ''cache side logs
+  modSettings.SaveValuesToLog("LogIn/User", modBasic.$lbluser)
+  modSettings.SaveValuesToLog("Handle/" & Application.Name, CStr(Application.Handle))
+  modSettings.SaveValuesToLog("Handle/Status", "Active")
+  modAppSupport.LogLoginFrequency()
+  If Not Exist("/tmp" &/ Application.Name) Then
+    Mkdir "/tmp" &/ Application.Name
+  Endif
+
+  If modBasic.$PatRepoDBase = "mysql" Then
+    If Not modDatabase.$myConn.Databases.Exist("repository") Then
+      Inc Application.Busy
+      sCon = modDBApp.OpenConnection("mysql", modDatabase.$myConn.Host, "", modDatabase.$myConn.User, modDatabase.$myConn.Password)
+      If sCon.Opened = True Then
+        sCon.Databases.Add("repository")
+        sCon.Close()
+      Endif
+      sCon = modDBApp.OpenConnection("mysql", modDatabase.$myConn.Host, "repository", modDatabase.$myConn.User, modDatabase.$myConn.Password)
+      If sCon.Opened = True Then
+        modDBTables.$DbFormat = "REP"
+        modDBTables.$DbEngine = "HEAP"
+        modDBGroup.CreateDatabaseForSish(sCon)
+        modDBTables.$DbFormat = "HIS"
+        sCon.Close()
+      Endif
+      Dec Application.Busy
+    Endif
+    modDatabase.$repoConn = modDBApp.OpenConnection("mysql", modDatabase.$myConn.Host, "repository", modDatabase.$myConn.User, modDatabase.$myConn.Password)
+
+  Else
+    If Not Exist("/tmp" &/ Application.Name &/ "repository") Then
+      If Exist(modHelpVariable.AppDirectory &/ "repository") Then
+        Copy modHelpVariable.AppDirectory &/ "repository" To "/tmp" &/ Application.Name &/ "repository"
+      Endif
+    Endif
+  Endif
+
+  If Not Exist("/tmp" &/ Application.Name &/ "current") Then
+    If Exist(modHelpVariable.AppDirectory &/ "current") Then
+      Copy modHelpVariable.AppDirectory &/ "current" To "/tmp" &/ Application.Name &/ "current"
+    Endif
+  Endif
+  File.Save("/tmp" &/ Application.Name &/ modString.GetDateString(modHelpVariable.$LogInTime), CStr(Application.Handle))
+
+  'procedures on load
+  SetActiveForms()
+  modDevice.CamOnStart()
+  If modBasic.$MultiMediaFormat = "Embedded" Then
+    If modBasic.$mediaPath And If Exist(modBasic.$mediaPath) Then
+      fmMediaPlay.MediaView1.URL = modBasic.$mediaPath
+      fmMediaPlay.Enabled = True
+    Endif
+  Endif
+  modAppSupport.OpenPortForListening(SvrSock)
+  modAppSupport.GetMessaging(SvrTrans)
+  modAppSupport.RecordSystemLog()
+
+  ''run external scripts
+  modScript.ExecStartUpScript()
+  modScript.GetRemoteDBLog()
+
+  ''get advertise panels
+  modAdvertise.GetSideAdvImage()
+  WebSettings[WebSettings.JavascriptCanAccessClipboard] = True
+  WebSettings[WebSettings.JavascriptCanOpenWindows] = True
+  If modBasic.$WebktEnableJS = "Yes" Then
+    WebSettings[WebSettings.Javascript] = True
+    ' WebSettings[WebSettings.JavascriptEnabled] = True
+  Else
+    WebSettings[WebSettings.Javascript] = False
+    ' WebSettings[WebSettings.JavascriptEnabled] = False
+  Endif
+  WebSettings.Fonts.Fixed = Application.Font.Name
+  WebSettings.Fonts.DefaultSize = Application.Font.Size
+  WebSettings.Fonts.DefaultFixedSize = Application.Font.Size
+  ' WebSettings.Fonts.FixedFont = Application.Font.Name
+  ' WebSettings.Fonts.DefaultFontSize = Application.Font.Size
+  ' WebSettings.Fonts.DefaultFixedFontSize = Application.Font.Size
+
+  $hTimer = New Timer As "workTimer"
+  $hTimer.Delay = 15000
+  $hTimer.Enabled = True
+
+End
+
+Public Sub workTimer_Timer()
+
+  Last.Enabled = False
+  If modBasic.$WebktEnableJS = "Yes" Then
+  Else
+    If $LeftAdView Then
+      Try $LeftAdView.Stop()
+    Endif
+    If $RightAdView Then
+      Try $RightAdView.Stop()
+    Endif
+    DisableJavaScript()
+  Endif
+
+End
+
+Public Sub DisableJavaScript()
+
+  ' If modBasic.$WebktEnableJS = "Yes" Then
+  ' Else
+  '   If WebSettings[WebSettings.JavascriptEnabled] = True Then
+  '     WebSettings[WebSettings.JavascriptEnabled] = False
+  '     modBasic.DebugString("JavaScript Disabled")
+  '   Endif
+  ' Endif
+
+End
+
+Public Function GetSystemInformation(withPass As Boolean) As String
+
+  Dim sText As String
+
+  sText = "[Database]" & gb.NewLine
+  sText = sText & "Type: " & modDatabase.$myConn.Type & gb.NewLine
+  sText = sText & "Host: " & modDatabase.$myConn.Host & gb.NewLine
+  sText = sText & "Database: " & modDatabase.$myConn.Name & gb.NewLine
+  sText = sText & "Version: " & modDatabase.$myConn.Version & gb.NewLine
+  If modDatabase.$myConn.Type = "mysql" Then
+    sText = sText & "Engine: " & modDatabase.$myConn.MySQL.Engine & gb.NewLine
+  Endif
+  sText = sText & "Table count: " & modDatabase.$myConn.Tables.Count & gb.NewLine
+  If withPass = True Then
+    sText = sText & "Login: " & modDatabase.$myConn.Login & gb.NewLine
+    sText = sText & "Password: " & modDatabase.$myConn.Password & gb.NewLine
+  Endif
+  sText = sText & "Port: " & modDatabase.$myConn.Port & gb.NewLine & gb.NewLine
+
+  sText = sText & "[Application]" & gb.NewLine
+  sText = sText & "Name: " & Application.Name & gb.NewLine
+  sText = sText & "Version: " & Application.Version & gb.NewLine
+  sText = sText & "Path: " & Application.Path & gb.NewLine
+  sText = sText & "App PID: " & Application.Handle & gb.NewLine
+  sText = sText & "Architecture: " & System.Architecture & gb.NewLine
+  sText = sText & "Gambas Interpreter: " & System.FullVersion & gb.NewLine & gb.NewLine
+
+  sText = sText & "[Computer]" & gb.NewLine
+  sText = sText & "Host: " & System.Host & gb.NewLine
+  sText = sText & "User Name: " & System.User.Name & gb.NewLine
+  sText = sText & "Domain: " & System.Domain & gb.NewLine
+  Try sText = sText & "Desktop: " & Desktop.Type & gb.NewLine
+  sText = sText & "Kernel: " & modApplication.GetKernelDistribution() & gb.NewLine
+  sText = sText & "Distribution: " & modApplication.DistributionVendor() & gb.NewLine
+  sText = sText & "Operating System: " & System.Family & gb.NewLine
+  sText = sText & "Language: " & System.Language & gb.NewLine
+  sText = sText & "Theme: " & Style.Name & gb.NewLine
+  Try sText = sText & "Screen: " & Desktop.Resolution & " DPI" & gb.NewLine
+  sText = sText & "Timezone: " & System.TimeZone
+
+  Return sText
+
+End
+
+'NOTE: --------------------------------- Form Arrangements --------------------------------------
+Public Sub LoadMainForms(frm As Form, pnltop As Panel, pnlleft As Panel, wrkofficer As Workspace, pnlright As Panel, pnlbottom As Panel)
+
+  Dim head As Integer
+  Dim sPict As PictureBox
+  Dim sText As TextLabel
+  Dim xhead As String
+
+  Dim headht As String
+  Dim headpic As String
+  Dim headtext As String
+  Dim headback As String
+  Dim headfore As String
+  Dim headfont As String
+
+  Dim xmenu As Menu
+  Dim ymenu As Menu
+
+  Dim xadleft As String
+  Dim xadright As String
+  Dim xMpanel As Panel
+  Dim xMwork As Workspace
+  Dim xleftlen As Integer
+
+  Dim xDeskFact As String
+  Dim pnltopright As Panel
+  Dim xbutton As Button
+
+  headht = modSettings.ShowUserWiseSettingFromFIle("AppSetting_DeskHeaderHeight")
+  headpic = modSettings.ShowUserWiseSettingFromFIle("AppSetting_DeskHeaderPicture")
+  headtext = modSettings.ShowUserWiseSettingFromFIle("AppSetting_DeskHeaderText")
+  headfore = modSettings.ShowUserWiseSettingFromFIle("AppSetting_DeskHeaderForeColor")
+  headback = modSettings.ShowUserWiseSettingFromFIle("AppSetting_DeskHeaderBackColor")
+  headfont = modSettings.ShowUserWiseSettingFromFIle("AppSetting_DeskHeaderFont")
+  xDeskFact = modSettings.ShowSettingFromFIle("Application/DeskHeightFactor")
+
+  If modSettings.ShowSettingFromFIle("Application/ShowWindowTopBar") = "Enable" Then
+    frm.Border = True
+  Endif
+
+  modBasic.DebugString("Setting Desk for " & frm.Text)
+  If xDeskFact Then
+    $DeskHeight = Screen.Height * CInt(xDeskFact) / 100
+  Else
+    $DeskHeight = Screen.AvailableHeight
+  Endif
+  $DeskWidth = Screen.AvailableWidth
+
+  'set coordinates
+  modBasic.DebugString("Setting Workspace in " & frm.Text)
+  frm.Height = $DeskHeight
+  frm.Width = $DeskWidth
+  frm.Left = 0
+  frm.Top = 0
+  frm.Arrangement = Arrange.Vertical
+
+  'form header
+  If headht Then
+    modBasic.DebugString("Setting Desk Header in " & frm.Text)
+    head = CInt(headht)
+    If head Then
+      pnltop.Height = head
+    Endif
+    pnltop.Arrangement = Arrange.Vertical
+
+    If headpic And If Exist(headpic) Then
+      sPict = New PictureBox(pnltop)
+      Try sPict.Picture = Image.Load(headpic).Stretch(sPict.Width, sPict.Height).Picture
+    Else If Not headpic And If headtext Then
+      sText = New TextLabel(pnltop)
+      sText.Expand = True
+      xhead = modReportVar.GetReportVarTitle(headtext)
+      If headback Then
+        sText.Background = headback
+      Else
+        sText.Background = Color.White
+      Endif
+      If headfore Then
+        sText.Foreground = headfore
+      Endif
+      If headfont Then
+        sText.Text = "<div align=center>" & modString.GetFormatTextFontString(xhead, headfont) & "</div>"
+      Else
+        sText.Text = "<div align=center>" & modString.TextToHTML(xhead,,, True) & "</div>"
+      Endif
+    Endif
+
+  Else
+    pnltop.Height = 0
+  Endif
+
+  'main form workspace
+  modBasic.DebugString("Setting Desk Workspace in " & frm.Text)
+  wrkofficer.Width = 960 * modBasic.$AppScaleFactor
+
+  'advertise embedder
+  modBasic.DebugString("Setting Advertisement Panel in " & frm.Text)
+  pnlbottom.Height = 25 * modBasic.$AppScaleFactor
+  pnlbottom.Border = Border.None
+
+  If $advForm Then
+    $advForm.Delete()
+  Endif
+  $advForm = New FmAdvertise(pnlbottom, Panel, frm)
+  $advForm.Height = 25 * modBasic.$AppScaleFactor
+
+  'adjust progressbar
+  modBasic.DebugString("Setting Progressbar in " & frm.Text)
+  With modAppSupport.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    .Left = 0
+    .Width = pnlbottom.Width
+    .Background = Color.White
+  End With
+
+  'create menu for forms
+  For Each xmenu In frm.Menus
+    For Each ymenu In xmenu.Children
+      If Not ymenu.Picture Then
+        ymenu.Picture = Picture["icon:/small/new-window"]
+      Endif
+    Next
+  Next
+
+  modAppSupport.SetWorkSpaceTabbing()
+
+  'get left side width
+  If modBasic.$FormLeftWidth Then
+    xleftlen = modBasic.$FormLeftWidth
+  Else
+    If MMain.$GovtApp = "Yes" Then
+      xleftlen = 5 * modBasic.$AppScaleFactor
+    Else
+      xleftlen = 0.5 * ($DeskWidth - 960 * modBasic.$AppScaleFactor)
+    Endif
+  Endif
+  pnlleft.Width = xleftlen
+  pnlright.Width = $DeskWidth - (xleftlen + 960 * modBasic.$AppScaleFactor)
+
+  'left webview
+  xadleft = modBasic.$FormLeftAdv
+  If xadleft = "Yes" Then
+  Else
+    $LeftAdView = New WebView(pnlleft)
+    $LeftAdView.Expand = True
+    If modBasic.$WebZoomValue Then
+      $LeftAdView.Zoom = modBasic.$WebZoomValue
+    Endif
+    $LeftAdView.Background = Color.Transparent
+  Endif
+
+  'left media player
+  If modBasic.$MultiMediaFormat = "Embedded" Then
+    xMpanel = New Panel(pnlleft)
+    xMpanel.Width = xleftlen
+    xMpanel.Height = xleftlen - 10 * modBasic.$AppScaleFactor
+    ' xMpanel.Background = Color.LightGray
+
+    xMwork = New Workspace(xMpanel)
+    xMwork.Top = 0
+    xMwork.Left = 0
+    xMwork.Width = xleftlen
+    xMwork.Height = xMpanel.Height + (40 * modBasic.$AppScaleFactor)  ''last one to force media to reduce space at bottom
+    xMwork.Orientation = Align.Bottom
+    xMwork.Add(fmMediaPlay)
+  Endif
+
+  'right webview
+  xadright = modBasic.$FormRightAdv
+  If xadright = "Yes" Then
+  Else
+    pnltopright = New Panel(pnlright)
+    pnltopright.Arrangement = Arrange.Horizontal
+    pnltopright.Height = 28
+    pnltopright.Spacing = True
+    $xslider = New Slider(pnltopright) As "RightSlider"
+    $xslider.Expand = True
+    $xslider.MaxValue = 1000
+    xbutton = New Button(pnltopright) As "RightButton"
+    xbutton.Expand = True
+    xbutton.Picture = Picture["icon:/small/refresh"]
+
+    $RightAdView = New WebView(pnlright)
+    $RightAdView.Expand = True
+    If modBasic.$WebZoomValue Then
+      $RightAdView.Zoom = modBasic.$WebZoomValue
+    Endif
+    $RightAdView.Background = Color.Transparent
+
+    $xslider.Value = $RightAdView.Zoom * 100
+  Endif
+
+  ''set advertisement panel URL
+  SetAdvertisePanelLinks()
+
+End
+
+Public Sub RightSlider_Change()
+
+  $RightAdView.Zoom = $xslider.Value / 100
+
+End
+
+Public Sub LoadWebViewRight()
+
+  Dim xLink As String
+
+  xLink = GetPanelURLVal()
+  If xLink Then
+    $RightAdView.Url = xLink
+  Endif
+  $RightAdView.Refresh()
+  Wait
+
+End
+
+Public Sub RightButton_Click()
+
+  modBasic.RightPanelLoginSet()
+  LoadWebViewRight()
+
+End
+
+Private Sub SetAdvertisePanelLinks()
+
+  Dim xLink As String
+
+  If $LeftAdView Then
+    If modBasic.$FormLeftURL Then
+      $LeftAdView.Url = modBasic.$FormLeftURL
+    Else
+      If modAdvertise.$LeftAdPathLink Then
+        $LeftAdView.Url = modAdvertise.$LeftAdPathLink
+      Endif
+    Endif
+  Endif
+
+  If $RightAdView Then
+    xLink = GetPanelURLVal()
+    If xLink Then
+      $RightAdView.Url = xLink
+
+    Else
+      If modBasic.$FormRightURL Then
+        $RightAdView.Url = modBasic.$FormRightURL
+      Else
+        If modAdvertise.$RightAdPathLink Then
+          $RightAdView.Url = modAdvertise.$RightAdPathLink
+        Endif
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub ArrangeEmbedForms(frm As Form, pnl As Panel, Optional sArrange As String)
+
+  Dim xpic As String
+  Dim xback As String
+  Dim xfore As String
+  Dim xwrkht As Integer
+
+  'set coordinates
+  xwrkht = modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Height
+  modBasic.DebugString("Setting tabbed form for " & frm.Text)
+  frm.Expand = True
+  pnl.Top = 0
+  pnl.Left = 0
+  pnl.Width = 960 * modBasic.$AppScaleFactor
+  If frm.Menus.Count Then
+    If frm.Menus.Visible = True Then
+      pnl.Height = xwrkht - (60 * modBasic.$AppScaleFactor)
+    Else
+      pnl.Height = xwrkht - (40 * modBasic.$AppScaleFactor)
+    Endif
+  Else
+    pnl.Height = xwrkht - (40 * modBasic.$AppScaleFactor)
+  Endif
+  If sArrange = "Vertical" Then
+    pnl.Arrangement = Arrange.Vertical
+  Else If sArrange = "Horizontal" Then
+    pnl.Arrangement = Arrange.Horizontal
+  Else If sArrange = "Column" Then
+    pnl.Arrangement = Arrange.Column
+  Endif
+
+  'set background
+  xpic = modBasic.$FormPicture
+  xback = modBasic.$FormBackColor
+  xfore = modBasic.$FormForeColor
+  If xpic And If Exist(xpic) Then
+    Try frm.Picture = Image.Load(xpic).Stretch(frm.Width, frm.Height).Picture
+  Endif
+  If xback Then
+    frm.Background = CInt(xback)
+  Endif
+  If xfore Then
+    frm.Foreground = CInt(xfore)
+  Endif
+  DesignTextLabel(frm)
+  RecordFormUse(frm)
+
+End
+
+Public Sub ArrangeFormCentre(frm As Form, Optional LogFmRecord As String, Optional MaxHeight As Boolean)
+
+  Dim xpic As String
+  Dim xback As String
+  Dim xfore As String
+  Dim xfmlog As String
+  Dim xval As String
+  Dim yval As String
+
+  If LogFmRecord Then
+    xfmlog = LogFmRecord
+  Else
+    xfmlog = "True"
+  Endif
+
+  modBasic.DebugString("Setting non-tabbed form for " & frm.Text)
+  xpic = modBasic.$FormPicture
+  xback = modBasic.$FormBackColor
+  xfore = modBasic.$FormForeColor
+
+  frm.Center
+  If MaxHeight = True Then
+    frm.Height = $DeskHeight - (75 * modBasic.$AppScaleFactor)
+    frm.Arrangement = Arrange.Vertical
+  Endif
+  xval = modSettings.ShowLogValues(frm.Name & "/Left")
+  If xval Then
+    frm.X = CInt(xval)
+  Endif
+  yval = modSettings.ShowLogValues(frm.Name & "/Top")
+  If yval Then
+    frm.Y = CInt(yval)
+  Endif
+
+  If xpic And If Exist(xpic) Then
+    Try frm.Picture = Image.Load(xpic).Stretch(frm.Width, frm.Height).Picture
+  Endif
+  If xback Then
+    frm.Background = CInt(xback)
+  Endif
+  If xfore Then
+    frm.Foreground = CInt(xfore)
+  Endif
+  DesignTextLabel(frm)
+  If xfmlog = "True" Then
+    RecordFormUse(frm)
+  Endif
+
+End
+
+Public Sub SaveFormArrangement(frm As Form)
+
+  modSettings.SaveValuesToLog(frm.Name & "/Top", CStr(frm.Y))
+  modSettings.SaveValuesToLog(frm.Name & "/Left", CStr(frm.X))
+
+End
+
+Public Sub SetActiveForms()
+
+  If MMain.$SISHAppMode = "HIS" Or If MMain.$SISHAppMode = "REP" Then ''remoteoptimized
+    $HideFormList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldformname from tbluserformaccess where flduserid=&1 and fldcategory=&2 and fldstatus=&3", modBasic.$lbluser, modHelpVariable.$LogInCategory, "Inactive"))                   ''
+  Else
+    $HideFormList = New String[]
+  Endif
+
+End
+
+Public Sub ShowSelectedFormMenu(frm As Form)
+
+  If $HideFormList.Exist(frm.Tag) = True Then
+    frm.Enabled = False
+  Endif
+
+End
+
+''----------------------- Exit Application ------------------------
+Public Sub ExitAllWindows()
+
+  Dim frm As Window
+
+  modBasic.DebugString("Closing all windows and exiting Application")
+
+  Try $LeftAdView.Delete()
+  Try $RightAdView.Delete()
+
+  modScript.CloseAllTasks()
+  modSettings.SaveValuesToLog("Handle/Status", "Closed")
+  For Each frm In modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Windows
+    frm.Close
+  Next
+  modDatabase.$myConn.Delete("tblsystemlog", "fldindex=&1", modHelpVariable.$MACAddress)
+  modScript.ExecClosingScript()
+  modGSM.StopDefaultModem()
+  modDevice.CamOnClose()
+  modAppSupport.FindServerSocket(modHelpVariable.$LogInCategory).Close()
+  modAppSupport.FindTransferSocket(modHelpVariable.$LogInCategory).Close()
+  modDatabase.CloseDatabase()
+  If Exist("/tmp" &/ Application.Name &/ modString.GetDateString(modHelpVariable.$LogInTime)) Then
+    Kill "/tmp" &/ Application.Name &/ modString.GetDateString(modHelpVariable.$LogInTime)
+  Endif
+  If Exist(modHelpVariable.AppCacheDir) Then
+    modExternal.DeleteFolderRecursive(modHelpVariable.AppCacheDir)
+  Endif
+  Dec Application.Busy
+
+End
+
+Public Sub CloseAllWindows()
+
+  Dim mnt As Float
+
+  mnt = Round(Timer() / 60, -2)
+  If Message.Question(("Log out application after " & CStr(mnt) & " minutes." & gb.NewLine & "Are you sure?"), ("Yes"), ("No")) = 1 Then
+    modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Window.Delete()
+  Else
+    Stop Event
+  Endif
+
+End
+
+''------------------------ cache setting --------------------
+Public Sub EnableCollectionCache()
+
+  modBasic.DebugString("Activating Local Cache")
+  modPatient.$PatNumData = New Collection
+  modPatient.$PatFirNameData = New Collection
+  modPatient.$PatSurNameData = New Collection
+  modPatient.$PatGenderData = New Collection
+  modPatient.$PatEthnicData = New Collection
+  modPatient.$PatDOBData = New Collection
+  modPatient.$PatAddressData = New Collection
+  modPatient.$PatDistrictData = New Collection
+  modPatient.$PatWardData = New Collection
+  modPatient.$PatEncryptData = New Collection
+  modPatient.$PatCodeData = New Collection
+  modPatient.$PatRelationData = New Collection
+  modPatient.$PatGuardData = New Collection
+  modPatient.$PatContactData = New Collection
+  modPatient.$PatEMailData = New Collection
+
+  modPatient.$PatVisType = New Collection
+  modPatient.$PatRegDepartData = New Collection
+  modPatient.$PatDORegData = New Collection
+  modPatient.$PatDOAData = New Collection
+  modPatient.$PatDODData = New Collection
+  modPatient.$PatDOFollData = New Collection
+
+  modFixLab.$TestItemQualiQuanti = New Collection
+  modFixLab.$TestItemCategory = New Collection
+  modFixLab.$TestIDFromSysConst = New Collection
+  modFixLab.$TestSpecimen = New Collection
+  modFixLab.$TestCritValue = New Collection
+  modFixLab.$TestOptionType = New Collection
+  modFixLab.$TestCaption = New Collection
+  modFixLab.$TestToolTip = New Collection
+
+  modFixLab.$TestDrugHypo = New Collection
+  modFixLab.$TestdrugHyper = New Collection
+  modFixLab.$TestSyndroBrady = New Collection
+  modFixLab.$TestSyndroTachy = New Collection
+
+  modFixClinic.$ExamItemQualiQuanti = New Collection
+  modFixClinic.$ExamIDFromSysConst = New Collection
+  modFixClinic.$ExamCritValue = New Collection
+  modFixClinic.$ExamItemCategory = New Collection
+  modFixClinic.$ExamOptionType = New Collection
+  modFixClinic.$ExamSysOptionType = New Collection
+
+  modFixClinic.$ExamDrugHypo = New Collection
+  modFixClinic.$ExamdrugHyper = New Collection
+  modFixClinic.$ExamSyndroBrady = New Collection
+  modFixClinic.$ExamSyndroTachy = New Collection
+
+  modFixRadio.$RadioItemCategory = New Collection
+  modFixRadio.$RadioIDFromSysConst = New Collection
+  modFixRadio.$RadioOptionType = New Collection
+  modFixRadio.$RadioCaption = New Collection
+
+  modLabTest.$LabIDUnitReference = New Collection
+  modLabTest.$LabIDUnitAccepTRange = New Collection
+  modLabTest.$LabIDUnitUnitString = New Collection
+  modLabTest.$LabIDEncounter = New Collection
+  modLabTest.$LabIDTestName = New Collection
+  modLabTest.$LabIDTestMethod = New Collection
+
+  modGeneral.$UserNameData = New Collection
+  modGeneral.$UserCodeData = New Collection
+  modGeneral.$EthnicCodeData = New Collection
+  modGeneral.$UserContactData = New Collection
+  modGeneral.$UserEmailData = New Collection
+
+  modGeneral.$UserAccountData = New Collection
+  modGeneral.$UserPANNoData = New Collection
+  modGeneral.$UserTDSData = New Collection
+  modSharingGroup.$GroupSharePercentData = New Collection
+  modSharingGroup.$GroupShareAmountData = New Collection
+
+  modDate.$LocalDateData = New Collection
+  modDataRepo.$DistMunicipals = New Collection
+  modFixPatho.$SymptomCategory = New Collection
+  modExternal.$ExecValueColl = New Collection
+
+  modNonMedical.$CashItemTarget = New Collection
+  modNonMedical.$CashItemID = New Collection
+  modNonMedical.$CashItemGroup = New Collection
+  modNonMedical.$CashAccGroup = New Collection
+  modNonMedical.$BillInvTypeData = New Collection
+  modNonMedical.$BillReferenceData = New Collection
+
+  modMedConstant.$MedBrandToGeneric = New Collection
+  modMedConstant.$MedCodeFromStock = New Collection
+  modMedConstant.$MedDrugFromStock = New Collection
+  modMedConstant.$MedBrandFromStock = New Collection
+  modMedConstant.$MedCodeFromDrug = New Collection
+  modMedConstant.$MedSensiFromStock = New Collection
+  modMedConstant.$MedCategFromStock = New Collection
+  modMedConstant.$MedRiskFromStock = New Collection
+  modMedConstant.$MedStrengthStock = New Collection
+  modMedConstant.$MedStrenUntStock = New Collection
+  modMedConstant.$MedNarcoticStock = New Collection
+
+  modPharmLabel.$PharmPackVolume = New Collection
+  modPharmLabel.$PharmPackVolUnit = New Collection
+
+  modStock.$ItemStorageCodeData = New Collection
+  modStock.$ItemStockNameData = New Collection
+  modStock.$ItemStockBatchData = New Collection
+  modStock.$ItemStockExpData = New Collection
+  modStock.$SurgiNameFromStock = New Collection
+  modStock.$ExtraNameFromStock = New Collection
+
+  modMedError.$CodeReference = New Collection
+  modMedError.$DrugReference = New Collection
+  modMedError.$CodeAllowPRN = New Collection
+  modMedError.$CodeChemiClass = New Collection
+  modMedError.$DrugAgeContra = New Collection
+  modMedError.$StockPreservIn = New Collection
+  modMedError.$StockAllowTabBreak = New Collection
+
+  modMedError.$CodePregnancyPrec = New Collection
+  modMedError.$CodeHepaticPrec = New Collection
+  modMedError.$CodeDrugIntxn = New Collection
+  modMedError.$CodeDiseaseContra = New Collection
+  modMedError.$CodeAdverseRxn = New Collection
+  modMedError.$CodeDrugAllergy = New Collection
+  modMedError.$DrugInjecIncompat = New Collection
+  modMedError.$DrugFluidIncompat = New Collection
+
+  modDataRepo.$RepoDistrictColl = New Collection
+  modDataRepo.$RepoCategoryColl = New Collection
+  modDataRepo.$RepoProvinceColl = New Collection
+  modDataRepo.$RepoMunicipalColl = New Collection
+
+End
+
+Public Sub RemovePatientCacheSelected(sItem As String)
+
+  If sItem = "PatientData" Then
+    modPatient.$PatNumData.Clear()
+    modPatient.$PatFirNameData.Clear()
+    modPatient.$PatSurNameData.Clear()
+    modPatient.$PatGenderData.Clear()
+    modPatient.$PatEthnicData.Clear()
+    modPatient.$PatDOBData.Clear()
+    modPatient.$PatAddressData.Clear()
+    modPatient.$PatDistrictData.Clear()
+    modPatient.$PatWardData.Clear()
+    modPatient.$PatEncryptData.Clear()
+    modPatient.$PatCodeData.Clear()
+    modPatient.$PatRelationData.Clear()
+    modPatient.$PatGuardData.Clear()
+    modPatient.$PatContactData.Clear()
+    modPatient.$PatEMailData.Clear()
+
+    modPatient.$PatVisType.Clear()
+    modPatient.$PatRegDepartData.Clear()
+    modPatient.$PatDORegData.Clear()
+    modPatient.$PatDOAData.Clear()
+    modPatient.$PatDODData.Clear()
+    modPatient.$PatDOFollData.Clear()
+
+  Else If sItem = "Diagnostic" Then
+    modFixLab.$TestItemQualiQuanti.Clear()
+    modFixLab.$TestItemCategory.Clear()
+    modFixLab.$TestIDFromSysConst.Clear()
+    modFixLab.$TestSpecimen.Clear()
+    modFixLab.$TestCritValue.Clear()
+    modFixLab.$TestOptionType.Clear()
+    modFixLab.$TestCaption.Clear()
+    modFixLab.$TestToolTip.Clear()
+
+    modFixLab.$TestDrugHypo.Clear()
+    modFixLab.$TestdrugHyper.Clear()
+    modFixLab.$TestSyndroBrady.Clear()
+    modFixLab.$TestSyndroTachy.Clear()
+
+    modFixClinic.$ExamItemQualiQuanti.Clear()
+    modFixClinic.$ExamIDFromSysConst.Clear()
+    modFixClinic.$ExamCritValue.Clear()
+    modFixClinic.$ExamItemCategory.Clear()
+    modFixClinic.$ExamOptionType.Clear()
+    modFixClinic.$ExamSysOptionType.Clear()
+
+    modFixClinic.$ExamDrugHypo.Clear()
+    modFixClinic.$ExamdrugHyper.Clear()
+    modFixClinic.$ExamSyndroBrady.Clear()
+    modFixClinic.$ExamSyndroTachy.Clear()
+
+    modFixRadio.$RadioItemCategory.Clear()
+    modFixRadio.$RadioIDFromSysConst.Clear()
+    modFixRadio.$RadioOptionType.Clear()
+    modFixPatho.$SymptomCategory.Clear()
+    modFixRadio.$RadioCaption.Clear()
+
+    modLabTest.$LabIDUnitReference.Clear()
+    modLabTest.$LabIDUnitAccepTRange.Clear()
+    modLabTest.$LabIDUnitUnitString.Clear()
+    modLabTest.$LabIDEncounter.Clear()
+    modLabTest.$LabIDTestName.Clear()
+    modLabTest.$LabIDTestMethod.Clear()
+
+  Else If sItem = "UserData" Then
+    modGeneral.$UserNameData.Clear()
+    modGeneral.$UserCodeData.Clear()
+    modGeneral.$EthnicCodeData.Clear()
+    modGeneral.$UserContactData.Clear()
+    modGeneral.$UserEmailData.Clear()
+
+  Else If sItem = "UserSharing" Then
+    modGeneral.$UserAccountData.Clear()
+    modGeneral.$UserPANNoData.Clear()
+    modGeneral.$UserTDSData.Clear()
+    modSharingGroup.$GroupSharePercentData.Clear()
+    modSharingGroup.$GroupShareAmountData.Clear()
+
+  Else If sItem = "Repository" Then
+    modDataRepo.$RepoDistrictColl.Clear()
+    modDataRepo.$RepoCategoryColl.Clear()
+    modDataRepo.$RepoProvinceColl.Clear()
+    modDataRepo.$RepoMunicipalColl.Clear()
+
+  Else If sItem = "DateData" Then
+    modDate.$LocalDateData.Clear()
+    modDataRepo.$DistMunicipals.Clear()
+
+  Else If sItem = "ExecValue" Then
+    modExternal.$ExecValueColl.Clear()
+
+  Else If sItem = "Medicine" Then
+    modMedConstant.$MedBrandToGeneric.Clear()
+    modMedConstant.$MedCodeFromStock.Clear()
+    modMedConstant.$MedDrugFromStock.Clear()
+    modMedConstant.$MedBrandFromStock.Clear()
+    modMedConstant.$MedCodeFromDrug.Clear()
+    modMedConstant.$MedSensiFromStock.Clear()
+    modMedConstant.$MedRiskFromStock.Clear()
+    modMedConstant.$MedStrengthStock.Clear()
+    modMedConstant.$MedStrenUntStock.Clear()
+    modMedConstant.$MedNarcoticStock.Clear()
+    modMedConstant.$MedCategFromStock.Clear()
+
+    modPharmLabel.$PharmPackVolume.Clear()
+    modPharmLabel.$PharmPackVolUnit.Clear()
+
+  Else If sItem = "Inventory" Then
+    modStock.$ItemStorageCodeData.Clear()
+    modStock.$ItemStockNameData.Clear()
+    modStock.$ItemStockBatchData.Clear()
+    modStock.$ItemStockExpData.Clear()
+    modStock.$SurgiNameFromStock.Clear()
+    modStock.$ExtraNameFromStock.Clear()
+
+  Else If sItem = "Account" Then
+    modNonMedical.$CashItemTarget.Clear()
+    modNonMedical.$CashItemID.Clear()
+    modNonMedical.$CashItemGroup.Clear()
+    modNonMedical.$CashAccGroup.Clear()
+    modNonMedical.$BillInvTypeData.Clear()
+    modNonMedical.$BillReferenceData.Clear()
+
+  Else If sItem = "DrugProblems" Then
+    modMedError.$CodeReference.Clear()
+    modMedError.$DrugReference.Clear()
+    modMedError.$CodeAllowPRN.Clear()
+    modMedError.$CodeChemiClass.Clear()
+    modMedError.$DrugAgeContra.Clear()
+    modMedError.$StockPreservIn.Clear()
+    modMedError.$StockAllowTabBreak.Clear()
+
+    modMedError.$CodePregnancyPrec.Clear()
+    modMedError.$CodeHepaticPrec.Clear()
+    modMedError.$CodeDrugIntxn.Clear()
+    modMedError.$CodeDiseaseContra.Clear()
+    modMedError.$CodeAdverseRxn.Clear()
+    modMedError.$CodeDrugAllergy.Clear()
+    modMedError.$DrugInjecIncompat.Clear()
+    modMedError.$DrugFluidIncompat.Clear()
+
+  Endif
+
+End
+
+Public Sub CLearUserCollection()
+
+  Dim xx As String[] = ["PatientData", "Diagnostic", "UserData", "UserSharing", "DateData", "Medicine", "Inventory", "Account", "DrugProblems", "ExecValue", "Repository"]
+  Dim sItem As String
+  Dim sList As String[]
+
+  sList = SelectListView(("Select Cache Type"), xx, True)
+  If sList And If sList.Count Then
+    For Each sItem In sList
+      RemovePatientCacheSelected(sItem)
+    Next
+  Endif
+
+End
+
+''-------------------------- Control Designs ---------------------------
+Public Sub DesignTextLabel(frm As Form)
+
+  Dim xcont As Control
+  Dim xlabel As Label
+  Dim xcheckbox As CheckBox
+  Dim xtabpanel As TabPanel
+  Dim xtextbox As TextBox
+  Dim xvalubox As ValueBox
+  Dim xcombobox As ComboBox
+  Dim xgridview As GridView
+
+  For Each xcont In frm.Controls
+    If xcont Is Label Then
+      xlabel = xcont
+      If modBasic.$LabelForeColor Then
+        xlabel.Foreground = modBasic.$LabelForeColor
+      Endif
+      If modBasic.$LabelTextFont Then
+        xlabel.Font = Font[modBasic.$LabelTextFont]
+      Endif
+
+    Else If xcont Is CheckBox Then
+      xcheckbox = xcont
+      If modBasic.$LabelForeColor Then
+        xcheckbox.Foreground = modBasic.$LabelForeColor
+      Endif
+      If modBasic.$LabelTextFont Then
+        xcheckbox.Font = Font[modBasic.$LabelTextFont]
+      Endif
+
+    Else If xcont Is TabPanel Then
+      xtabpanel = xcont
+      If modBasic.$LabelTextFont Then
+        xtabpanel.TextFont = Font[modBasic.$LabelTextFont]
+      Endif
+
+    Else If xcont Is TextBox Then
+      xtextbox = xcont
+      If modBasic.$TextBoxForeColor Then
+        xtextbox.Foreground = modBasic.$TextBoxForeColor
+      Endif
+      If modBasic.$TextBoxTextFont Then
+        xtextbox.Font = Font[modBasic.$TextBoxTextFont]
+      Endif
+
+    Else If xcont Is ValueBox Then
+      xvalubox = xcont
+      If modBasic.$TextBoxForeColor Then
+        xvalubox.Foreground = modBasic.$TextBoxForeColor
+      Endif
+      If modBasic.$TextBoxTextFont Then
+        xvalubox.Font = Font[modBasic.$TextBoxTextFont]
+      Endif
+
+    Else If xcont Is ComboBox Then
+      xcombobox = xcont
+      If modBasic.$ComboBoxForeColor Then
+        xcombobox.Foreground = modBasic.$ComboBoxForeColor
+      Endif
+      If modBasic.$ComboBoxTextFont Then
+        xcombobox.Font = Font[modBasic.$ComboBoxTextFont]
+      Endif
+
+    Else If xcont Is GridView Then
+      xgridview = xcont
+      If modBasic.$DataViewPadding Then
+        xgridview.Padding = CInt(modBasic.$DataViewPadding)
+      Endif
+      If modBasic.$DataViewTextFont Then
+        xgridview.Font = Font[modBasic.$DataViewTextFont]
+      Endif
+
+    Endif
+  Next
+
+End
+
+Public Sub GridViewDecoration(GridView1 As GridView, Row As Integer)
+
+  If Frac(Row / 2) = 0 Then 'even row
+    If modBasic.$DataEvenBackColor Then
+      GridView1.Data.Background = modBasic.$DataEvenBackColor
+    Endif
+    If modBasic.$DataEvenForeColor Then
+      GridView1.Data.Foreground = modBasic.$DataEvenForeColor
+    Endif
+  Else
+    If modBasic.$DataOddBackColor Then
+      GridView1.Data.Background = modBasic.$DataOddBackColor
+    Endif
+    If modBasic.$DataOddForeColor Then
+      GridView1.Data.Foreground = modBasic.$DataOddForeColor
+    Endif
+  Endif
+
+End
+
+Public Sub GridExplicitDecoration(GridView1 As GridView, Row As Integer, Column As Integer)
+
+  If Frac(Row / 2) = 0 Then 'even row
+    If modBasic.$DataEvenBackColor Then
+      GridView1[Row, Column].Background = modBasic.$DataEvenBackColor
+    Endif
+    If modBasic.$DataEvenForeColor Then
+      GridView1[Row, Column].Foreground = modBasic.$DataEvenForeColor
+    Endif
+  Else
+    If modBasic.$DataOddBackColor Then
+      GridView1[Row, Column].Background = modBasic.$DataOddBackColor
+    Endif
+    If modBasic.$DataOddForeColor Then
+      GridView1[Row, Column].Foreground = modBasic.$DataOddForeColor
+    Endif
+  Endif
+
+End
+
+'NOTE: ----------------------------- CONTROLS BEHAVIOR --------------------------------
+Public Sub GoToNextControlTab()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    If Application.ActiveControl
+      If Application.ActiveControl.Tag = "Auto" Then
+      Else
+        Desktop.SendKeys("\t")
+      Endif
+    Endif
+  Endif
+
+End
+
+Public Sub InputUpCaseOnly()
+
+  Select Key.Code
+    Case Key.BackSpace, Key.Tab, Key.Delete, Key.Enter, Key.Return, Key.AltKey, Key.Escape
+    Default
+      If Key.Text And If InStr("ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-/()", Key.Text) = 0 Then Stop Event
+  End Select
+
+End
+
+''put on _KeyPress() event
+Public Sub InputTextKeyOnly()
+
+  Select Key.Code
+    Case Key.BackSpace, Key.Tab, Key.Delete, Key.Enter, Key.Return, Key.AltKey, Key.Escape
+    Default
+      If Key.Text And If InStr("`~!@#$^*;:{}|'", Key.Text) > 0 Then Stop Event
+  End Select
+
+End
+
+Public Sub InputTextSearchKeyOnly()
+
+  Select Key.Code
+    Case Key.BackSpace, Key.Tab, Key.Delete, Key.Enter, Key.Return, Key.AltKey, Key.Escape
+    Default
+      If Key.Text And If InStr("`~!@#$^;:{}|'", Key.Text) > 0 Then Stop Event
+  End Select
+
+End
+
+''----------------------- General Procedures ---------------------
+Public Sub SetEncIDPrefix(txtbox As TextBox)
+
+  If modBasic.$AutoEncPrefix = "Write" Then
+    txtbox.Text = modBasic.$EncIdPrefix
+    txtbox.Pos = Len(modBasic.$EncIdPrefix)
+  Else If modBasic.$AutoEncPrefix = "Select" Then
+    txtbox.Text = modBasic.$EncIdPrefix
+    txtbox.SelectAll()
+  Endif
+
+End
+
+Public Sub SetInvoicePrefix(txtbox As TextBox)
+
+  If modBasic.$AutoEncPrefix = "Write" Then
+    txtbox.Text = modBasic.$InvoicePrefix
+    txtbox.Pos = Len(modBasic.$InvoicePrefix)
+  Else If modBasic.$AutoEncPrefix = "Select" Then
+    txtbox.Text = modBasic.$InvoicePrefix
+    txtbox.SelectAll()
+  Endif
+
+End
+
+Public Function RestoreConfigSettings()
+
+  Dim xfile As String
+
+  xfile = modHelpVariable.$appetcFolder &/ modHelpVariable.AppName & ".tmp.tar"
+  If Exist(xfile) Then
+    modDevAll.GetTarExtraction(xfile, Desktop.ConfigDir)
+  Else
+    Print xfile & " doesn't exist"
+  Endif
+
+End
+
+Public Sub InsertTexEditortData(txtbody As TextEditor)
+
+  Dim xx As String
+  Dim xLine As Integer
+  Dim xColm As Integer
+
+  xLine = txtbody.Line
+  xColm = txtbody.Column
+  If Key.Code = Key.Down Then
+    xx = CDBTableField()
+    If xx Then
+      txtbody.ToPos(xLine, xColm)
+      txtbody.Insert(xx)
+    Endif
+  Endif
+
+End
+
+Public Sub RecordFormUse(frm As Form)
+
+  Dim res As Result
+  Dim xx As String
+
+  If modDatabase.$myConn.Tables.Exist("tbljobrecord") Then
+    modBasic.DebugString("Inserting user log on " & frm.Text & " entry")
+    xx = modString.GetDateString(modHelpVariable.$LogInTime) & ":" & CStr($macCode) & ":" & CStr(frm.Handle)
+    res = modDatabase.$myConn.Create("tbljobrecord")
+    res["fldindex"] = xx
+    res["fldfrmname"] = frm.Name
+    res["fldfrmlabel"] = frm.Text
+    res["flduser"] = modBasic.$lbluser
+    res["fldcomp"] = modBasic.$compID
+    res["fldentrytime"] = Now()
+    res["fldexittime"] = ""
+    res["fldpresent"] = True
+    res["fldhostuser"] = Application.Name & "-" & Application.Version
+    res["fldhostip"] = modHelpVariable.$localIP
+    res["fldhostname"] = System.Host
+    res["fldhostmac"] = modHelpVariable.$MACAddress
+    res.Update()
+  Endif
+
+End
+
+Public Sub RecordFormExit(frm As Form)
+
+  Dim res As Result
+  Dim xx As String
+
+  If modDatabase.$myConn.Tables.Exist("tbljobrecord") Then
+    modBasic.DebugString("Inserting user log on " & frm.Text & " exit")
+    xx = modString.GetDateString(modHelpVariable.$LogInTime) & ":" & CStr($macCode) & ":" & CStr(frm.Handle)
+    res = modDatabase.$myConn.Edit("tbljobrecord", "fldindex=&1 and fldpresent=&2", xx, True)                                                                               ''"
+    If res.Available = True Then
+      For Each res
+        res["fldexittime"] = Now()
+        res["fldpresent"] = False
+        res.Update()
+      Next
+    Endif
+  Endif
+
+End
+
+''============================== Right Panel webpage =================
+Private Function GetPanelURLVal() As String
+
+  Dim xLink As String
+
+  If modBasic.$RightPanelURL Then
+    Select modBasic.$RightPanelURL
+      Case "{CAMUS_CHAT}"
+        Select modHelpVariable.$LogInCategory
+          Case "Clinician"
+            xLink = modSettings.ShowSettingFromFIle("CamusChat/URL")
+          Case Else
+            xLink = ""
+        End Select
+      Case "{HI_IMIS_Page}"
+        Select modHelpVariable.$LogInCategory
+          Case "Cashier", "Dispensar"
+            xLink = modBasic.$RightImisHIURL
+          Case Else
+            xLink = ""
+        End Select
+      Case "{HI_CLAIMDOC_Page}"
+        Select modHelpVariable.$LogInCategory
+          Case "Cashier", "Dispensar"
+            xLink = modBasic.$RightClDocHIURL
+          Case Else
+            xLink = ""
+        End Select
+      Case "{SSF_IMIS_Page}"
+        Select modHelpVariable.$LogInCategory
+          Case "Cashier", "Dispensar"
+            xLink = modBasic.$RightImisSSFURL
+          Case Else
+            xLink = ""
+        End Select
+
+      Case "https://openimis.ssf.gov.np/"
+        Select modHelpVariable.$LogInCategory
+          Case "Cashier", "Dispensar"
+            xLink = modBasic.$RightPanelURL
+          Case Else
+            xLink = ""
+        End Select
+      Case "https://imis.hib.gov.np/"
+        Select modHelpVariable.$LogInCategory
+          Case "Cashier", "Dispensar"
+            xLink = modBasic.$RightPanelURL
+          Case Else
+            xLink = ""
+        End Select
+      Case "https://claimdoc.hib.gov.np/"
+        Select modHelpVariable.$LogInCategory
+          Case "Cashier", "Dispensar"
+            xLink = modBasic.$RightPanelURL
+          Case Else
+            xLink = ""
+        End Select
+      Case "http://hmis.gov.np/hmis/dhis-web-commons/security/login.action"
+        Select modHelpVariable.$LogInCategory
+          Case "Research"
+            xLink = modBasic.$RightPanelURL
+          Case Else
+            xLink = ""
+        End Select
+      Case Else
+        xLink = modBasic.$RightPanelURL
+    End Select
+  Else
+    xLink = ""
+  Endif
+
+  Return xLink
+
+End
+
+Public Sub LoadRightPanelWebPage()
+
+  If $RightAdView.Url Then
+    $RightAdView.Zoom = modBasic.$WebZoomValue
+    Select modBasic.$RightPanelURL
+      Case "https://imis.hib.gov.np/"
+        $RightAdView.ExecJavascript("document.getElementById('txtUserName').value='" & modBasic.$RightPanelUser & "';")
+        $RightAdView.ExecJavascript("document.getElementById('txtPassword').value='" & modBasic.$RightPanelPass & "';")
+        Wait
+        $RightAdView.ExecJavascript("document.getElementById('btnLogin').click();")
+
+      Case "{HI_IMIS_Page}"
+        $RightAdView.ExecJavascript("document.getElementById('txtUserName').value='" & modBasic.$RightImisHIUser & "';")
+        $RightAdView.ExecJavascript("document.getElementById('txtPassword').value='" & modBasic.$RightImisHIPass & "';")
+        Wait
+        $RightAdView.ExecJavascript("document.getElementById('btnLogin').click();")
+
+      Case "https://openimis.ssf.gov.np/"
+        $RightAdView.ExecJavascript("document.getElementById('txtUserName').value='" & modBasic.$RightPanelUser & "';")
+        $RightAdView.ExecJavascript("document.getElementById('txtPassword').value='" & modBasic.$RightPanelPass & "';")
+        Wait
+        $RightAdView.ExecJavascript("document.getElementById('btnLogin').click();")
+
+      Case "{SSF_IMIS_Page}"
+        $RightAdView.ExecJavascript("document.getElementById('txtUserName').value='" & modBasic.$RightImisSSFUser & "';")
+        $RightAdView.ExecJavascript("document.getElementById('txtPassword').value='" & modBasic.$RightImisSSFPass & "';")
+        Wait
+        $RightAdView.ExecJavascript("document.getElementById('btnLogin').click();")
+
+      Case "https://claimdoc.hib.gov.np/"
+        $RightAdView.ExecJavascript("document.getElementsByName('username')[0].setAttribute('value', '" & modBasic.$RightPanelUser & "');")
+        $RightAdView.ExecJavascript("document.getElementsByName('password')[0].setAttribute('value', '" & modBasic.$RightPanelPass & "');")
+
+      Case "{HI_CLAIMDOC_Page}"
+        $RightAdView.ExecJavascript("document.getElementsByName('username')[0].setAttribute('value', '" & modBasic.$RightClDocHIUser & "');")
+        $RightAdView.ExecJavascript("document.getElementsByName('password')[0].setAttribute('value', '" & modBasic.$RightClDocHIPass & "');")
+
+      Case "http://hmis.gov.np/hmis/dhis-web-commons/security/login.action"
+        $RightAdView.ExecJavascript("document.getElementById('j_username').value='" & modBasic.$RightPanelUser & "';")
+        $RightAdView.ExecJavascript("document.getElementById('j_password').value='" & modBasic.$RightPanelPass & "';")
+    End Select
+  Endif
+
+End
+
+Public Sub SendBugReport(sUser As String)
+
+  Dim sPath As String
+  Dim xstr As String
+  Dim hForm As FmRemoteMail
+  Dim xx As String[]
+
+  sPath = Temp() & ".txt"
+  xstr = "APPLICATION INFO:" & gb.NewLine
+  xstr = xstr & modGeneralMain.GetSystemInformation(False) & gb.NewLine & gb.NewLine & gb.NewLine
+  xstr = xstr & "ENVIRONMENTS:" & gb.NewLine
+  xstr = xstr & modApplSub.GetEnvironmentList().Join(gb.NewLine) & gb.NewLine & gb.NewLine & gb.NewLine
+  xstr = xstr & "COMPONENTS:" & gb.NewLine
+  xstr = xstr & modApplSub.GetGambasComponets().Join(gb.NewLine) & gb.NewLine & gb.NewLine & gb.NewLine
+  File.Save(sPath, xstr)
+
+  If Desktop.NetworkAvailable = True Then
+    xx = New String[]
+    hForm = New FmRemoteMail(xx, sPath, "Bug Report", "")
+    hForm.ShowModal()
+  Endif
+
+End

@@ -1,0 +1,306 @@
+' Gambas module file
+
+Public $DeviceCategory As String[] = ["Peripheral Line Catheter", "Central Line Catheter", "Urinary Catheter"]
+Public $DepartmentName As String = "Hospital Acquired Infection"
+Public $HAITransTables As String[] = ["tblhaidenominators", "tblhaicasereports", "tblpatientexam", "tblpatlabtest", "tblpatlabsubtable"]
+
+Private Function InsertDualValue(stChapter As String, stObservation As String) As String[]
+  
+  Dim asx As New String[0]
+  
+  With asx
+    .Add(stChapter)
+    .Add(stObservation)
+  End With
+  Return asx
+  
+End
+
+Public Function GetCaseReportForm(encid As String, xclass As String) As String
+  
+  Dim $BillingReport As CReportHTML
+  
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res3x As Result
+  Dim res4 As Result
+  
+  Dim xgestage As Variant
+  Dim xbirthwt As Variant
+  Dim exxval As String
+  Dim device As String
+  Dim xsamp As String
+  Dim xculture As String
+  
+  $BillingReport = New CReportHTML([("Variable"), ("Observation")], "PatientReport", encid)
+  $BillingReport.UserData.Add("CASE REPORT FORM", "Report")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM1")
+  
+  $BillingReport.AddChapter("Demographic Information")
+  res1 = modDatabase.$myConn.Exec("select fldpatientval,fldptsex,fldptbirday from tblpatientinfo where fldpatientval in(select fldpatientval from tblencounter where fldencounterval=&1)", encid)                     ''
+  If res1.Available Then
+    $BillingReport.Add(InsertDualValue("Patient ID", res1["fldpatientval"]))
+    $BillingReport.Add(InsertDualValue("Encounter ID", encid))
+    $BillingReport.Add(InsertDualValue("Gender", res1["fldptsex"]))
+    $BillingReport.Add(InsertDualValue("Date of Birth", modReportVar.GetDateTimeReport(res1["fldptbirday"], gb.MediumDate)))
+  Endif
+  $BillingReport.Add(InsertDualValue("Date of Admission", modReportVar.GetDateTimeReport(modPatient.GetAdmissionDate(encid), gb.MediumDate)))
+  $BillingReport.Add(InsertDualValue("First Ward", modPatient.GetPatientFirstWard(encid)))
+  $BillingReport.Add(InsertDualValue("Last Ward", modPatient.GetPatientWardName(encid)))
+  $BillingReport.Add(InsertDualValue("Bed Transitions", modString.TextToHTML(modPatPatho.GetPatientTransition(encid).Join(gb.NewLine))))
+  
+  xbirthwt = modPatient.GetBirthValue("flddelwt", encid)
+  If xbirthwt Then
+    $BillingReport.AddChapter("Newborn Only")
+    xgestage = modPatient.GetObsFieldBabyEnc("fldgestation", encid)
+    $BillingReport.Add(InsertDualValue("Gestational Age (weeks)", Round(xgestage, 0)))
+    $BillingReport.Add(InsertDualValue("Birth Weight (Grams)", xbirthwt))
+  Endif
+  $BillingReport.Add(InsertDualValue("", ""))
+  
+  res2 = modDatabase.$myConn.Exec("select fldexamid from tbldeptexam where flddept=&1", $DepartmentName)
+  If res2.Available Then
+    $BillingReport.AddChapter("Clinical Manifestation of Infection/Sepsis")
+    For Each res2
+      exxval = ""
+      exxval = GetInfectionValuesTable(encid, res2["fldexamid"], $DepartmentName)
+      $BillingReport.Add(InsertDualValue(res2["fldexamid"], exxval))
+    Next
+  Endif
+  $BillingReport.Add(InsertDualValue("", ""))
+  
+  $BillingReport.AddChapter("Blood Stream Device Details")
+  res3 = modDatabase.$myConn.Exec("select distinct(flditem) as flditem from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4))", encid, "Devices", $DeviceCategory[0], $DeviceCategory[1])
+  If res3.Available Then
+    $BillingReport.Add(InsertDualValue("First Insertion Date of Blood Stream Device", modReportVar.GetDateTimeReport(GetHAIDeviceFirstDate(encid, $DeviceCategory[0], $DeviceCategory[1]), gb.GeneralDate)))
+    $BillingReport.Add(InsertDualValue("First Insertied Blood Stream Device", GetDeviceCategory(GetHAIBSIDeviceFirstType(encid))))
+    $BillingReport.Add(InsertDualValue("Total Blood Stream Device Hours", GetHAIDeviceTotalHour(encid, $DeviceCategory[0], $DeviceCategory[1])))
+    For Each res3
+      device = ""
+      device = GetHAIDeviceTable(encid, res3["flditem"])
+      $BillingReport.Add(InsertDualValue(res3["flditem"], device))
+    Next
+  Endif
+  $BillingReport.Add(InsertDualValue("", ""))
+  
+  $BillingReport.AddChapter("Urinary Device Details")
+  res3x = modDatabase.$myConn.Exec("select distinct(flditem) as flditem from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where fldcategory=&3)", encid, "Devices", $DeviceCategory[2])
+  If res3x.Available Then
+    $BillingReport.Add(InsertDualValue("First Insertion Date of Urine Device", modReportVar.GetDateTimeReport(GetHAIDeviceFirstDate(encid, $DeviceCategory[2]), gb.GeneralDate)))
+    $BillingReport.Add(InsertDualValue("Total Urinary Device Hours", GetHAIDeviceTotalHour(encid, $DeviceCategory[2])))
+    For Each res3x
+      device = ""
+      device = GetHAIDeviceTable(encid, res3x["flditem"])
+      $BillingReport.Add(InsertDualValue(res3x["flditem"], device))
+    Next
+  Endif
+  $BillingReport.Add(InsertDualValue("", ""))
+  
+  res4 = modDatabase.$myConn.Exec("select fldid,fldtestid,fldsampleid,fldsampletype,fldtime_sample,fldtime_start,fldtime_report,flduptime_report from tblpatlabtest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3) and flvisible=&4 and fldid in(select fldtestid from tblpatlabsubtest where fldencounterval=&1 and (fldtanswertype=&5 or fldtanswertype=&6))", encid, "Reported", "Verified", "Visible", "Drug Sensitivity", "WHO Sensitivity")
+  If res4.Available Then
+    $BillingReport.AddChapter("Culture and Sensitivity")
+    For Each res4
+      xsamp = ""
+      xculture = ""
+      xsamp = "Sample ID: " & res4["fldsampleid"]
+      xsamp = xsamp & "<br>" & "Specimen: " & res4["fldsampletype"]
+      xsamp = xsamp & "<br>" & "Sampling: " & modReportVar.GetDateTimeReport(res4["fldtime_sample"], gb.GeneralDate)
+      xsamp = xsamp & "<br>" & "Processing: " & modReportVar.GetDateTimeReport(res4["fldtime_start"], gb.GeneralDate)
+      If res4["flduptime_report"] Then
+        xsamp = xsamp & "<br>" & "Reporting: " & modReportVar.GetDateTimeReport(res4["flduptime_report"], gb.GeneralDate)
+      Else
+        xsamp = xsamp & "<br>" & "Reporting: " & modReportVar.GetDateTimeReport(res4["fldtime_report"], gb.GeneralDate)
+      Endif
+      xculture = modString.TextToHTML(modLabTest.GetLabSubTestQuali(encid, res4["fldtestid"], res4["fldid"]))
+      $BillingReport.Add(InsertDualValue(xsamp, xculture))
+    Next
+  Endif
+  $BillingReport.Add(InsertDualValue("", ""))
+  
+  $BillingReport.AddChapter("Outcome")
+  $BillingReport.Add(InsertDualValue("Outcome after 14 days", modHAI.GetHaiMidOutcome(encid)))
+  $BillingReport.Add(InsertDualValue("Outcome at end of hospitalization", modPatient.CurrentStatuswithComment(encid)))
+  $BillingReport.Add(InsertDualValue("Date of Outcome", modReportVar.GetDateTimeReport(modPatient.GetDischargeDate(encid), gb.MediumDate)))
+  $BillingReport.Add(InsertDualValue("Case Classification", xclass))
+  
+  Return $BillingReport.NewHTMLPath()
+  
+End
+
+''-----------------Report specific Procedures ------------------
+Private Function GetHAIDeviceTable(encid As String, sDevice As String) As String
+  
+  Dim res As Result
+  
+  Dim aVar As Variant[]
+  Dim sColl As Collection
+  Dim sTable As String
+  
+  aVar = New Variant[]
+  res = modDatabase.$myConn.Exec("select fldfirsttime,fldsecondtime,flddetail from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem=&3", encid, "Devices", sDevice)
+  If res.Available Then
+    For Each res
+      sColl = New Collection
+      sColl.Add(res["flddetail"], CStr(0))
+      sColl.Add(modReportVar.GetDateTimeReport(res["fldfirsttime"], gb.GeneralDate), CStr(1))
+      sColl.Add(modReportVar.GetDateTimeReport(res["fldsecondtime"], gb.GeneralDate), CStr(2))
+      If res["fldsecondtime"] Then
+        sColl.Add(DateDiff(res["fldfirsttime"], res["fldsecondtime"], gb.Hour), CStr(3))
+      Else
+        sColl.Add("", CStr(3))
+      Endif
+      aVar.Add(sColl)
+    Next
+  Endif
+  
+  sTable = modString.GetRichTableStringFromVariant(["Location", "Start", "Stop", "Duration"], aVar)
+  Return sTable
+  
+End
+
+Private Function GetInfectionValuesTable(encid As String, sExam As String, sType As String) As String
+  
+  Dim sql As String
+  Dim res As Result
+  
+  Dim aVar As Variant[]
+  Dim sColl As Collection
+  Dim sTable As String
+  
+  aVar = New Variant[]
+  sql = "select fldhead,fldrepquali,fldrepquanti,fldtime from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldhead=&3"                  ''
+  res = modDatabase.$syConn.Exec(sql, encid, sType, sExam)
+  If res.Available Then
+    For Each res
+      sColl = New Collection
+      sColl.Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.GeneralDate), CStr(0))
+      sColl.Add(res["fldrepquali"], CStr(1))
+      aVar.Add(sColl)
+    Next
+  Endif
+  
+  sTable = modString.GetRichTableStringFromVariant(["Date", "Value"], aVar)
+  Return sTable
+  
+End
+
+''------------------- General procedures ----------------------
+Public Function GetHAIDeviceFirstDate(encid As String, sType As String, Optional xType As String) As Date
+  
+  Dim xxx As Date
+  Dim res As Result
+  
+  If xType Then
+    res = modDatabase.$myConn.Exec("select fldfirsttime from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4)) ORDER BY fldfirsttime ASC", encid, "Devices", sType, xType)
+  Else
+    res = modDatabase.$myConn.Exec("select fldfirsttime from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where fldcategory=&3) ORDER BY fldfirsttime ASC", encid, "Devices", sType)
+  Endif
+  If res.Available Then
+    res.MoveFirst
+    If res["fldfirsttime"] Then
+      xxx = res["fldfirsttime"]
+    Else
+      xxx = ""
+    Endif
+  Else
+    xxx = ""
+  Endif
+  
+  Return xxx
+  
+End
+
+Public Function GetHAIDeviceTotalHour(encid As String, sType As String, Optional xType As String) As Float
+  
+  Dim tothr As Float
+  Dim res As Result
+  Dim res1 As Result
+  Dim xstr As String
+  
+  tothr = 0
+  xstr = modDate.GetSQLHourDiffStr("fldfirsttime", "fldsecondtime", modDatabase.$myConn)
+  If xType Then
+    res = modDatabase.$myConn.Exec("select SUM(" & xstr & ") as xtot from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4)) and fldsecondtime IS NOT NULL", encid, "Devices", sType, xType)
+  Else
+    res = modDatabase.$myConn.Exec("select SUM(" & xstr & ") as xtot from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where fldcategory=&3) and fldsecondtime IS NOT NULL", encid, "Devices", sType)
+  Endif
+  If res.Available And If res["xtot"] Then
+    tothr = tothr + res["xtot"]
+  Endif
+  
+  If xType Then
+    res1 = modDatabase.$myConn.Exec("select fldfirsttime from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4)) and fldsecondtime IS NULL ORDER BY fldfirsttime ASC", encid, "Devices", sType, xType)
+  Else
+    res1 = modDatabase.$myConn.Exec("select fldfirsttime from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where fldcategory=&3) and fldsecondtime IS NULL ORDER BY fldfirsttime ASC", encid, "Devices", sType)
+  Endif
+  If res1.Available Then
+    res1.MoveLast
+    tothr = tothr + DateDiff(res1["fldfirsttime"], Now(), gb.Hour)
+  Endif
+  
+  Return tothr
+  
+End
+
+Public Function GetHAIAllDevicesTotalHour(encid As String) As Float
+  
+  Dim tothr As Float
+  Dim res As Result
+  Dim res1 As Result
+  Dim xstr As String
+  
+  tothr = 0
+  xstr = modDate.GetSQLHourDiffStr("fldfirsttime", "fldsecondtime", modDatabase.$myConn)
+  res = modDatabase.$myConn.Exec("select SUM(" & xstr & ") as xtot from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4 or fldcategory=&5)) and fldsecondtime IS NOT NULL", encid, "Devices", "Peripheral Line Catheter", "Central Line Catheter", "Urinary Catheter")
+  If res.Available And If res["xtot"] Then
+    tothr = tothr + res["xtot"]
+  Endif
+  
+  res1 = modDatabase.$myConn.Exec("select fldfirsttime from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4 or fldcategory=&5)) and fldsecondtime IS NULL ORDER BY fldfirsttime ASC", encid, "Devices", "Peripheral Line Catheter", "Central Line Catheter", "Urinary Catheter")
+  If res1.Available Then
+    res1.MoveLast
+    tothr = tothr + DateDiff(res1["fldfirsttime"], Now(), gb.Hour)
+  Endif
+  
+  Return tothr
+  
+End
+
+Public Function GetHAIBSIDeviceFirstType(encid As String) As String
+  
+  Dim xxx As String
+  Dim res As Result
+  
+  res = modDatabase.$myConn.Exec("select fldfirsttime,flditem from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4)) ORDER BY fldfirsttime ASC", encid, "Devices", $DeviceCategory[0], $DeviceCategory[1])
+  If res.Available Then
+    res.MoveFirst
+    If res["fldfirsttime"] Then
+      xxx = res["flditem"]
+    Else
+      xxx = ""
+    Endif
+  Else
+    xxx = ""
+  Endif
+  
+  Return xxx
+  
+End
+
+Public Function GetDeviceCategory(sDevice As String) As String
+  
+  Dim res As Result
+  Dim xxx As String
+  
+  res = modDatabase.$myConn.Exec("select fldcategory from tblevents where flditem=&1", sDevice)
+  If res.Available Then
+    res.MoveFirst
+    xxx = res["fldcategory"]
+  Else
+    xxx = ""
+  Endif
+  
+  Return xxx
+  
+End

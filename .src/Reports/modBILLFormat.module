@@ -1,0 +1,2396 @@
+' Gambas module file
+
+Public $DischargeSumReceived As Float
+
+Private $ShowDateTime As String
+Private $ShowBatch As String
+Private $ShowExpiry As String
+Private $ShowQuantity As String
+' Private $TextTaxDiscount As String
+Private $ShowTaxDiscount As String
+Private $FormatDiscount As String
+Private $FormatTax As String
+Private $FormatCashCredit As String
+Private $EnableExtraLabel As String
+Private $ShowSumDisc As String
+Private $ShowTaxSum As String
+Private $InvoiceGroupItem As String
+Private $PartiSuffix As String
+Private $InvDateFormat As String
+Private $DischargeFormat As String
+
+Private $NoteI_Font As String
+Private $Note2_Font As String
+Private $Note1_Text As String
+Private $Note2_Text As String
+Private $AIAnswer As String
+
+Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Private Sub LoadTableNames()
+
+  If modNonMedical.$tblpatbilling Then
+    $tblpatbilling = modNonMedical.$tblpatbilling
+  Else
+    $tblpatbilling = "tblpatbilling"
+  Endif
+
+  If modNonMedical.$tblpatbilldetail Then
+    $tblpatbilldetail = modNonMedical.$tblpatbilldetail
+  Else
+    $tblpatbilldetail = "tblpatbilldetail"
+  Endif
+
+  If modNonMedical.$tbltempbilldetail Then
+    $tbltempbilldetail = modNonMedical.$tbltempbilldetail
+  Else
+    $tbltempbilldetail = "tbltempbilldetail"
+  Endif
+
+End
+
+'NOTE: ------------------------ Discharge Receipt ---------------------
+Public Function GetDischargeReceiptPath(encid As String, BillNo As String, txTitle As String) As String
+
+  Dim xPath As String
+
+  LoadTableNames()
+  SetInvoiceSettings()
+  xPath = DischargeBillReport(encid, BillNo, txTitle)
+
+  Return xPath
+
+End
+
+Public Sub DischargeReceipt(encid As String, BillNo As String, txTitle As String)
+
+  Dim xPath As String
+
+  If MMain.$RepoReportMode = True Then
+    Message.Warning(("Disabled"), ("OK"))
+  Else
+
+    LoadTableNames()
+    Inc Application.Busy
+    xPath = GetDischargeReceiptPath(encid, BillNo, txTitle)
+    Dec Application.Busy
+    If xPath Then
+      modControlSub.OpenHTMLPreview(encid, xPath, "InvoiceSize")
+    Endif
+
+  Endif
+
+End
+
+Public Function GetDischargeCopyPDFPath(encid As String, BillNo As String) As String
+
+  Dim xPath As String
+  Dim sPath As String
+
+  LoadTableNames()
+  SetInvoiceSettings()
+  xPath = DischargeBillReport(encid, BillNo, "DISCHARGE SLIP (COPY)")
+  If Exist(xPath) Then
+    sPath = modPrint.ConvertHTMLToPDFString(xPath, "InvoiceSize")
+  Endif
+  Return sPath
+
+End
+
+'NOTE: ---------------------- Receipt Formats -----------------------------------------
+Public Sub AdvanceReceipt(encid As String, BillNo As String, txTitle As String)
+
+  Dim xPath As String
+
+  If MMain.$RepoReportMode = True Then
+    Message.Warning(("Disabled"), ("OK"))
+  Else
+
+    LoadTableNames()
+    Inc Application.Busy
+    SetInvoiceSettings()
+    xPath = GetReceiptReport(encid, BillNo, txTitle)
+    Dec Application.Busy
+    If xPath Then
+      modControlSub.OpenHTMLPreview(encid, xPath, "InvoiceSize")
+    Endif
+
+  Endif
+
+End
+
+Public Function GetBillingReceiptPath(BillNo As String, txTitle As String) As String
+
+  Dim xPath As String
+
+  LoadTableNames()
+  SetInvoiceSettings()
+  xPath = TempraryBillReport(BillNo, txTitle)
+
+  Return xPath
+
+End
+
+Public Sub BillingReceipt(encid As String, BillNo As String, txTitle As String)
+
+  Dim xPath As String
+
+  If MMain.$RepoReportMode = True Then
+    Message.Warning(("Disabled"), ("OK"))
+  Else
+
+    LoadTableNames()
+    Inc Application.Busy
+    xPath = GetBillingReceiptPath(BillNo, txTitle)
+    Dec Application.Busy
+    If xPath Then
+      modControlSub.OpenHTMLPreview(encid, xPath, "InvoiceSize")
+    Endif
+
+  Endif
+
+End
+
+Public Function GetReceiptCopyPDFPath(BillNo As String) As String
+
+  Dim xPath As String
+  Dim sPath As String
+
+  LoadTableNames()
+  SetInvoiceSettings()
+  xPath = TempraryBillReport(BillNo, "RECEIPT (COPY)")
+  If Exist(xPath) Then
+    sPath = modPrint.ConvertHTMLToPDFString(xPath, "InvoiceSize")
+  Endif
+  Return sPath
+
+End
+
+''----------------------------- Invoice formats -------------------------
+Public Function GetBillingInvoicePath(BillNo As String, txTitle As String, ShowTax As Boolean, ShowDisc As Boolean) As String
+
+  Dim xPath As String
+
+  LoadTableNames()
+  SetInvoiceSettings()
+  If modSettings.ShowSettingFromFIle("Invoice/TextFile_Source") = "Text" Then
+    xPath = BillingLINEInvoice(BillNo, txTitle, ShowTax, ShowDisc)
+  Else
+    xPath = BillingHTMLInvoice(BillNo, txTitle, ShowTax, ShowDisc)
+  Endif
+
+  Return xPath
+
+End
+
+Public Sub BillingInvoice(encid As String, BillNo As String, txTitle As String, ShowTax As Boolean, ShowDisc As Boolean)
+
+  Dim res As Result
+  Dim xPath As String
+
+  If MMain.$RepoReportMode = True Then
+    Message.Warning(("Disabled"), ("OK"))
+  Else
+
+    LoadTableNames()
+    Inc Application.Busy
+    If modBasic.$BillInvReprintForm = "Aggregate" Then
+      res = modDatabase.$myConn.Exec("select fldid from " & $tblpatbilling & " where fldretbill=&1 and fldencounterval=&2 and fldprint=&3", BillNo, encid, True)
+      If res.Available Then
+        xPath = InvoiceReturnReport(BillNo)
+      Else
+        xPath = GetBillingInvoicePath(BillNo, txTitle, ShowTax, ShowDisc)
+      Endif
+    Else
+      xPath = GetBillingInvoicePath(BillNo, txTitle, ShowTax, ShowDisc)
+    Endif
+    Dec Application.Busy
+
+    If xPath Then
+      modPrint.InvoicePrintPopUp(encid, BillNo, xPath, "InvoiceSize")
+      modPatientSub.PrintExtraReport(encid, "WithInvoice")
+    Endif
+
+  Endif
+
+End
+
+Public Function GetInvoiceCopyPDFPath(BillNo As String, ShowTax As Boolean, ShowDisc As Boolean) As String
+
+  Dim xPath As String
+  Dim sPath As String
+
+  LoadTableNames()
+  SetInvoiceSettings()
+  InsertBillViewCount(BillNo)
+  xPath = BillingHTMLInvoice(BillNo, modBillLock.GetCopyBillTypeFromBillNo(BillNo), ShowTax, ShowDisc)
+  If Exist(xPath) Then
+    sPath = modPrint.ConvertHTMLToPDFString(xPath, "InvoiceSize")
+  Endif
+  Return sPath
+
+End
+
+Public Sub InsertBillViewCount(billno As String)
+
+  Dim res1 As Result
+
+  res1 = modDatabase.$myConn.Create("tblpatbillcounts")
+  res1["fldbillno"] = billno
+  res1["flduserid"] = modBasic.$lbluser
+  res1["fldtime"] = Now()
+  res1["fldcount"] = 1
+  res1.Update
+
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub PrintSelectedInvoice(sBillNo As String)
+
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+  Dim encid As String
+
+  ShowTax = True
+  ShowDisc = False
+  LoadTableNames()
+  encid = modNonMedical.GetEncounterFromBillNo(sBillNo)
+  BillingInvoice(encid, sBillNo, modBillLock.GetCopyBillTypeFromBillNo(sBillNo), ShowTax, ShowDisc)
+
+End
+
+Private Sub SetInvoiceSettings()
+
+  $ShowDateTime = modSettings.ShowSettingFromFIle("Invoice/ShowDateTime")
+  $ShowBatch = modSettings.ShowSettingFromFIle("Invoice/ShowBatch")
+  $ShowExpiry = modBasic.$BillExpiryFormat
+  $ShowQuantity = modSettings.ShowSettingFromFIle("Invoice/ShowQuantity")
+  ' $TextTaxDiscount = modSettings.ShowSettingFromFIle("Invoice/TaxDiscount_Text")
+  $ShowTaxDiscount = modSettings.ShowSettingFromFIle("Invoice/ShowTaxDisc")
+  $FormatDiscount = modSettings.ShowSettingFromFIle("Invoice/DiscountFormat")
+  $FormatTax = modSettings.ShowSettingFromFIle("Invoice/TaxFormat")
+  $FormatCashCredit = modSettings.ShowSettingFromFIle("Invoice/CashCreditFormat")
+
+  $EnableExtraLabel = modSettings.ShowSettingFromFIle("Invoice/EnableExtraLabel")
+  $ShowSumDisc = modSettings.ShowSettingFromFIle("Invoice/ShowSumDiscount")
+  $ShowTaxSum = modSettings.ShowSettingFromFIle("Invoice/ShowSumTax")
+  $InvoiceGroupItem = modSettings.ShowSettingFromFIle("Invoice/GroupItem")
+  $PartiSuffix = modSettings.ShowSettingFromFIle("Invoice/ParticularSuffix")
+  $InvDateFormat = modSettings.ShowSettingFromFIle("Invoice/DateFormat")
+  $DischargeFormat = modSettings.ShowSettingFromFIle("Invoice/DischargeBillFormat")
+
+  $NoteI_Font = modSettings.ShowSettingFromFIle("Invoice/EndNoteI_Font")
+  $Note2_Font = modSettings.ShowSettingFromFIle("Invoice/EndNoteII_Font")
+  $Note1_Text = modSettings.ShowSettingFromFIle("Invoice/EndNoteI_Text")
+  $Note2_Text = modSettings.ShowSettingFromFIle("Invoice/EndNoteII_Text")
+  $AIAnswer = modSettings.ShowSettingFromFIle("Invoice/AIResponse")
+
+End
+
+Private Function GetCostItemBreakdown(sItem As String) As String[]
+
+  Dim res As Result
+  Dim xxx As String[]
+
+  xxx = New String[]
+  res = modDatabase.$myConn.Exec("select flditemname,flditemrate from tblcostbreak where fldgroup=&1", sItem)
+  If res.Available Then
+    For Each res
+      xxx.Add(res["flditemname"] & " : " & modReportVar.GetLocaleNumberFormat(res["flditemrate"], gb.Currency))
+    Next
+  Endif
+  Return xxx
+
+End
+
+Private Function BillingHTMLInvoice(BillNo As String, txTitle As String, ShowTax As Boolean, ShowDisc As Boolean) As String
+
+  Dim $BillingReport As CReportBILL
+  Dim hClas As CBillDataPlus
+  Dim sql As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim resx As Result
+  Dim rcv As Float
+  Dim rsunit As String
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim hdr As String[]
+
+  Dim qty As Float
+  Dim rte As Float
+  Dim tax As Float
+  Dim disc As Float
+  Dim tot As Float
+  Dim grtot As Float
+  Dim xitem As String
+
+  Dim taxcol As String
+  Dim disccol As String
+  Dim taxamt As String
+  Dim discamt As String
+  Dim xdisc As Float
+  Dim xtax As Float
+  Dim xdepoamt As Float
+
+  Dim sTime As Date
+  Dim sUser As String
+  Dim sComp As String
+  Dim txtmode As String
+  Dim xcompo As String[]
+  Dim xqrpay As String
+  Dim xcsource As String
+  Dim xcshcomm As String
+  Dim xcshper As Float
+  Dim xcshamt As Float
+
+  Dim rey1 As Result
+  Dim rey2 As Result
+
+  'Query for header and footer content
+  sql = "select fldencounterval,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt as chrgeamt,fldreceivedamt,fldcurdeposit,fldbilltype,fldtaxgroup,flddiscountgroup,flduserid,fldtime,fldcomp,fldchequeno,fldbankname,fldprevdeposit from " & $tblpatbilldetail & " where fldbillno=&1"                                                                    '''
+  res = modDatabase.$myConn.Exec(sql, BillNo)
+  If res["fldreceivedamt"] Then
+    rcv = res["fldreceivedamt"]
+  Else
+    rcv = res["fldcurdeposit"]
+  Endif
+  sTime = res["fldtime"]
+  sUser = res["flduserid"]
+  sComp = res["fldcomp"]
+  txtmode = res["fldbilltype"]
+  If txtmode = "Cash" Then
+    xqrpay = modNonMedical.GetQRSCanPayCode(BillNo)
+    xcsource = modNonMedical.GetCashSource(BillNo).Join(";")
+  Else
+    xqrpay = ""
+    xcsource = ""
+  Endif
+  If modBasic.$currency Then
+    rsunit = modBasic.$currency
+  Else
+    rsunit = modString.CurrencySymbol()
+  Endif
+  xdepoamt = modNonMedical.GetPatientDeposit(modDatabase.$myConn, res["fldencounterval"])
+  If txtmode = "Credit" And If res["fldreceivedamt"] Then
+    xcshper = modNonMedical.GetCashinCreditLedger(res["fldbankname"])
+    If xcshper Then
+      xcshamt = res["chrgeamt"] * xcshper / 100
+      If Round(res["fldreceivedamt"]) > Round(xcshamt) Then
+        xcshcomm = "NOTE: " & res["fldbankname"] & " CASH : " & rsunit & Space(1) & Format(xcshamt, gb.Fixed) & " AND SELF-PAYMENT CASH : " & rsunit & Space(1) & Format(res["fldreceivedamt"] - xcshamt, gb.Fixed)
+      Else
+        xcshcomm = ""
+      Endif
+    Else
+      xcshcomm = ""
+    Endif
+  Else
+    xcshcomm = ""
+  Endif
+
+  'create table structure
+  hdr = New String[]
+  If $InvoiceGroupItem = "Group" Then
+    hdr.Add(Space(1))
+    hdr.Add("PARTICULARS")
+    'show qty
+    If $ShowQuantity = "No" Then
+    Else
+      hdr.Add("QTY")
+    Endif
+    hdr.Add("RATE")
+    hdr.Add("TOTAL")
+
+  Else
+    hdr.Add(Space(1))
+    If $ShowDateTime = "Yes" Then
+      hdr.Add("DATETIME")
+    Endif
+    hdr.Add("PARTICULARS")
+    'show batch
+    If $ShowBatch = "Yes" Then
+      hdr.Add("BATCH")
+    Endif
+    'show expiry
+    If $ShowExpiry And If $ShowExpiry <> "No" Then
+      hdr.Add("EXPIRY")
+    Endif
+    'show qty
+    If $ShowQuantity = "No" Then
+    Else
+      hdr.Add("QTY")
+    Endif
+    hdr.Add("RATE")
+
+    'show tax/disc
+    If $ShowTaxDiscount Then
+      hdr.Add("SUBTOTAL")
+      If $FormatDiscount = "Percent" Then
+        disccol = "DISC%"
+      Else
+        disccol = "DISC"
+      Endif
+      If $FormatTax = "Percent" Then
+        taxcol = "TAX%"
+      Else
+        taxcol = "TAX"
+      Endif
+
+      If $ShowTaxDiscount = "Always" Then
+        hdr.Add(disccol)
+        hdr.Add(taxcol)
+        hdr.Add("TOTAL")
+      Else If $ShowTaxDiscount = "DiscOnly" Then
+        hdr.Add(disccol)
+        hdr.Add("TOTAL")
+      Else If $ShowTaxDiscount = "NotNull" Then
+        If ShowDisc = True Then
+          hdr.Add(disccol)
+        Endif
+        If ShowTax = True Then
+          hdr.Add(taxcol)
+        Endif
+        If ShowDisc = True Or If ShowTax = True Then
+          hdr.Add("TOTAL")
+        Endif
+      Endif
+    Else
+      hdr.Add("TOTAL")
+    Endif
+    ''cash in credit
+    If BillNo Like "DCL" & "*" Then
+    Else
+      If $FormatCashCredit = "Percent" Then
+        hdr.Add("CASH%")
+      Else If $FormatCashCredit = "Amount" Then
+        hdr.Add("CASH")
+      Endif
+    Endif
+
+  Endif
+
+  $BillingReport = New CReportBILL(hdr, "Invoice", res["fldencounterval"], BillNo)
+  'Header content
+  $BillingReport.UserData.Add(txTitle, "InvoiceType")
+  $BillingReport.UserData.Add(txtmode, "InvoiceMode")
+  $BillingReport.UserData.Add(BillNo, "InvoiceNumber")
+  If MMain.$GovtApp = "Yes" Then
+    $BillingReport.UserData.Add("", "BillPrintCount")
+  Else
+    $BillingReport.UserData.Add(modNonMedical.GetInvoicePrintCount(BillNo), "BillPrintCount")
+  Endif
+  If $EnableExtraLabel = "Yes" Then
+    hClas = New CBillDataPlus(BillNo)
+    $BillingReport.UserData.Add(hClas.ReferName(), "ReferLabel")
+    $BillingReport.UserData.Add(hClas.PayableName(), "PayableLabel")
+    $BillingReport.UserData.Add(hClas.ReturnBillNo(), "ReturnBillNo")
+    $BillingReport.UserData.Add(hClas.ReturnReason(), "ReturnReason")
+    $BillingReport.UserData.Add(hClas.DiscountTag(), "DiscountTag")
+    $BillingReport.UserData.Add(hClas.ReturnDiscountCode(), "ReturnDiscCode")
+    $BillingReport.UserData.Add(hClas.ReturnTaxCode(), "ReturnTaxCode")
+  Endif
+
+  'Cash or Credit invoice summary
+  $BillingReport.UserData.Add(res["fldtaxgroup"], "TaxGroup")
+  $BillingReport.UserData.Add(res["flddiscountgroup"], "DiscountGroup")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flditemamt"], gb.Fixed), "SubTotal")
+
+  If $ShowSumDisc = "No" Then
+    $BillingReport.UserData.Add("", "Discount")
+  Else If $ShowSumDisc = "NotNull" Then
+    If res["flddiscountamt"] Then
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flddiscountamt"], gb.Fixed), "Discount")
+    Else
+      $BillingReport.UserData.Add("", "Discount")
+      If GetDiscSettingString(BillNo) Then
+        $BillingReport.SPecData.Add("", GetDiscSettingString(BillNo))
+      Endif
+    Endif
+  Else
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flddiscountamt"], gb.Fixed), "Discount")
+  Endif
+
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["chrgeamt"], gb.Fixed), "TotalAmount")
+
+  If $ShowTaxSum = "No" Then
+    $BillingReport.UserData.Add("", "TotalTax")
+  Else If $ShowTaxSum = "NotNull" Then
+    If res["fldtaxamt"] Then
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldtaxamt"], gb.Fixed), "TotalTax")
+    Else
+      $BillingReport.UserData.Add("", "TotalTax")
+      If GetTaxSettingString(BillNo) Then
+        $BillingReport.SPecData.Add("", GetTaxSettingString(BillNo))
+      Endif
+    Endif
+  Else
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldtaxamt"], gb.Fixed), "TotalTax")
+  Endif
+
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(rcv, gb.Fixed), "ReceAmount")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(xdepoamt, gb.Fixed), "DepoAmount")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldreceivedamt"] - xdepoamt, gb.Fixed), "DueAmount")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["chrgeamt"] - res["fldreceivedamt"], gb.Fixed), "DueCredit")
+
+  'Amount in words and User info
+  $BillingReport.UserData.Add(modString.ConvertMoneyToText(rcv), "AmtWord")
+  $BillingReport.UserData.Add(sUser & "@" & GetUserLocationForBill(sComp), "BillUser")
+  $BillingReport.UserData.Add(modDate.GetDateTimeInFormatForAll(sTime, $InvDateFormat, ""), "BillDateTime")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format((modNonMedical.TaxableAmountInvoice(BillNo)), gb.Fixed), "TaxableAmt")
+
+  'Footer notes
+  $BillingReport.UserData.Add(res["fldbankname"], "LedgerA/C")
+  $BillingReport.UserData.Add(res["fldchequeno"], "InvRefNumber")
+  $BillingReport.UserData.Add(xqrpay, "QRPayment")
+  $BillingReport.UserData.Add(xcsource, "CashSource")
+  $BillingReport.UserData.Add(GetInvoicePatStatus(res["fldprevdeposit"]), "InvPatStatus")
+  If xcshcomm Then
+    $BillingReport.UserData.Add(xcshcomm, "InvoiceNote")
+  Else
+    $BillingReport.UserData.Add("", "InvoiceNote")
+  Endif
+  $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note1_Text, $NoteI_Font), "Note1")
+  $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note2_Text, $Note2_Font), "NoteII")
+  If $AIAnswer Then
+    $BillingReport.UserData.Add("<b>" & $AIAnswer & "</b><br>" & modString.TextToHTML(modCloudAI.GetMedicineInvoiceResponse($AIAnswer, BillNo)), "AIOutput")
+  Else
+    $BillingReport.UserData.Add("", "AIOutput")
+  Endif
+
+  ''due clearance
+  If BillNo Like "DCL" & "*" Then
+    i = 1
+    res1 = modDatabase.$myConn.Exec("select fldtime,fldbillitem,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt,flditemtype from tblduebilling where fldbillno=&1", BillNo)
+    For Each res1
+      xitem = res1["fldbillitem"]
+      With asx
+        .Add(CStr(i))
+        'show categ
+        If $ShowDateTime = "Yes" Then
+          .Add(modDate.GetDateOnlyInFormatForAll(res1["fldtime"], $InvDateFormat, "ShortDate"))
+        Endif
+        .Add(xitem)
+        'show batch
+        If $ShowBatch = "Yes" Then
+          .Add("")
+        Endif
+        'show expiry
+        If $ShowExpiry And If $ShowExpiry <> "No" Then
+          .Add("")
+        Endif
+        'show qty
+        If $ShowQuantity = "No" Then
+        Else
+          .Add(res1["flditemqty"])
+        Endif
+        .Add(Format(res1["flditemrate"], gb.Fixed))
+        .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+        'show tax/disc
+        If $ShowTaxDiscount Then
+          If $FormatDiscount = "Percent" Then
+            discamt = CStr(Round(res1["flddiscper"], -2)) & "%"
+          Else
+            discamt = Format(res1["flditemqty"] * res1["flditemrate"] * (res1["flddiscper"] / 100), gb.Fixed)
+          Endif
+          If $FormatTax = "Percent" Then
+            taxamt = CStr(Round(res1["fldtaxper"], -2)) & "%"
+          Else
+            taxamt = Format(res1["flditemqty"] * res1["flditemrate"] * (1 - res1["flddiscper"] / 100) * (res1["fldtaxper"] / 100), gb.Fixed)
+          Endif
+
+          If $ShowTaxDiscount = "Always" Then
+            .Add(discamt)
+            .Add(taxamt)
+            .Add(Format(res1["fldditemamt"], gb.Fixed))
+          Else If $ShowTaxDiscount = "DiscOnly" Then
+            .Add(discamt)
+            .Add(Format(res1["fldditemamt"], gb.Fixed))
+          Else If $ShowTaxDiscount = "NotNull" Then
+            If ShowDisc = True Then
+              .Add(discamt)
+            Endif
+            If ShowTax = True Then
+              .Add(taxamt)
+            Endif
+            If ShowDisc = True Or If ShowTax = True Then
+              .Add(Format(res1["fldditemamt"], gb.Fixed))
+            Endif
+          Endif
+        Endif
+
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+
+    Next 'ends res1
+
+  Else
+    'Fill columns (with/without item grouping)
+    If $InvoiceGroupItem = "Amount" Then
+      res1 = modDatabase.$myConn.Exec("select distinct(flditemtype) from " & $tblpatbilling & " where fldbillno=&1", BillNo)
+      For Each res1
+
+        res2 = modDatabase.$myConn.Exec("select distinct(flditemno) from " & $tblpatbilling & " where fldbillno=&1 and flditemtype=&2", BillNo, res1["flditemtype"])                                 ''
+        i = 1
+        For Each res2
+
+          res3 = modDatabase.$myConn.Exec("select fldtime,flditemname,flditemqty,flditemrate,fldtaxper,flddiscper,fldditemamt,fldcashincredit from " & $tblpatbilling & " where fldbillno=&1 and flditemtype=&2 and flditemno=&3", BillNo, res1["flditemtype"], res2["flditemno"])
+          qty = 0
+          rte = 0
+          tax = 0
+          disc = 0
+          xdisc = 0
+          xtax = 0
+          tot = 0
+          grtot = 0
+          For Each res3
+            qty = qty + res3["flditemqty"]
+            rte = rte + res3["flditemrate"]
+            tax = tax + res3["fldtaxper"]
+            disc = disc + res3["flddiscper"]
+            xdisc = xdisc + res3["flditemqty"] * res3["flditemrate"] * (res3["flddiscper"] / 100)
+            xtax = xtax + res3["flditemqty"] * res3["flditemrate"] * (1 - res3["flddiscper"] / 100) * (res3["fldtaxper"] / 100)
+            tot = tot + res3["flditemqty"] * res3["flditemrate"]
+            grtot = grtot + res3["fldditemamt"]
+          Next
+          res3.MoveFirst
+
+          With asx
+            .Add(CStr(i))
+            'show categ
+            If $ShowDateTime = "Yes" Then
+              .Add(modDate.GetDateOnlyInFormatForAll(res3["fldtime"], $InvDateFormat, "ShortDate"))
+            Endif
+            .Add(modNonMedical.GetIteminFormatForBill(res3["flditemname"], res1["flditemtype"]))
+            'show batch
+            If $ShowBatch = "Yes" Then
+              .Add(modNonMedical.GetBatchForBillFromCategory(res2["flditemno"], res1["flditemtype"]))
+            Endif
+            'show expiry
+            If $ShowExpiry And If $ShowExpiry <> "No" Then
+              .Add(modNonMedical.GetExpiryForBillFromCategory(res2["flditemno"], res1["flditemtype"]))
+            Endif
+            'show qty
+            If $ShowQuantity = "No" Then
+            Else
+              .Add(qty)
+            Endif
+            .Add(Format(rte / res3.Count, gb.Fixed))
+            .Add(Format(tot, gb.Fixed))
+            'show tax/disc
+            If $ShowTaxDiscount Then
+              If $FormatDiscount = "Percent" Then
+                discamt = CStr(Round(disc / res3.Count, -2)) & "%"
+              Else
+                discamt = Format(xdisc / res3.Count, gb.Fixed)
+              Endif
+              If $FormatTax = "Percent" Then
+                taxamt = CStr(Round(tax / res3.Count, -2)) & "%"
+              Else
+                taxamt = Format(xtax / res3.Count, gb.Fixed)
+              Endif
+
+              If $ShowTaxDiscount = "Always" Then
+                .Add(discamt)
+                .Add(taxamt)
+                .Add(Format(grtot, gb.Fixed))
+              Else If $ShowTaxDiscount = "DiscOnly" Then
+                .Add(discamt)
+                .Add(Format(grtot, gb.Fixed))
+              Else If $ShowTaxDiscount = "NotNull" Then
+                If ShowDisc = True Then
+                  .Add(discamt)
+                Endif
+                If ShowTax = True Then
+                  .Add(taxamt)
+                Endif
+                If ShowDisc = True Or If ShowTax = True Then
+                  .Add(Format(grtot, gb.Fixed))
+                Endif
+              Endif
+            Endif
+            If $FormatCashCredit = "Percent" Then
+              .Add("")
+            Else If $FormatCashCredit = "Amount" Then
+              .Add("")
+            Endif
+
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+
+        Next 'ends res2
+
+      Next 'ends res1
+
+    Else If $InvoiceGroupItem = "Group" Then
+      i = 1
+      rey1 = modDatabase.$myConn.Exec("select distinct(fldbillitem) as fldbillitem from tblservicecost where flditemname in(select flditemname from " & $tblpatbilling & " where fldbillno=&1)", BillNo)
+      If rey1.Available Then
+        For Each rey1
+          If rey1["fldbillitem"] Then
+            rey2 = modDatabase.$myConn.Exec("select SUM(flditemrate) as flditemrate,AVG(flditemqty) as flditemqty from " & $tblpatbilling & " where fldbillno=&1 and flditemname in(select flditemname from tblservicecost where fldbillitem=&2)", BillNo, rey1["fldbillitem"])
+            If rey2.Available Then
+              With asx
+                .Add(CStr(i))
+                .Add(rey1["fldbillitem"])
+                .Add(rey2["flditemqty"])
+                .Add(Format(rey2["flditemrate"], gb.Fixed))
+                .Add(Format(rey2["flditemqty"] * rey2["flditemrate"], gb.Fixed))
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+              i = i + 1
+            Endif
+          Endif
+        Next
+      Endif
+
+      res1 = modDatabase.$myConn.Exec("select fldbillno,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1  and flditemname in(select flditemname from tblservicecost where fldbillitem IS NULL) UNION select fldbillno,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1  and flditemname in(select flditemname from tblservicecost)", BillNo)
+      If res1.Available Then
+        For Each res1
+          With asx
+            .Add(CStr(i))
+            .Add(res1["flditemname"])
+            .Add(res1["flditemqty"])
+            .Add(Format(res1["flditemrate"], gb.Fixed))
+            .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next
+      Endif
+
+    Else If $InvoiceGroupItem = "Category" Then
+      i = 1
+      resx = modDatabase.$myConn.Exec("select distinct(flditemtype) as flditemtype from " & $tblpatbilling & " where fldbillno=&1", BillNo)
+      If resx.Available Then
+        For Each resx
+          $BillingReport.AddChapter(resx["flditemtype"])
+
+          res1 = modDatabase.$myConn.Exec("select fldtime,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt,flditemtype,fldpayto,fldrefer,fldcashincredit from " & $tblpatbilling & " where fldbillno=&1 and flditemtype=&2", BillNo, resx["flditemtype"])
+          For Each res1
+
+            If $PartiSuffix = "Payable" Then
+              If res1["fldpayto"] Then
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldpayto"]) & ")"
+              Else
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+              Endif
+            Else If $PartiSuffix = "Referral" Then
+              If res1["fldrefer"] Then
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldrefer"]) & ")"
+              Else
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+              Endif
+            Else If $PartiSuffix = "Components" Then
+              xcompo = GetCostItemBreakdown(res1["flditemname"])
+              If xcompo And If xcompo.Count Then
+                xitem = modString.TextToHTML(modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & gb.NewLine & " (" & xcompo.Join(gb.NewLine) & ")")
+              Else
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+              Endif
+            Else
+              xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+            Endif
+
+            With asx
+              .Add(CStr(i))
+              'show categ
+              If $ShowDateTime = "Yes" Then
+                .Add(modDate.GetDateOnlyInFormatForAll(res1["fldtime"], $InvDateFormat, "ShortDate"))
+              Endif
+              .Add(xitem)
+              'show batch
+              If $ShowBatch = "Yes" Then
+                .Add(modNonMedical.GetBatchForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+              Endif
+              'show expiry
+              If $ShowExpiry And If $ShowExpiry <> "No" Then
+                .Add(modNonMedical.GetExpiryForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+              Endif
+              'show qty
+              If $ShowQuantity = "No" Then
+              Else
+                .Add(res1["flditemqty"])
+              Endif
+              .Add(Format(res1["flditemrate"], gb.Fixed))
+              .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+              'show tax/disc
+              If $ShowTaxDiscount Then
+                If $FormatDiscount = "Percent" Then
+                  discamt = CStr(Round(res1["flddiscper"], -2)) & "%"
+                Else
+                  discamt = Format(res1["flditemqty"] * res1["flditemrate"] * (res1["flddiscper"] / 100), gb.Fixed)
+                Endif
+                If $FormatTax = "Percent" Then
+                  taxamt = CStr(Round(res1["fldtaxper"], -2)) & "%"
+                Else
+                  taxamt = Format(res1["flditemqty"] * res1["flditemrate"] * (1 - res1["flddiscper"] / 100) * (res1["fldtaxper"] / 100), gb.Fixed)
+                Endif
+
+                If $ShowTaxDiscount = "Always" Then
+                  .Add(discamt)
+                  .Add(taxamt)
+                  .Add(Format(res1["fldditemamt"], gb.Fixed))
+                Else If $ShowTaxDiscount = "DiscOnly" Then
+                  .Add(discamt)
+                  .Add(Format(res1["fldditemamt"], gb.Fixed))
+                Else If $ShowTaxDiscount = "NotNull" Then
+                  If ShowDisc = True Then
+                    .Add(discamt)
+                  Endif
+                  If ShowTax = True Then
+                    .Add(taxamt)
+                  Endif
+                  If ShowDisc = True Or If ShowTax = True Then
+                    .Add(Format(res1["fldditemamt"], gb.Fixed))
+                  Endif
+                Endif
+              Endif
+              If $FormatCashCredit = "Percent" Then
+                .Add(Format(res1["fldcashincredit"], gb.Fixed))
+              Else If $FormatCashCredit = "Amount" Then
+                .Add(Format(res1["fldditemamt"] * res1["fldcashincredit"] / 100, gb.Fixed))
+              Endif
+
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+            i = i + 1
+
+          Next 'ends res1
+
+        Next
+      Endif
+
+    Else
+      i = 1
+      res1 = modDatabase.$myConn.Exec("select fldtime,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt,flditemtype,fldpayto,fldrefer,fldcashincredit from " & $tblpatbilling & " where fldbillno=&1 ORDER BY flditemtype", BillNo)
+      For Each res1
+
+        If $PartiSuffix = "Payable" Then
+          If res1["fldpayto"] Then
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldpayto"]) & ")"
+          Else
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+          Endif
+        Else If $PartiSuffix = "Referral" Then
+          If res1["fldrefer"] Then
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldrefer"]) & ")"
+          Else
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+          Endif
+        Else If $PartiSuffix = "Components" Then
+          xcompo = GetCostItemBreakdown(res1["flditemname"])
+          If xcompo And If xcompo.Count Then
+            xitem = modString.TextToHTML(modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & gb.NewLine & " (" & xcompo.Join(gb.NewLine) & ")")
+          Else
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+          Endif
+        Else
+          xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+        Endif
+
+        With asx
+          .Add(CStr(i))
+          'show categ
+          If $ShowDateTime = "Yes" Then
+            .Add(modDate.GetDateOnlyInFormatForAll(res1["fldtime"], $InvDateFormat, "ShortDate"))
+          Endif
+          .Add(xitem)
+          'show batch
+          If $ShowBatch = "Yes" Then
+            .Add(modNonMedical.GetBatchForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+          Endif
+          'show expiry
+          If $ShowExpiry And If $ShowExpiry <> "No" Then
+            .Add(modNonMedical.GetExpiryForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+          Endif
+          'show qty
+          If $ShowQuantity = "No" Then
+          Else
+            .Add(res1["flditemqty"])
+          Endif
+          .Add(Format(res1["flditemrate"], gb.Fixed))
+          .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+          'show tax/disc
+          If $ShowTaxDiscount Then
+            If $FormatDiscount = "Percent" Then
+              discamt = CStr(Round(res1["flddiscper"], -2)) & "%"
+            Else
+              discamt = Format(res1["flditemqty"] * res1["flditemrate"] * (res1["flddiscper"] / 100), gb.Fixed)
+            Endif
+            If $FormatTax = "Percent" Then
+              taxamt = CStr(Round(res1["fldtaxper"], -2)) & "%"
+            Else
+              taxamt = Format(res1["flditemqty"] * res1["flditemrate"] * (1 - res1["flddiscper"] / 100) * (res1["fldtaxper"] / 100), gb.Fixed)
+            Endif
+
+            If $ShowTaxDiscount = "Always" Then
+              .Add(discamt)
+              .Add(taxamt)
+              .Add(Format(res1["fldditemamt"], gb.Fixed))
+            Else If $ShowTaxDiscount = "DiscOnly" Then
+              .Add(discamt)
+              .Add(Format(res1["fldditemamt"], gb.Fixed))
+            Else If $ShowTaxDiscount = "NotNull" Then
+              If ShowDisc = True Then
+                .Add(discamt)
+              Endif
+              If ShowTax = True Then
+                .Add(taxamt)
+              Endif
+              If ShowDisc = True Or If ShowTax = True Then
+                .Add(Format(res1["fldditemamt"], gb.Fixed))
+              Endif
+            Endif
+          Endif
+          If $FormatCashCredit = "Percent" Then
+            .Add(Format(res1["fldcashincredit"], gb.Fixed))
+          Else If $FormatCashCredit = "Amount" Then
+            .Add(Format(res1["fldditemamt"] * res1["fldcashincredit"] / 100, gb.Fixed))
+          Endif
+
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+
+      Next 'ends res1
+
+    Endif
+  Endif
+
+  'Finally make report
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Private Function BillingLINEInvoice(BillNo As String, txTitle As String, ShowTax As Boolean, ShowDisc As Boolean) As String
+
+  Dim $BillingReport As CTextBIll
+  Dim hClas As CBillDataPlus
+  Dim sql As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim resx As Result
+  Dim rcv As Float
+  Dim rsunit As String
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim hdr As String[]
+
+  Dim qty As Float
+  Dim rte As Float
+  Dim tax As Float
+  Dim disc As Float
+  Dim tot As Float
+  Dim grtot As Float
+  Dim xitem As String
+
+  Dim taxcol As String
+  Dim disccol As String
+  Dim taxamt As String
+  Dim discamt As String
+  Dim xdisc As Float
+  Dim xtax As Float
+  Dim xdepoamt As Float
+
+  Dim sTime As Date
+  Dim sUser As String
+  Dim sComp As String
+  Dim txtmode As String
+  Dim xcompo As String[]
+  Dim xqrpay As String
+  Dim xcsource As String
+  Dim xcshcomm As String
+  Dim xcshper As Float
+  Dim xcshamt As Float
+
+  Dim rey1 As Result
+  Dim rey2 As Result
+
+  'Query for header and footer content
+  sql = "select fldencounterval,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt as chrgeamt,fldreceivedamt,fldcurdeposit,fldbilltype,fldtaxgroup,flddiscountgroup,flduserid,fldtime,fldcomp,fldchequeno,fldbankname,fldprevdeposit from " & $tblpatbilldetail & " where fldbillno=&1"                                                                    '''
+  res = modDatabase.$myConn.Exec(sql, BillNo)
+  If res["fldreceivedamt"] Then
+    rcv = res["fldreceivedamt"]
+  Else
+    rcv = res["fldcurdeposit"]
+  Endif                                                                                    ''
+  sTime = res["fldtime"]
+  sUser = res["flduserid"]
+  sComp = res["fldcomp"]
+  txtmode = res["fldbilltype"]
+  If txtmode = "Cash" Then
+    xqrpay = modNonMedical.GetQRSCanPayCode(BillNo)
+    xcsource = modNonMedical.GetCashSource(BillNo).Join(";")
+  Else
+    xqrpay = ""
+    xcsource = ""
+  Endif
+  If modBasic.$currency Then
+    rsunit = modBasic.$currency
+  Else
+    rsunit = modString.CurrencySymbol()
+  Endif
+  xdepoamt = modNonMedical.GetPatientDeposit(modDatabase.$myConn, res["fldencounterval"])
+  If txtmode = "Credit" And If res["fldreceivedamt"] Then
+    xcshper = modNonMedical.GetCashinCreditLedger(res["fldbankname"])
+    If xcshper Then
+      xcshamt = res["chrgeamt"] * xcshper / 100
+      If Round(res["fldreceivedamt"]) > Round(xcshamt) Then
+        xcshcomm = "NOTE: " & res["fldbankname"] & " CASH : " & rsunit & Space(1) & Format(xcshamt, gb.Fixed) & " AND SELF-PAYMENT CASH : " & rsunit & Space(1) & Format(res["fldreceivedamt"] - xcshamt, gb.Fixed)
+      Else
+        xcshcomm = ""
+      Endif
+    Else
+      xcshcomm = ""
+    Endif
+  Else
+    xcshcomm = ""
+  Endif
+
+  'create table structure
+  hdr = New String[]
+  If $InvoiceGroupItem = "Group" Then
+    hdr.Add(Space(1))
+    hdr.Add("PARTICULARS")
+    'show qty
+    If $ShowQuantity = "No" Then
+    Else
+      hdr.Add("QTY")
+    Endif
+    hdr.Add("RATE")
+    hdr.Add("TOTAL")
+
+  Else
+    hdr.Add(".")
+    'show categ
+    If $ShowDateTime = "Yes" Then
+      hdr.Add("DATETIME")
+    Endif
+    hdr.Add("PARTICULARS")
+    'show batch
+    If $ShowBatch = "Yes" Then
+      hdr.Add("BATCH")
+    Endif
+    'show expiry
+    If $ShowExpiry And If $ShowExpiry <> "No" Then
+      hdr.Add("EXPIRY")
+    Endif
+    'show qty
+    If $ShowQuantity = "No" Then
+    Else
+      hdr.Add("QTY")
+    Endif
+    hdr.Add("RATE")
+    'show tax/disc
+    If $ShowTaxDiscount Then
+      hdr.Add("SUBTOTAL")
+      If $FormatDiscount = "Percent" Then
+        disccol = "DISC%"
+      Else
+        disccol = "DISC"
+      Endif
+      If $FormatTax = "Percent" Then
+        taxcol = "TAX%"
+      Else
+        taxcol = "TAX"
+      Endif
+
+      If $ShowTaxDiscount = "Always" Then
+        hdr.Add(disccol)
+        hdr.Add(taxcol)
+        hdr.Add("TOTAL")
+      Else If $ShowTaxDiscount = "DiscOnly" Then
+        hdr.Add(disccol)
+        hdr.Add("TOTAL")
+      Else If $ShowTaxDiscount = "NotNull" Then
+        If ShowDisc = True Then
+          hdr.Add(disccol)
+        Endif
+        If ShowTax = True Then
+          hdr.Add(taxcol)
+        Endif
+        If ShowDisc = True Or If ShowTax = True Then
+          hdr.Add("TOTAL")
+        Endif
+      Endif
+    Else
+      hdr.Add("TOTAL")
+    Endif
+
+  Endif
+
+  $BillingReport = New CTextBIll(hdr, "Invoice", res["fldencounterval"], BillNo)
+  'Header content
+  $BillingReport.UserData.Add(txTitle, "InvoiceType")
+  $BillingReport.UserData.Add(txtmode, "InvoiceMode")
+  $BillingReport.UserData.Add(BillNo, "InvoiceNumber")
+  If MMain.$GovtApp = "Yes" Then
+    $BillingReport.UserData.Add("", "BillPrintCount")
+  Else
+    $BillingReport.UserData.Add(modNonMedical.GetInvoicePrintCount(BillNo), "BillPrintCount")
+  Endif
+  If $EnableExtraLabel = "Yes" Then
+    hClas = New CBillDataPlus(BillNo)
+    $BillingReport.UserData.Add(hClas.ReferName(), "ReferLabel")
+    $BillingReport.UserData.Add(hClas.PayableName(), "PayableLabel")
+    $BillingReport.UserData.Add(hClas.ReturnBillNo(), "ReturnBillNo")
+    $BillingReport.UserData.Add(hClas.ReturnReason(), "ReturnReason")
+    $BillingReport.UserData.Add(hClas.DiscountTag(), "DiscountTag")
+    $BillingReport.UserData.Add(hClas.ReturnDiscountCode(), "ReturnDiscCode")
+    $BillingReport.UserData.Add(hClas.ReturnTaxCode(), "ReturnTaxCode")
+  Endif
+
+  'Cash or Credit invoice summary
+  $BillingReport.UserData.Add(res["fldtaxgroup"], "TaxGroup")
+  $BillingReport.UserData.Add(res["flddiscountgroup"], "DiscountGroup")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flditemamt"], gb.Fixed), "SubTotal")
+
+  If $ShowSumDisc = "No" Then
+    $BillingReport.UserData.Add("", "Discount")
+  Else If $ShowSumDisc = "NotNull" Then
+    If res["flddiscountamt"] Then
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flddiscountamt"], gb.Fixed), "Discount")
+    Else
+      $BillingReport.UserData.Add("", "Discount")
+      If GetDiscSettingString(BillNo) Then
+        $BillingReport.SPecData.Add("", GetDiscSettingString(BillNo))
+      Endif
+    Endif
+  Else
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flddiscountamt"], gb.Fixed), "Discount")
+  Endif
+
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["chrgeamt"], gb.Fixed), "TotalAmount")
+
+  If $ShowTaxSum = "No" Then
+    $BillingReport.UserData.Add("", "TotalTax")
+  Else If $ShowTaxSum = "NotNull" Then
+    If res["fldtaxamt"] Then
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldtaxamt"], gb.Fixed), "TotalTax")
+    Else
+      $BillingReport.UserData.Add("", "TotalTax")
+      If GetTaxSettingString(BillNo) Then
+        $BillingReport.SPecData.Add("", GetTaxSettingString(BillNo))
+      Endif
+    Endif
+  Else
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldtaxamt"], gb.Fixed), "TotalTax")
+  Endif
+
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(rcv, gb.Fixed), "ReceAmount")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(xdepoamt, gb.Fixed), "DepoAmount")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldreceivedamt"] - xdepoamt, gb.Fixed), "DueAmount")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["chrgeamt"] - res["fldreceivedamt"], gb.Fixed), "DueCredit")
+
+  'Amount in words and User info
+  $BillingReport.UserData.Add(modString.ConvertMoneyToText(rcv), "AmtWord")
+  $BillingReport.UserData.Add(sUser & "@" & GetUserLocationForBill(sComp), "BillUser")
+  $BillingReport.UserData.Add(modDate.GetDateTimeInFormatForAll(sTime, $InvDateFormat, ""), "BillDateTime")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format((modNonMedical.TaxableAmountInvoice(BillNo)), gb.Fixed), "TaxableAmt")
+
+  'Footer notes
+  $BillingReport.UserData.Add(res["fldbankname"], "LedgerA/C")
+  $BillingReport.UserData.Add(res["fldchequeno"], "InvRefNumber")
+  $BillingReport.UserData.Add(xqrpay, "QRPayment")
+  $BillingReport.UserData.Add(xcsource, "CashSource")
+  $BillingReport.UserData.Add(GetInvoicePatStatus(res["fldprevdeposit"]), "InvPatStatus")
+  If xcshcomm Then
+    $BillingReport.UserData.Add(xcshcomm, "InvoiceNote")
+  Else
+    $BillingReport.UserData.Add("", "InvoiceNote")
+  Endif
+  $BillingReport.UserData.Add(Font[$NoteI_Font].Name, "Fnt1")
+  $BillingReport.UserData.Add(Font[$Note2_Font].Name, "Fnt2")
+  $BillingReport.UserData.Add($Note1_Text, "Note1")
+  $BillingReport.UserData.Add($Note2_Text, "NoteII")
+  If $AIAnswer Then
+    $BillingReport.UserData.Add($AIAnswer & gb.NewLine & gb.NewLine & modCloudAI.GetMedicineInvoiceResponse($AIAnswer, BillNo), "AIOutput")
+  Else
+    $BillingReport.UserData.Add("", "AIOutput")
+  Endif
+
+  ''due clearance
+  If BillNo Like "DCL" & "*" Then
+    i = 1
+    res1 = modDatabase.$myConn.Exec("select fldtime,fldbillitem,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt,flditemtype from tblduebilling where fldbillno=&1", BillNo)
+    For Each res1
+      xitem = res1["fldbillitem"]
+      With asx
+        .Add(CStr(i))
+        'show categ
+        If $ShowDateTime = "Yes" Then
+          .Add(modDate.GetDateOnlyInFormatForAll(res1["fldtime"], $InvDateFormat, "ShortDate"))
+        Endif
+        .Add(xitem)
+        'show batch
+        If $ShowBatch = "Yes" Then
+          .Add("")
+        Endif
+        'show expiry
+        If $ShowExpiry And If $ShowExpiry <> "No" Then
+          .Add("")
+        Endif
+        'show qty
+        If $ShowQuantity = "No" Then
+        Else
+          .Add(res1["flditemqty"])
+        Endif
+        .Add(Format(res1["flditemrate"], gb.Fixed))
+        .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+        'show tax/disc
+        If $ShowTaxDiscount Then
+          If $FormatDiscount = "Percent" Then
+            discamt = CStr(Round(res1["flddiscper"], -2)) & "%"
+          Else
+            discamt = Format(res1["flditemqty"] * res1["flditemrate"] * (res1["flddiscper"] / 100), gb.Fixed)
+          Endif
+          If $FormatTax = "Percent" Then
+            taxamt = CStr(Round(res1["fldtaxper"], -2)) & "%"
+          Else
+            taxamt = Format(res1["flditemqty"] * res1["flditemrate"] * (1 - res1["flddiscper"] / 100) * (res1["fldtaxper"] / 100), gb.Fixed)
+          Endif
+
+          If $ShowTaxDiscount = "Always" Then
+            .Add(discamt)
+            .Add(taxamt)
+            .Add(Format(res1["fldditemamt"], gb.Fixed))
+          Else If $ShowTaxDiscount = "DiscOnly" Then
+            .Add(discamt)
+            .Add(Format(res1["fldditemamt"], gb.Fixed))
+          Else If $ShowTaxDiscount = "NotNull" Then
+            If ShowDisc = True Then
+              .Add(discamt)
+            Endif
+            If ShowTax = True Then
+              .Add(taxamt)
+            Endif
+            If ShowDisc = True Or If ShowTax = True Then
+              .Add(Format(res1["fldditemamt"], gb.Fixed))
+            Endif
+          Endif
+        Endif
+
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+
+    Next 'ends res1
+
+  Else
+    'Fill columns (with/without item grouping)
+    If $InvoiceGroupItem = "Amount" Then
+      res1 = modDatabase.$myConn.Exec("select distinct(flditemtype) from " & $tblpatbilling & " where fldbillno=&1", BillNo)
+      For Each res1
+
+        res2 = modDatabase.$myConn.Exec("select distinct(flditemno) from " & $tblpatbilling & " where fldbillno=&1 and flditemtype=&2", BillNo, res1["flditemtype"])                                 ''
+        i = 1
+        For Each res2
+
+          res3 = modDatabase.$myConn.Exec("select fldtime,flditemname,flditemqty,flditemrate,fldtaxper,flddiscper,fldditemamt from " & $tblpatbilling & " where fldbillno=&1 and flditemtype=&2 and flditemno=&3", BillNo, res1["flditemtype"], res2["flditemno"])
+          qty = 0
+          rte = 0
+          tax = 0
+          disc = 0
+          xdisc = 0
+          xtax = 0
+          tot = 0
+          grtot = 0
+          For Each res3
+            qty = qty + res3["flditemqty"]
+            rte = rte + res3["flditemrate"]
+            tax = tax + res3["fldtaxper"]
+            disc = disc + res3["flddiscper"]
+            xdisc = xdisc + res3["flditemqty"] * res3["flditemrate"] * (res3["flddiscper"] / 100)
+            xtax = xtax + res3["flditemqty"] * res3["flditemrate"] * (1 - res3["flddiscper"] / 100) * (res3["fldtaxper"] / 100)
+            tot = tot + res3["flditemqty"] * res3["flditemrate"]
+            grtot = grtot + res3["fldditemamt"]
+          Next
+          res3.MoveFirst
+
+          With asx
+            .Add(CStr(i))
+            'show categ
+            If $ShowDateTime = "Yes" Then
+              .Add(modDate.GetDateOnlyInFormatForAll(res3["fldtime"], $InvDateFormat, "ShortDate"))
+            Endif
+            .Add(modNonMedical.GetIteminFormatForBill(res3["flditemname"], res1["flditemtype"]))
+            'show batch
+            If $ShowBatch = "Yes" Then
+              .Add(modNonMedical.GetBatchForBillFromCategory(res2["flditemno"], res1["flditemtype"]))
+            Endif
+            'show expiry
+            If $ShowExpiry And If $ShowExpiry <> "No" Then
+              .Add(modNonMedical.GetExpiryForBillFromCategory(res2["flditemno"], res1["flditemtype"]))
+            Endif
+            'show qty
+            If $ShowQuantity = "No" Then
+            Else
+              .Add(qty)
+            Endif
+            .Add(Format(rte / res3.Count, gb.Fixed))
+            .Add(Format(tot, gb.Fixed))
+            'show tax/disc
+            If $ShowTaxDiscount Then
+              If $FormatDiscount = "Percent" Then
+                discamt = CStr(Round(disc / res3.Count, -2)) & "%"
+              Else
+                discamt = Format(xdisc / res3.Count, gb.Fixed)
+              Endif
+              If $FormatTax = "Percent" Then
+                taxamt = CStr(Round(tax / res3.Count, -2)) & "%"
+              Else
+                taxamt = Format(xtax / res3.Count, gb.Fixed)
+              Endif
+
+              If $ShowTaxDiscount = "Always" Then
+                .Add(discamt)
+                .Add(taxamt)
+                .Add(Format(grtot, gb.Fixed))
+              Else If $ShowTaxDiscount = "DiscOnly" Then
+                .Add(discamt)
+                .Add(Format(grtot, gb.Fixed))
+              Else If $ShowTaxDiscount = "NotNull" Then
+                If ShowDisc = True Then
+                  .Add(discamt)
+                Endif
+                If ShowTax = True Then
+                  .Add(taxamt)
+                Endif
+                If ShowDisc = True Or If ShowTax = True Then
+                  .Add(Format(grtot, gb.Fixed))
+                Endif
+              Endif
+            Endif
+
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+
+        Next 'ends res2
+
+      Next 'ends res1
+
+    Else If $InvoiceGroupItem = "Group" Then
+      i = 1
+      rey1 = modDatabase.$myConn.Exec("select distinct(fldbillitem) as fldbillitem from tblservicecost where flditemname in(select flditemname from " & $tblpatbilling & " where fldbillno=&1)", BillNo)
+      If rey1.Available Then
+        For Each rey1
+          If rey1["fldbillitem"] Then
+            rey2 = modDatabase.$myConn.Exec("select SUM(flditemrate) as flditemrate,AVG(flditemqty) as flditemqty from " & $tblpatbilling & " where fldbillno=&1 and flditemname in(select flditemname from tblservicecost where fldbillitem=&2)", BillNo, rey1["fldbillitem"])
+            If rey2.Available Then
+              With asx
+                .Add(CStr(i))
+                .Add(rey1["fldbillitem"])
+                .Add(rey2["flditemqty"])
+                .Add(Format(rey2["flditemrate"], gb.Fixed))
+                .Add(Format(rey2["flditemqty"] * rey2["flditemrate"], gb.Fixed))
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+              i = i + 1
+            Endif
+          Endif
+        Next
+      Endif
+
+      res1 = modDatabase.$myConn.Exec("select fldbillno,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1 and flditemname in(select flditemname from tblservicecost where fldbillitem IS NULL) NULL select fldbillno,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1 and flditemname in(select flditemname from tblservicecost)", BillNo)
+      If res1.Available Then
+        For Each res1
+          With asx
+            .Add(CStr(i))
+            .Add(res1["flditemname"])
+            .Add(res1["flditemqty"])
+            .Add(Format(res1["flditemrate"], gb.Fixed))
+            .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next
+      Endif
+
+    Else If $InvoiceGroupItem = "Category" Then
+      i = 1
+      resx = modDatabase.$myConn.Exec("select distinct(flditemtype) as flditemtype from " & $tblpatbilling & " where fldbillno=&1", BillNo)
+      If resx.Available Then
+        For Each resx
+          $BillingReport.AddChapter(resx["flditemtype"])
+
+          res1 = modDatabase.$myConn.Exec("select fldtime,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1 and flditemtype=&2", BillNo, resx["flditemtype"])
+          For Each res1
+
+            If $PartiSuffix = "Payable" Then
+              If res1["fldpayto"] Then
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldpayto"]) & ")"
+              Else
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+              Endif
+            Else If $PartiSuffix = "Referral" Then
+              If res1["fldrefer"] Then
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldrefer"]) & ")"
+              Else
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+              Endif
+            Else If $PartiSuffix = "Components" Then
+              xcompo = GetCostItemBreakdown(res1["flditemname"])
+              If xcompo And If xcompo.Count Then
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & gb.NewLine & " (" & xcompo.Join(gb.NewLine) & ")"
+              Else
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+              Endif
+            Else
+              xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+            Endif
+
+            With asx
+              .Add(CStr(i))
+              'show categ
+              If $ShowDateTime = "Yes" Then
+                .Add(modDate.GetDateOnlyInFormatForAll(res1["fldtime"], $InvDateFormat, "ShortDate"))
+              Endif
+              .Add(xitem)
+              'show batch
+              If $ShowBatch = "Yes" Then
+                .Add(modNonMedical.GetBatchForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+              Endif
+              'show expiry
+              If $ShowExpiry And If $ShowExpiry <> "No" Then
+                .Add(modNonMedical.GetExpiryForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+              Endif
+              'show qty
+              If $ShowQuantity = "No" Then
+              Else
+                .Add(res1["flditemqty"])
+              Endif
+              .Add(Format(res1["flditemrate"], gb.Fixed))
+              .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+              'show tax/disc
+              If $ShowTaxDiscount Then
+                If $FormatDiscount = "Percent" Then
+                  discamt = CStr(Round(res1["flddiscper"], -2)) & "%"
+                Else
+                  discamt = Format(res1["flditemqty"] * res1["flditemrate"] * (res1["flddiscper"] / 100), gb.Fixed)
+                Endif
+                If $FormatTax = "Percent" Then
+                  taxamt = CStr(Round(res1["fldtaxper"], -2)) & "%"
+                Else
+                  taxamt = Format(res1["flditemqty"] * res1["flditemrate"] * (1 - res1["flddiscper"] / 100) * (res1["fldtaxper"] / 100), gb.Fixed)
+                Endif
+
+                If $ShowTaxDiscount = "Always" Then
+                  .Add(discamt)
+                  .Add(taxamt)
+                  .Add(Format(res1["fldditemamt"], gb.Fixed))
+                Else If $ShowTaxDiscount = "DiscOnly" Then
+                  .Add(discamt)
+                  .Add(Format(res1["fldditemamt"], gb.Fixed))
+                Else If $ShowTaxDiscount = "NotNull" Then
+                  If ShowDisc = True Then
+                    .Add(discamt)
+                  Endif
+                  If ShowTax = True Then
+                    .Add(taxamt)
+                  Endif
+                  If ShowDisc = True Or If ShowTax = True Then
+                    .Add(Format(res1["fldditemamt"], gb.Fixed))
+                  Endif
+                Endif
+              Endif
+
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+            i = i + 1
+
+          Next 'ends res1
+
+        Next
+      Endif
+
+    Else
+      i = 1
+      res1 = modDatabase.$myConn.Exec("select fldtime,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1 ORDER BY flditemtype", BillNo)
+      For Each res1
+
+        If $PartiSuffix = "Payable" Then
+          If res1["fldpayto"] Then
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldpayto"]) & ")"
+          Else
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+          Endif
+        Else If $PartiSuffix = "Referral" Then
+          If res1["fldrefer"] Then
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldrefer"]) & ")"
+          Else
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+          Endif
+        Else If $PartiSuffix = "Components" Then
+          xcompo = GetCostItemBreakdown(res1["flditemname"])
+          If xcompo And If xcompo.Count Then
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & gb.NewLine & " (" & xcompo.Join(gb.NewLine) & ")"
+          Else
+            xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+          Endif
+        Else
+          xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+        Endif
+
+        With asx
+          .Add(CStr(i))
+          'show categ
+          If $ShowDateTime = "Yes" Then
+            .Add(modDate.GetDateOnlyInFormatForAll(res1["fldtime"], $InvDateFormat, "ShortDate"))
+          Endif
+          .Add(xitem)
+          'show batch
+          If $ShowBatch = "Yes" Then
+            .Add(modNonMedical.GetBatchForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+          Endif
+          'show expiry
+          If $ShowExpiry And If $ShowExpiry <> "No" Then
+            .Add(modNonMedical.GetExpiryForBillFromCategory(res1["flditemno"], res1["flditemtype"]))
+          Endif
+          'show qty
+          If $ShowQuantity = "No" Then
+          Else
+            .Add(res1["flditemqty"])
+          Endif
+          .Add(Format(res1["flditemrate"], gb.Fixed))
+          .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+          'show tax/disc
+          If $ShowTaxDiscount Then
+            If $FormatDiscount = "Percent" Then
+              discamt = CStr(Round(res1["flddiscper"], -2)) & "%"
+            Else
+              discamt = Format(res1["flditemqty"] * res1["flditemrate"] * (res1["flddiscper"] / 100), gb.Fixed)
+            Endif
+            If $FormatTax = "Percent" Then
+              taxamt = CStr(Round(res1["fldtaxper"], -2)) & "%"
+            Else
+              taxamt = Format(res1["flditemqty"] * res1["flditemrate"] * (1 - res1["flddiscper"] / 100) * (res1["fldtaxper"] / 100), gb.Fixed)
+            Endif
+
+            If $ShowTaxDiscount = "Always" Then
+              .Add(discamt)
+              .Add(taxamt)
+              .Add(Format(res1["fldditemamt"], gb.Fixed))
+            Else If $ShowTaxDiscount = "DiscOnly" Then
+              .Add(discamt)
+              .Add(Format(res1["fldditemamt"], gb.Fixed))
+            Else If $ShowTaxDiscount = "NotNull" Then
+              If ShowDisc = True Then
+                .Add(discamt)
+              Endif
+              If ShowTax = True Then
+                .Add(taxamt)
+              Endif
+              If ShowDisc = True Or If ShowTax = True Then
+                .Add(Format(res1["fldditemamt"], gb.Fixed))
+              Endif
+            Endif
+          Endif
+
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+
+      Next 'ends res1
+
+    Endif
+  Endif
+
+  'Finally make report
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+''-------------------------------------------------General Functions ---------------------------------------
+Private Function GetInvoicePatStatus(sVal As Float) As String
+
+  Dim xx As String
+
+  If sVal Then
+    If sVal = 2 Then
+      xx = "Admitted"
+    Else If sVal = 3 Then
+      xx = "Discharged"
+    Else
+      xx = "Registered"
+    Endif
+  Else
+    xx = "Registered"
+  Endif
+  Return xx
+
+End
+
+Private Function GetUserLocationForBill(sComp As String) As String
+
+  Dim xx As String
+  Dim xdept As String
+
+  xdept = modSettings.ShowSettingFromFIle("Invoice/BillingLocation")
+  If xdept = "Department" Then
+    xx = modGeneral.GetCompNameFromCompID(sComp)
+  Else
+    xx = sComp
+  Endif
+
+  Return xx
+
+End
+
+Private Function GetTaxSettingString(sBillNo As String) As String
+
+  Dim slst As String[] = ["11", "12", "21", "22", "31", "32", "41", "42"]
+  Dim xx As String
+  Dim tax As String
+  Dim sType As String
+
+  If Left(sBillNo, 3) = "DEP" Or If Left(sBillNo, 3) = "DET" Then
+    sType = "Cash"
+  Else
+    sType = "Credit"
+  Endif
+
+  For Each xx In slst
+    If modSettings.ShowSettingFromFIle("Invoice/BuiltIn_FooterText_Col" & xx & "_" & sType) = "{TotalTax}" Then
+      tax = modSettings.ShowSettingFromFIle("Invoice/BuiltIn_FooterLabel_Col" & xx & "_" & sType)
+    Endif
+  Next
+  Return tax
+
+End
+
+Private Function GetDiscSettingString(sBillNo As String) As String
+
+  Dim slst As String[] = ["11", "12", "21", "22", "31", "32", "41", "42"]
+  Dim xx As String
+  Dim disc As String
+  Dim sType As String
+
+  If Left(sBillNo, 3) = "DEP" Or If Left(sBillNo, 3) = "DET" Then
+    sType = "Cash"
+  Else
+    sType = "Credit"
+  Endif
+
+  For Each xx In slst
+    If modSettings.ShowSettingFromFIle("Invoice/BuiltIn_FooterText_Col" & xx & "_" & sType) = "{Discount}" Then
+      disc = modSettings.ShowSettingFromFIle("Invoice/BuiltIn_FooterLabel_Col" & xx & "_" & sType)
+    Endif
+  Next
+  Return disc
+
+End
+
+Private Function InvoiceReturnReport(sBillno As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim xtot As Float
+  Dim i As Integer
+  Dim encid As String
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+
+  encid = modNonMedical.GetEncounterFromBillNo(sBillno)
+  $BillingReport = New CReportHTML([(""), ("DATE"), ("PARTICULARS"), ("QTY"), ("RATE"), ("TOTAL")], "PatientReport", encid)
+
+  $BillingReport.UserData.Add("INVOICE REPORT", "Report")
+  $BillingReport.UserData.Add(sBillno, "PARAM1")
+
+  xtot = 0
+  i = 1                                                 ''
+  res = modDatabase.$myConn.Exec("select fldtime,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt as tot,fldid from " & $tblpatbilling & " where fldbillno=&1 and fldencounterval=&2", sBillno, encid)
+  If res.Available Then
+    $BillingReport.AddChapter(sBillno)
+
+    For Each res
+      xtot = xtot + res["tot"]
+      With asx
+        .Add(modReportVar.GetLocaleNumberFormat(i, 0))
+        .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.GeneralDate))
+        .Add(res["flditemname"])
+        .Add(modReportVar.GetLocaleNumberFormat(res["flditemqty"], -2))
+        .Add(modReportVar.GetLocaleNumberFormat(res["flditemrate"], gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(res["tot"], gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next
+
+  Endif
+
+  res1 = modDatabase.$myConn.Exec("select distinct(fldbillno) as billno from " & $tblpatbilling & " where fldretbill=&1 and fldencounterval=&2", sBillno, encid)
+  If res1.Available Then
+    For Each res1
+      $BillingReport.AddChapter(res1["billno"])
+
+      i = 1
+      res2 = modDatabase.$myConn.Exec("select fldtime,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,fldditemamt as tot,fldid from " & $tblpatbilling & " where fldretbill=&1 and fldencounterval=&2 and fldbillno=&3", sBillno, encid, res1["billno"])
+      If res2.Available Then
+        For Each res2
+          xtot = xtot + res2["tot"]
+          With asx
+            .Add(modReportVar.GetLocaleNumberFormat(i, 0))
+            .Add(modReportVar.GetDateTimeReport(res2["fldtime"], gb.GeneralDate))
+            .Add(res2["flditemname"])
+            .Add(modReportVar.GetLocaleNumberFormat(res2["flditemqty"], -2))
+            .Add(modReportVar.GetLocaleNumberFormat(res2["flditemrate"], gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(res2["tot"], gb.Currency))
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          i = i + 1
+        Next
+      Endif
+
+    Next
+  Endif
+
+  With asx
+    .Add("....")
+    .Add("....")
+    .Add("....")
+    .Add("....")
+    .Add("....")
+    .Add("....")
+  End With
+  $BillingReport.Add(asx)
+
+  asx.Clear()
+  With asx
+    .Add("....")
+    .Add("....")
+    .Add("TOTAL")
+    .Add("....")
+    .Add("....")
+    .Add(modReportVar.GetLocaleNumberFormat(xtot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Private Function TempraryBillReport(BillNo As String, txTitle As String) As String
+
+  Dim $BillingReport As CReportBILL
+  Dim hClas As CBillDataPlus
+  Dim sql As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim rcv As Float
+  Dim rsunit As String
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xitem As String
+  Dim xcompo As String[]
+
+  Dim sTime As Date
+  Dim sUser As String
+  Dim sComp As String
+  Dim txtmode As String
+  Dim xqrpay As String
+  Dim xcsource As String
+
+  'Query for header and footer content
+  sql = "select fldencounterval,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt as chrgeamt,fldreceivedamt,fldcurdeposit,fldbilltype,fldtaxgroup,flddiscountgroup,flduserid,fldtime,fldcomp,fldchequeno,fldbankname,fldprevdeposit from " & $tbltempbilldetail & " where fldbillno=&1"                                                                    '''
+  res = modDatabase.$myConn.Exec(sql, BillNo)
+  If res["fldreceivedamt"] Then
+    rcv = res["fldreceivedamt"]
+  Else
+    rcv = res["fldcurdeposit"]
+  Endif
+  sTime = res["fldtime"]
+  sUser = res["flduserid"]
+  sComp = res["fldcomp"]
+  txtmode = res["fldbilltype"]
+  If txtmode = "Cash" Then
+    xqrpay = modNonMedical.GetQRSCanPayCode(BillNo)
+    xcsource = modNonMedical.GetCashSource(BillNo).Join(";")
+  Else
+    xqrpay = ""
+    xcsource = ""
+  Endif
+  If modBasic.$currency Then
+    rsunit = modBasic.$currency
+  Else
+    rsunit = modString.CurrencySymbol()
+  Endif
+  If txTitle = "DEPOSIT RECEIPT" Then
+    $BillingReport = New CReportBILL([("SN"), ("PARTICULARS"), ("QTY"), ("RATE"), ("TOTAL")], "Deposit", res["fldencounterval"], BillNo)
+  Else
+    $BillingReport = New CReportBILL([("SN"), ("PARTICULARS"), ("QTY"), ("RATE"), ("TOTAL")], "Receipt", res["fldencounterval"], BillNo)
+  Endif
+
+  'Header content
+  $BillingReport.UserData.Add(txTitle, "InvoiceType")
+  $BillingReport.UserData.Add(txtmode, "InvoiceMode")
+  $BillingReport.UserData.Add(BillNo, "InvoiceNumber")
+  $BillingReport.UserData.Add("", "BillPrintCount")
+  If $EnableExtraLabel = "Yes" Then
+    hClas = New CBillDataPlus(BillNo)
+    $BillingReport.UserData.Add(hClas.ReferName(), "ReferLabel")
+    $BillingReport.UserData.Add(hClas.PayableName(), "PayableLabel")
+    $BillingReport.UserData.Add(hClas.ReturnBillNo(), "ReturnBillNo")
+    $BillingReport.UserData.Add(hClas.ReturnReason(), "ReturnReason")
+    $BillingReport.UserData.Add(hClas.DiscountTag(), "DiscountTag")
+  Endif
+
+  'Cash or Credit invoice summary
+  $BillingReport.UserData.Add(res["fldtaxgroup"], "TaxGroup")
+  $BillingReport.UserData.Add(res["flddiscountgroup"], "DiscountGroup")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flditemamt"], gb.Fixed), "SubTotal")
+
+  If $ShowSumDisc = "No" Then
+    $BillingReport.UserData.Add("", "Discount")
+  Else If $ShowSumDisc = "NotNull" Then
+    If res["flddiscountamt"] Then
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flddiscountamt"], gb.Fixed), "Discount")
+    Else
+      $BillingReport.UserData.Add("", "Discount")
+      If GetDiscSettingString(BillNo) Then
+        $BillingReport.SPecData.Add("", GetDiscSettingString(BillNo))
+      Endif
+    Endif
+  Else
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["flddiscountamt"], gb.Fixed), "Discount")
+  Endif
+
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["chrgeamt"], gb.Fixed), "TotalAmount")
+
+  If $ShowTaxSum = "No" Then
+    $BillingReport.UserData.Add("", "TotalTax")
+  Else If $ShowTaxSum = "NotNull" Then
+    If res["fldtaxamt"] Then
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldtaxamt"], gb.Fixed), "TotalTax")
+    Else
+      $BillingReport.UserData.Add("", "TotalTax")
+      If GetTaxSettingString(BillNo) Then
+        $BillingReport.SPecData.Add("", GetTaxSettingString(BillNo))
+      Endif
+    Endif
+  Else
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(res["fldtaxamt"], gb.Fixed), "TotalTax")
+  Endif
+
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format(rcv, gb.Fixed), "ReceAmount")
+
+  'Amount in words and User info
+  $BillingReport.UserData.Add(modString.ConvertMoneyToText(rcv), "AmtWord")
+  $BillingReport.UserData.Add(sUser & "@" & GetUserLocationForBill(sComp), "BillUser")
+  $BillingReport.UserData.Add(modDate.GetDateTimeInFormatForAll(sTime, $InvDateFormat, ""), "BillDateTime")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format((modNonMedical.TaxableAmountInvoice(BillNo)), gb.Fixed), "TaxableAmt")
+
+  'Footer notes
+  $BillingReport.UserData.Add(res["fldbankname"], "LedgerA/C")
+  $BillingReport.UserData.Add(res["fldchequeno"], "InvRefNumber")
+  $BillingReport.UserData.Add(xqrpay, "QRPayment")
+  $BillingReport.UserData.Add(xcsource, "CashSource")
+  $BillingReport.UserData.Add(GetInvoicePatStatus(res["fldprevdeposit"]), "InvPatStatus")
+  $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note1_Text, $NoteI_Font), "Note1")
+  $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note2_Text, $Note2_Font), "NoteII")
+
+  If BillNo Like "TCL" & "*" Then
+    i = 1
+    res1 = modDatabase.$myConn.Exec("select fldtime,fldbillitem,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype from tblduebilling where fldbillno=&1 ORDER BY flditemtype", BillNo)
+    For Each res1
+      With asx
+        .Add(CStr(i))
+        .Add(res1["fldbillitem"])
+        .Add(res1["flditemqty"])
+        .Add(Format(res1["flditemrate"], gb.Fixed))
+        .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next 'ends res1
+
+  Else
+    i = 1
+    res1 = modDatabase.$myConn.Exec("select fldtime,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1 ORDER BY flditemtype", BillNo)
+    For Each res1
+      If $PartiSuffix = "Payable" Then
+        If res1["fldpayto"] Then
+          xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldpayto"]) & ")"
+        Else
+          xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+        Endif
+      Else If $PartiSuffix = "Referral" Then
+        If res1["fldrefer"] Then
+          xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldrefer"]) & ")"
+        Else
+          xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+        Endif
+      Else If $PartiSuffix = "Components" Then
+        xcompo = GetCostItemBreakdown(res1["flditemname"])
+        If xcompo And If xcompo.Count Then
+          xitem = modString.TextToHTML(modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & gb.NewLine & " (" & xcompo.Join(gb.NewLine) & ")")
+        Else
+          xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+        Endif
+      Else
+        xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+      Endif
+
+      With asx
+        .Add(CStr(i))
+        .Add(xitem)
+        .Add(res1["flditemqty"])
+        .Add(Format(res1["flditemrate"], gb.Fixed))
+        .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next 'ends res1
+
+  Endif
+
+  'Finally make report
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Private Function GetReceiptReport(encid As String, BillNo As String, txTitle As String) As String
+
+  Dim $BillingReport As CReportBILL
+  Dim sql As String
+  Dim res As Result
+  Dim rsunit As String
+  Dim asx As New String[0]
+  Dim i As Integer
+
+  Dim xsubtotal As Float
+  Dim xtax As Float
+  Dim xdisc As Float
+  Dim xnettotal As Float
+
+  $BillingReport = New CReportBILL([("SN"), ("PARTICULARS"), ("QTY"), ("RATE"), ("TOTAL")], "Receipt", encid, BillNo)
+  xsubtotal = 0
+  xtax = 0
+  xdisc = 0
+  xnettotal = 0
+  sql = "select fldtime,flditemname,flditemrate,flditemqty,fldtaxamt,flddiscamt,fldditemamt,flditemtype from " & $tblpatbilling & " where fldencounterval=&1 and fldextracol=&2"                                                                    '''
+  res = modDatabase.$myConn.Exec(sql, encid, BillNo)
+  If res.Available Then
+    For Each res
+      xsubtotal = xsubtotal + (res["flditemrate"] * res["flditemqty"])
+      xtax = xtax + res["fldtaxamt"]
+      xdisc = xdisc + res["flddiscamt"]
+      xnettotal = xnettotal + res["fldditemamt"]
+    Next
+
+    If modBasic.$currency Then
+      rsunit = modBasic.$currency
+    Else
+      rsunit = modString.CurrencySymbol()
+    Endif
+
+    'Header content
+    $BillingReport.UserData.Add(txTitle, "InvoiceType")
+    $BillingReport.UserData.Add(BillNo, "InvoiceNumber")
+    'Cash or Credit invoice summary
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(xsubtotal, gb.Fixed), "SubTotal")
+    $BillingReport.UserData.Add(rsunit & Space(1) & Format(xnettotal, gb.Fixed), "TotalAmount")
+
+    If $ShowSumDisc = "No" Then
+      $BillingReport.UserData.Add("", "Discount")
+    Else If $ShowSumDisc = "NotNull" Then
+      If res["flddiscountamt"] Then
+        $BillingReport.UserData.Add(rsunit & Space(1) & Format(xdisc, gb.Fixed), "Discount")
+      Else
+        $BillingReport.UserData.Add("", "Discount")
+        If GetDiscSettingString(BillNo) Then
+          $BillingReport.SPecData.Add("", GetDiscSettingString(BillNo))
+        Endif
+      Endif
+    Else
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(xdisc, gb.Fixed), "Discount")
+    Endif
+
+    If $ShowTaxSum = "No" Then
+      $BillingReport.UserData.Add("", "TotalTax")
+    Else If $ShowTaxSum = "NotNull" Then
+      If res["fldtaxamt"] Then
+        $BillingReport.UserData.Add(rsunit & Space(1) & Format(xtax, gb.Fixed), "TotalTax")
+      Else
+        $BillingReport.UserData.Add("", "TotalTax")
+        If GetTaxSettingString(BillNo) Then
+          $BillingReport.SPecData.Add("", GetTaxSettingString(BillNo))
+        Endif
+      Endif
+    Else
+      $BillingReport.UserData.Add(rsunit & Space(1) & Format(xtax, gb.Fixed), "TotalTax")
+    Endif
+
+    'Amount in words and User info
+    $BillingReport.UserData.Add(modString.ConvertMoneyToText(xnettotal), "AmtWord")
+
+    'Footer notes
+    $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note1_Text, $NoteI_Font), "Note1")
+    $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note2_Text, $Note2_Font), "NoteII")
+
+    ''blank
+    $BillingReport.UserData.Add("", "BillDateTime")
+    $BillingReport.UserData.Add("", "LedgerA/C")
+    $BillingReport.UserData.Add("", "InvRefNumber")
+    $BillingReport.UserData.Add("", "InvPatStatus")
+    $BillingReport.UserData.Add("", "InvoiceMode")
+    $BillingReport.UserData.Add("", "ReceAmount")
+    $BillingReport.UserData.Add("", "BillUser")
+    $BillingReport.UserData.Add("", "BillDateTime")
+
+    i = 1
+    For Each res
+      With asx
+        .Add(CStr(i))
+        .Add(res["flditemname"])
+        .Add(res["flditemqty"])
+        .Add(Format(res["flditemrate"], gb.Fixed))
+        .Add(Format(res["flditemrate"] * res["flditemqty"], gb.Fixed))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      i = i + 1
+    Next 'ends res1
+
+  Endif
+
+  'Finally make report
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Private Function DischargeBillReport(encid As String, BillNo As String, txTitle As String) As String
+
+  Dim $BillingReport As CReportBILL
+  Dim sql As String
+  Dim res As Result
+  Dim resx1 As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim rcv As Float
+  Dim rsunit As String
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim xitem As String
+  Dim xcompo As String[]
+
+  Dim xdod As Date
+  Dim xitemamt As Float
+  Dim xtaxamt As Float
+  Dim xdscamt As Float
+  Dim xchrgamt As Float
+  Dim xrecvamt As Float
+  ' Dim xdepoamt As Float
+
+  Dim sTime As Date
+  Dim sUser As String
+  Dim sComp As String
+  Dim txtmode As String
+
+  Dim rey1 As Result
+  Dim rey2 As Result
+
+  'Query for header and footer content
+  xdod = modPatient.GetDischargeDate(encid)
+  sql = "select fldencounterval,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt as chrgeamt,fldreceivedamt,fldcurdeposit,flddepoadjust,fldbilltype,fldtaxgroup,flddiscountgroup,flduserid,fldtime,fldcomp,fldchequeno,fldbankname,fldprevdeposit from " & $tbltempbilldetail & " where fldbillno=&1"                                                                    '''
+  res = modDatabase.$myConn.Exec(sql, BillNo)
+  rcv = res["flddepoadjust"]
+  sTime = res["fldtime"]
+  sUser = res["flduserid"]
+  sComp = res["fldcomp"]
+  txtmode = res["fldbilltype"]
+  If modBasic.$currency Then
+    rsunit = modBasic.$currency
+  Else
+    rsunit = modString.CurrencySymbol()
+  Endif
+  $BillingReport = New CReportBILL([("SN"), ("PARTICULARS"), ("QTY"), ("RATE"), ("TOTAL")], "Receipt", res["fldencounterval"], BillNo)
+
+  'Header content
+  $BillingReport.UserData.Add(txTitle, "InvoiceType")
+  $BillingReport.UserData.Add(txtmode, "InvoiceMode")
+  $BillingReport.UserData.Add(BillNo, "InvoiceNumber")
+  $BillingReport.UserData.Add("", "BillPrintCount")
+
+  'Cash or Credit invoice summary
+  $BillingReport.UserData.Add(res["fldtaxgroup"], "TaxGroup")
+  $BillingReport.UserData.Add(res["flddiscountgroup"], "DiscountGroup")
+
+  'Amount in words and User info
+  $BillingReport.UserData.Add(sUser & "@" & GetUserLocationForBill(sComp), "BillUser")
+  $BillingReport.UserData.Add(modDate.GetDateTimeInFormatForAll(sTime, $InvDateFormat, ""), "BillDateTime")
+  $BillingReport.UserData.Add(rsunit & Space(1) & Format((modNonMedical.TaxableAmountInvoice(BillNo)), gb.Fixed), "TaxableAmt")
+
+  'Footer notes
+  $BillingReport.UserData.Add(res["fldbankname"], "LedgerA/C")
+  $BillingReport.UserData.Add(res["fldchequeno"], "InvRefNumber")
+  $BillingReport.UserData.Add(GetInvoicePatStatus(res["fldprevdeposit"]), "InvPatStatus")
+  $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note1_Text, $NoteI_Font), "Note1")
+  $BillingReport.UserData.Add(modString.GetFormatTextFontString($Note2_Text, $Note2_Font), "NoteII")
+  If $DischargeSumReceived Then
+    $BillingReport.UserData.Add($DischargeSumReceived, "DischargeFormTotal")
+  Endif
+  $DischargeSumReceived = 0
+  $BillingReport.UserData.Add(ShowLastTransactionDischarge(encid, sComp), "LastTransaction")
+
+  xitemamt = 0
+  xtaxamt = 0
+  xdscamt = 0
+  xchrgamt = 0
+  xrecvamt = 0
+  i = 1
+  If res.Available Then
+    ' xdepoamt = modNonMedical.GetPatientDeposit(modDatabase.$myConn, encid)
+    If modBasic.$BillLockInvoiceToOwn = "Yes" Or If modBasic.$BillLockInvoiceToOwn = "Partial" Then
+      resx1 = modDatabase.$myConn.Exec("select fldbillno,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt,fldreceivedamt,fldbilltype from " & $tblpatbilldetail & " where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3 and fldcomp=&4 UNION ALL select fldbillno,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt,fldreceivedamt,fldbilltype from " & $tbltempbilldetail & " where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3 and fldcomp=&4", encid, xdod, res["fldtime"], sComp)                            ''
+    Else
+      resx1 = modDatabase.$myConn.Exec("select fldbillno,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt,fldreceivedamt,fldbilltype from " & $tblpatbilldetail & " where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3 UNION ALL select fldbillno,flditemamt,fldtaxamt,flddiscountamt,fldchargedamt,fldreceivedamt,fldbilltype from " & $tbltempbilldetail & " where fldencounterval=&1 and fldtime>=&2 and fldtime<=&3", encid, xdod, res["fldtime"])                            ''
+    Endif
+    If resx1.Available Then
+      For Each resx1
+        xitemamt = xitemamt + resx1["flditemamt"]
+        xtaxamt = xtaxamt + resx1["fldtaxamt"]
+        xdscamt = xdscamt + resx1["flddiscountamt"]
+        xchrgamt = xchrgamt + resx1["fldchargedamt"]
+        xrecvamt = xrecvamt + resx1["fldreceivedamt"]
+        $BillingReport.UserData.Add(rsunit & Space(1) & Format(xitemamt, gb.Fixed), "SubTotal")
+        $BillingReport.UserData.Add(rsunit & Space(1) & Format(xdscamt, gb.Fixed), "Discount")
+        $BillingReport.UserData.Add(rsunit & Space(1) & Format(xtaxamt, gb.Fixed), "TotalTax")
+        $BillingReport.UserData.Add(rsunit & Space(1) & Format(xchrgamt, gb.Fixed), "TotalAmount")
+        $BillingReport.UserData.Add(rsunit & Space(1) & Format(xrecvamt + rcv, gb.Fixed), "ReceAmount")
+        $BillingReport.UserData.Add(modString.ConvertMoneyToText(xrecvamt + rcv), "AmtWord")
+
+        If $DischargeFormat = "Summary" Then
+          If resx1["fldbillno"] Like "DET*" Then
+          Else If resx1["fldbillno"] Like "TDA*" Then
+          Else
+            $BillingReport.AddChapter(resx1["fldbillno"])
+          Endif
+          rey1 = modDatabase.$myConn.Exec("select distinct(fldbillitem) as fldbillitem from tblservicecost where flditemname in(select flditemname from " & $tblpatbilling & " where fldbillno=&1)", resx1["fldbillno"])
+          If rey1.Available Then
+            For Each rey1
+              If rey1["fldbillitem"] Then
+                rey2 = modDatabase.$myConn.Exec("select SUM(flditemrate) as flditemrate,AVG(flditemqty) as flditemqty from " & $tblpatbilling & " where fldbillno=&1 and flditemname in(select flditemname from tblservicecost where fldbillitem=&2)", resx1["fldbillno"], rey1["fldbillitem"])
+                If rey2.Available Then
+                  With asx
+                    .Add(CStr(i))
+                    .Add(rey1["fldbillitem"])
+                    .Add(rey2["flditemqty"])
+                    .Add(Format(rey2["flditemrate"], gb.Fixed))
+                    .Add(Format(rey2["flditemqty"] * rey2["flditemrate"], gb.Fixed))
+                  End With
+                  $BillingReport.Add(asx)
+                  asx.Clear()
+                  i = i + 1
+                Endif
+              Endif
+            Next
+          Endif
+
+          res1 = modDatabase.$myConn.Exec("select fldbillno,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1  and flditemname in(select flditemname from tblservicecost where fldbillitem IS NULL) NULL select fldbillno,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1 and flditemname in(select flditemname from tblservicecost)", resx1["fldbillno"])
+          If res1.Available Then
+            For Each res1
+              With asx
+                .Add(CStr(i))
+                .Add(res1["flditemname"])
+                .Add(res1["flditemqty"])
+                .Add(Format(res1["flditemrate"], gb.Fixed))
+                .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+              i = i + 1
+            Next
+          Endif
+
+        Else
+          res1 = modDatabase.$myConn.Exec("select fldbillno,flditemno,flditemname,flditemrate,flditemqty,fldtaxper,flddiscper,flditemtype,fldpayto,fldrefer from " & $tblpatbilling & " where fldbillno=&1 ORDER BY flditemtype", resx1["fldbillno"])
+          If res1.Available Then
+            $BillingReport.AddChapter(resx1["fldbillno"])
+            For Each res1
+              If $PartiSuffix = "Payable" Then
+                If res1["fldpayto"] Then
+                  xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldpayto"]) & ")"
+                Else
+                  xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+                Endif
+              Else If $PartiSuffix = "Referral" Then
+                If res1["fldrefer"] Then
+                  xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & " (" & modGeneral.GetUserFullNamePrint(res1["fldrefer"]) & ")"
+                Else
+                  xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+                Endif
+              Else If $PartiSuffix = "Components" Then
+                xcompo = GetCostItemBreakdown(res1["flditemname"])
+                If xcompo And If xcompo.Count Then
+                  xitem = modString.TextToHTML(modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"]) & gb.NewLine & " (" & xcompo.Join(gb.NewLine) & ")")
+                Else
+                  xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+                Endif
+              Else
+                xitem = modNonMedical.GetIteminFormatForBill(res1["flditemname"], res1["flditemtype"])
+              Endif
+
+              With asx
+                .Add(CStr(i))
+                .Add(xitem)
+                .Add(res1["flditemqty"])
+                .Add(Format(res1["flditemrate"], gb.Fixed))
+                .Add(Format(res1["flditemqty"] * res1["flditemrate"], gb.Fixed))
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+              i = i + 1
+            Next
+          Endif
+
+        Endif
+
+      Next
+    Endif
+
+    res2 = modDatabase.$myConn.Exec("select fldbillno,fldcurdeposit,fldbilltype from " & $tblpatbilldetail & " where fldencounterval=&1 and (fldbillno like &2 or fldbillno like &3) UNION ALL select fldbillno,fldcurdeposit,fldbilltype from " & $tbltempbilldetail & " where fldencounterval=&1 and (fldbillno like &2 or fldbillno like &3)", encid, "DEP%", "DET%")                            ''
+    If res2.Available Then
+      $BillingReport.AddChapter("DEPOSITS AND DEPOSIT RETURNS")
+      For Each res2
+        With asx
+          .Add(CStr(i))
+          .Add(res2["fldbillno"])
+          .Add("")
+          .Add("")
+          .Add(res2["fldcurdeposit"], gb.Fixed)
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        i = i + 1
+      Next
+    Endif
+  Endif
+
+  'Finally make report
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Private Function ShowLastTransactionDischarge(encid As String, sComp As String) As String
+
+  Dim xxx As String
+  Dim xprevdepo As Float
+  ' Dim xlastdepo As Float
+  Dim xcashtaken As Float
+
+  Dim xFinal As Variant[]
+  Dim xRowVal As Collection
+  Dim xrecv As Float
+  Dim xretn As Float
+
+  xFinal = New Variant[]
+  xprevdepo = GetDepositForAdjustment(encid, True)
+  ' xlastdepo = GetDepositForAdjustment(encid, False)
+  xcashtaken = GetExpenseAfterDischarge(encid, modPatient.GetDischargeDate(encid), sComp)
+  If xcashtaken Then
+    xRowVal = New Collection
+    xRowVal.Add("<b>TOTAL CASH</b>", CStr(0))
+    xRowVal.Add(Format(xcashtaken, gb.Fixed), CStr(1))
+    xFinal.Add(xRowVal)
+
+    xRowVal = New Collection
+    xRowVal.Add("<b>PAST DEPOSITS</b>", CStr(0))
+    xRowVal.Add(Format(xprevdepo, gb.Fixed), CStr(1))
+    xFinal.Add(xRowVal)
+
+    If xcashtaken > xprevdepo Then
+      xrecv = xcashtaken - xprevdepo
+      xretn = 0
+    Else
+      xrecv = 0
+      xretn = xprevdepo - xcashtaken
+    Endif
+
+    xRowVal = New Collection
+    xRowVal.Add("<b>CASH RECEIVED</b>", CStr(0))
+    xRowVal.Add(Format(xrecv, gb.Fixed), CStr(1))
+    xFinal.Add(xRowVal)
+
+    xRowVal = New Collection
+    xRowVal.Add("<b>CASH REFUND</b>", CStr(0))
+    xRowVal.Add(Format(xretn, gb.Fixed), CStr(1))
+    xFinal.Add(xRowVal)
+  Endif
+  xxx = modString.GetRichTableNoHeadFromVariant(2, xFinal)
+  Return xxx
+
+End
+
+Private Function GetDepositForAdjustment(encid As String, xLedger As Boolean) As Float
+
+  Dim res As Result
+  Dim xval As Float
+
+  If xLedger = True Then
+    res = modDatabase.$myConn.Exec("select SUM(fldcurdeposit) as fldcurdeposit from " & $tbltempbilldetail & " where fldencounterval=&1 and fldbankname like &2", encid, "%")
+  Else If xLedger = False Then
+    res = modDatabase.$myConn.Exec("select SUM(fldcurdeposit) as fldcurdeposit from " & $tbltempbilldetail & " where fldencounterval=&1 and fldbankname IS NULL", encid)
+  Endif
+  If res.Available Then
+    If res["fldcurdeposit"] Then
+      xval = res["fldcurdeposit"]
+    Else
+      xval = 0
+    Endif
+  Else
+    xval = 0
+  Endif
+  Return xval
+
+End
+
+Private Function GetExpenseAfterDischarge(encid As String, sDate As Date, sComp As String) As Float
+
+  Dim res2 As Result
+  Dim xcash As Float
+
+  xcash = 0
+  If modBasic.$BillLockInvoiceToOwn = "Yes" Or If modBasic.$BillLockInvoiceToOwn = "Partial" Then
+    res2 = modDatabase.$myConn.Exec("select SUM(fldreceivedamt) as totamt from " & $tblpatbilldetail & " where fldencounterval=&1 and fldtime>=&2 and fldcomp=&3 UNION ALL select SUM(fldreceivedamt) as totamt from " & $tbltempbilldetail & " where fldencounterval=&1 and fldtime>=&2 and fldcomp=&3", encid, sDate, sComp)
+  Else
+    res2 = modDatabase.$myConn.Exec("select SUM(fldreceivedamt) as totamt from " & $tblpatbilldetail & " where fldencounterval=&1 and fldtime>=&2 UNION ALL select SUM(fldreceivedamt) as totamt from " & $tbltempbilldetail & " where fldencounterval=&1 and fldtime>=&2", encid, sDate)
+  Endif
+  If res2.Available Then
+    For Each res2
+      If res2["totamt"] Then
+        xcash = xcash + res2["totamt"]
+      Endif
+    Next
+  Endif
+  Return xcash
+
+End

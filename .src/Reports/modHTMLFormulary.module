@@ -1,0 +1,653 @@
+' Gambas module file
+
+''---------------------------------------------------------Structured---------------------------------------------------------------
+Public Function MakeRecommendedExamList($conn As Connection, sDept As String[]) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim asx As New String[0]
+  Dim xx As String
+  Dim xPath As String
+
+  $BillingReport = New CReportHTML([("Group"), ("Examination"), ("Code"), ("Options"), ("Constant")], "", "")
+  $BillingReport.UserData.Add("STRUCTURED EXAMINATIONS", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each xx In sDept
+    $BillingReport.AddSection(xx, True)
+    res1 = $conn.Exec("select distinct(fldcategory) as fldcategory from tblstructexam where fldsubclass=&1", xx)
+    If res1.Available Then
+      For Each res1
+
+        $BillingReport.AddChapter(res1["fldcategory"])
+        res2 = $conn.Exec("select fldheadcode,fldclass,flditem,fldhead,fldtesttype,fldtanswertype,fldsysconst from tblstructexam where fldsubclass=&1 and fldcategory=&2 ORDER BY flditem", xx, res1["fldcategory"])
+        For Each res2
+          With asx
+            .Add(res2["flditem"])
+            .Add(res2["fldhead"])
+            .Add(res2["fldheadcode"])
+            Select res2["fldtanswertype"]
+              Case "No Selection", "RichText Area", "Qualitative", "Date Time", "BS Date", "User Profile", "ImageValue", "Calculated"
+                .Add(res2["fldtesttype"])
+              Case Else
+                .Add(res2["fldtanswertype"] & " : [" & GetRecommendedOptions($conn, res2["fldheadcode"]) & "]")
+            End Select
+            .Add(res2["fldsysconst"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+
+      Next
+      With asx
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+  Next
+
+  xPath = $BillingReport.NewHTMLPath()
+  Return xPath
+
+End
+
+Private Function GetRecommendedOptions($conn As Connection, sCode As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  res = $conn.Exec("select fldanswer from tblstructexamoption where fldheadcode=&1 ORDER BY fldindex", sCode)
+  xx = modControlSub.GetDirectFillresult(res).Join(";")
+
+  Return xx
+
+End
+
+''--------------------------------------------------Exam/Test----------------------------------------------------------------------
+Public Function MakeDiagnosticReport($conn As Connection, sType As String, sChapter As String[], Optional sUnit As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim res As Result
+  Dim asx As New String[0]
+  Dim xx As String
+  Dim xPath As String
+
+  Dim xcatgList As String[]
+  Dim xcatego As String
+  Dim testList As String[]
+
+  $BillingReport = New CReportHTML([("Variable"), ("Type"), ("Parameters")], "", "")
+  $BillingReport.UserData.Add(sType, "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  If sType = "Examinations" Then
+    xcatgList = modMedicine.GetPathoCategoryList("Exam")
+  Else If sType = "Laboratory" Then
+    xcatgList = modMedicine.GetPathoCategoryList("Test")
+  Else If sType = "Radiology" Then
+    xcatgList = modMedicine.GetPathoCategoryList("Radio")
+  Endif
+  If xcatgList And If xcatgList.Count Then
+    For Each xcatego In xcatgList
+      If sType = "Examinations" Then
+        testList = modControlSub.GetDirectFillresult($conn.Exec("select fldexamid as col from tblexam where fldcategory=&1", xcatego))
+      Else If sType = "Laboratory" Then
+        testList = modControlSub.GetDirectFillresult($conn.Exec("select fldtestid as col from tbltest where fldcategory=&1", xcatego))
+      Else If sType = "Radiology" Then
+        testList = modControlSub.GetDirectFillresult($conn.Exec("select fldexamid as col from tblradio where fldcategory=&1", xcatego))
+      Endif
+
+      If testList.Count Then
+        $BillingReport.AddSection(xcatego, True)
+
+        For Each xx In sChapter
+          If testList.Exist(xx) Then
+            If sType = "Examinations" Then
+              res = $conn.Exec("select fldtype,flddetail from tblexam where fldexamid=&1", xx)
+            Else If sType = "Laboratory" Then
+              res = $conn.Exec("select fldtype,flddetail from tbltest where fldtestid=&1", xx)
+            Else If sType = "Radiology" Then
+              res = $conn.Exec("select fldtype,flddetail from tblradio where fldexamid=&1", xx)
+            Endif
+
+            For Each res
+              With asx
+                .Add(xx)
+                .Add(res["fldtype"])
+                If sType = "Laboratory" Then                                                                                              ''
+                  .Add(GetSUbDetailsDiagno($conn, sType, xx, sUnit))
+                Else
+                  .Add(GetSUbDetailsDiagno($conn, sType, xx))
+                Endif
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+            Next
+
+            With asx
+              .Add("")
+              .Add("")
+              .Add("")
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+
+          Endif
+        Next
+      Endif
+
+    Next
+  Endif
+
+  xPath = $BillingReport.NewHTMLPath()
+  Return xPath
+
+End
+
+Private Function GetSUbDetailsDiagno($conn As Connection, sType As String, sItem As String, Optional sUnit As String) As String
+
+  Dim qua As String
+  Dim xall As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim tbl As String
+
+  If sType = "Examinations" Then
+    qua = modFixClinic.GetExaminationType(sItem)
+  Else If sType = "Laboratory" Then
+    qua = modFixLab.GetLabTestType(sItem)
+  Else If sType = "Radiology" Then
+    qua = modFixRadio.GetRadioTestType(sItem)
+  Endif
+
+  xall = ""
+  If qua = "Qualitative" Then
+    If sType = "Examinations" Then
+      res = $conn.Exec("select fldsubexam as col1,fldtanswertype as col2 from tblexamquali where fldexamid=&1 ORDER BY fldindex", sItem)
+      tbl = "tblsubexamquali"
+    Else If sType = "Laboratory" Then
+      res = $conn.Exec("select fldsubtest as col1,fldtanswertype as col2 from tbltestquali where fldtestid=&1 ORDER BY fldindex", sItem)
+      tbl = "tblsubtestquali"
+    Else If sType = "Radiology" Then
+      res = $conn.Exec("select fldsubexam as col1,fldtanswertype as col2 from tblradioquali where fldexamid=&1 ORDER BY fldindex", sItem)
+      tbl = "tblsubradioquali"
+    Endif
+    If res.Available = True Then
+      For Each res
+        xall = xall & res["col1"] & " :- " & "SELECTION:" & res["col2"] & " OPTIONS:[" & GetSelectionOptions($conn, tbl, sItem, res["col1"]) & "]" & "<br>"
+      Next
+    Endif
+
+  Else If qua = "Quantitative" Then
+    If sType = "Examinations" Then
+      res = $conn.Exec("select fldptsex,fldagegroup,fldhigh,fldlow,fldunit from tblexamlimit where fldexamid=&1", sItem)
+      If res.Available = True Then
+        For Each res
+          xall = xall & "SEX:" & res["fldptsex"] & "   AGE:" & res["fldagegroup"] & " RANGE: " & CStr(res["fldlow"]) & " - " & CStr(res["fldhigh"]) & Space(1) & res["fldunit"] & "<br>"                                           ''
+        Next
+      Endif
+
+      res1 = $conn.Exec("select fldptsex,fldagegroup,fldmax,fldmin,fldcomment from tblexamcomment where fldexamid=&1", sItem)
+      If res1.Available = True Then
+        For Each res1
+          xall = xall & "SEX:" & res1["fldptsex"] & "   AGE:" & res1["fldagegroup"] & " RANGE:[" & CStr(res1["fldmin"]) & " - " & CStr(res1["fldmax"]) & "]  COMMENT: " & res1["fldcomment"] & "<br>"                                           ''
+        Next
+      Endif
+
+    Else If sType = "Laboratory" Then
+      res = $conn.Exec("select fldmethod,fldptsex,fldagegroup,fldmethigh,fldsihigh,fldmetlow,fldsilow,fldmetunit,fldsiunit from tbltestlimit where fldtestid=&1", sItem)
+      If res.Available = True Then
+        For Each res
+          If sUnit = "Metric" Then
+            xall = xall & "METHOD:" & res["fldmethod"] & " SEX: " & res["fldptsex"] & "   AGE: " & res["fldagegroup"] & " RANGE: " & CStr(res["fldmetlow"]) & " - " & CStr(res["fldmethigh"]) & Space(1) & res["fldmetunit"] & "<br>"                                       ''"
+          Else If sUnit = "SI" Then
+            xall = xall & "METHOD:" & res["fldmethod"] & " SEX: " & res["fldptsex"] & "   AGE: " & res["fldagegroup"] & " RANGE: " & CStr(res["fldsilow"]) & " - " & CStr(res["fldsihigh"]) & Space(1) & res["fldsiunit"] & "<br>"                                       ''
+          Endif
+        Next
+      Endif
+
+      res1 = $conn.Exec("select fldptsex,fldagegroup,fldmax,fldmin,fldcomment,fldunit from tbltestcomment where fldtestid=&1", sItem)
+      If res1.Available = True Then
+        For Each res1
+          xall = xall & "SEX:" & res1["fldptsex"] & "   AGE:" & res1["fldagegroup"] & " RANGE:[" & CStr(res1["fldmin"]) & " - " & CStr(res1["fldmax"]) & " (" & res1["fldunit"] & ")] COMMENT: " & res1["fldcomment"] & "<br>"                                           ''
+        Next
+      Endif
+
+    Else If sType = "Radiology" Then
+      res = $conn.Exec("select fldptsex,fldagegroup,fldhigh,fldlow,fldunit from tblradiolimit where fldexamid=&1", sItem)
+      If res.Available = True Then
+        For Each res
+          xall = xall & "SEX:" & res["fldptsex"] & "   AGE:" & res["fldagegroup"] & " RANGE: " & CStr(res["fldlow"]) & " - " & CStr(res["fldhigh"]) & Space(1) & res["fldunit"] & "<br>"                                           ''
+        Next
+      Endif
+
+      res1 = $conn.Exec("select fldptsex,fldagegroup,fldmax,fldmin,fldcomment from tblradiocomment where fldexamid=&1", sItem)
+      If res1.Available = True Then
+        For Each res1
+          xall = xall & "SEX:" & res1["fldptsex"] & "   AGE:" & res1["fldagegroup"] & " RANGE:[" & CStr(res1["fldmin"]) & " - " & CStr(res1["fldmax"]) & " ] COMMENT: " & res1["fldcomment"] & "<br>"                                           ''
+        Next
+      Endif
+
+    Endif
+
+  Endif
+
+  Return xall
+
+End
+
+Private Function GetSelectionOptions($conn As Connection, tbl As String, sItem As String, sSubItem As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  If tbl = "tblsubexamquali" Then
+    res = $conn.Exec("select fldanswer,fldscale from tblsubexamquali where fldexamid=&1 and fldsubexam=&2 ORDER BY fldindex", sItem, sSubItem)
+  Else If tbl = "tblsubtestquali" Then
+    res = $conn.Exec("select fldanswer,fldscale from tblsubtestquali where fldtestid=&1 and fldsubtest=&2 ORDER BY fldindex", sItem, sSubItem)
+  Else If tbl = "tblsubradioquali" Then
+    res = $conn.Exec("select fldanswer,fldscale from tblsubradioquali where fldexamid=&1 and fldsubexam=&2 ORDER BY fldindex", sItem, sSubItem)
+  Endif
+
+  xx = ""
+  If res.Available = True Then
+    For Each res
+      If res["fldscale"] = 0 Then
+        xx = xx & res["fldanswer"] & ";"
+      Else If res["fldscale"] > 0 Then
+        xx = xx & res["fldanswer"] & "(" & res["fldscale"] & ");"
+      Endif
+    Next
+  Endif
+
+  Return xx
+
+End
+
+''--------------------------- Medicine -------------------
+Public Function GetFormularyFile($conn As Connection, sMedList As String[], sFactorList As String[]) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim code As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res4 As Result
+  Dim res5 As Result
+  Dim res6 As Result
+  Dim res7 As Result
+  Dim res8 As Result
+  Dim res9 As Result
+  Dim res10 As Result
+  Dim res11 As Result
+
+  Dim res12 As Result
+  Dim res12x As Result
+  Dim res13 As Result
+  Dim res13x As Result
+  Dim res14 As Result
+  Dim res14x As Result
+  Dim res15 As Result
+  Dim res15x As Result
+
+  $BillingReport = New CReportHTML([("Parameter"), ("Description"), ("Reference")], "", "")
+  $BillingReport.UserData.Add("DRUG LIST", "PARAM1")
+  $BillingReport.UserData.Add(modReportVar.GetDateTimeReport(Now(), gb.GeneralDate), "PARAM2")
+
+  For Each code In sMedList
+    $BillingReport.AddSection(code, True)
+
+    If sFactorList.Exist("Dosing Limitation") = True Then
+      res = $conn.Exec("select fldid,fldptsex,fldagegroup,fldmaxfreq,fldmaxundose,fldmaxundoseunit,fldmaxdaladdose,fldmaxdaladdoseunit,fldmindaladdose,fldmindaladdoseunit from tblcodelimit where fldcodename=&1", code)
+      If res.Available = True Then
+        If res!fldmaxundose = 0 And If res!fldmaxfreq = 0 And If res!fldmaxdaladdose = 0 And If res!fldmindaladdose = 0 Then
+        Else
+          $BillingReport.AddChapter("Dosing Limitation")
+          'Maximum unit dose
+          If res!fldmaxundose > 0 Then
+            With asx
+              .Add("Maximum Unit Dose")
+              .Add("AgeGroup: " & res!fldagegroup & " Gender: " & res!fldptsex)
+              .Add(res!fldmaxundose & Space(1) & res!fldmaxundoseunit)
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+          ''max frequency
+          If res!fldmaxfreq > 0 Then
+            With asx
+              .Add("Maximum Frequency")
+              .Add("AgeGroup: " & res!fldagegroup & " Gender: " & res!fldptsex)
+              .Add(res!fldmaxfreq)
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+          'maximum daily dose
+          If res!fldmaxdaladdose > 0 Then
+            With asx
+              .Add("Maximum Daily Dose")
+              .Add("AgeGroup: " & res!fldagegroup & " Gender: " & res!fldptsex)
+              .Add(res!fldmaxdaladdose & Space(1) & res!fldmaxdaladdoseunit)
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+          'minimum daily dose
+          If res!fldmindaladdose > 0 Then
+            With asx
+              .Add("Minimum Daily Dose")
+              .Add("AgeGroup: " & res!fldagegroup & " Gender: " & res!fldptsex)
+              .Add(res!fldmindaladdose & Space(1) & res!fldmindaladdoseunit)
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+          $BillingReport.AddSummary("")
+        Endif
+      Endif
+    Endif
+
+    If sFactorList.Exist("Renal Impairment") = True Then
+      res2 = $conn.Exec("select fldcodename as code,fldgfrfrom as condia,fldgfrto as condib,fldoutput as detail,fldreference as ref from tblmedrenal where fldcodename=&1", code)
+      If res2.Available Then
+        $BillingReport.AddChapter("Renal Impairment")
+        For Each res2
+          With asx
+            .Add("GFR: " & Round(res2["condia"]) & " TO " & Round(res2["condib"]))
+            .Add(res2["detail"])
+            .Add(res2["ref"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Hepatic Impairment") = True Then
+      res3 = $conn.Exec("select fldcodename as code,fldcondition as condi,fldoutput as detail,fldreference as ref from tblmedhepatic where fldcodename=&1", code)
+      If res3.Available Then
+        $BillingReport.AddChapter("Hepatic Impairment")
+        For Each res3
+          With asx
+            .Add(res3["condi"])
+            .Add(res3["detail"])
+            .Add(res3["ref"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Pregnancy/Breast Feeding") = True Then
+      res4 = $conn.Exec("select fldcodename as code,fldcondition as condi,fldoutput as detail,fldreference as ref from tblmedpregnancy where fldcodename=&1", code)
+      If res4.Available Then
+        $BillingReport.AddChapter("Pregnancy/Breast Feeding")
+        For Each res4
+          With asx
+            .Add(res4["condi"])
+            .Add(res4["detail"])
+            .Add(res4["ref"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Drug Interaction") = True Then
+      res5 = $conn.Exec("select fldcodename as code,fldcondition as condi,fldoutput as detail,fldreference as ref from tblmedinteraction where fldcodename=&1", code)
+      If res5.Available Then
+        $BillingReport.AddChapter("Drug Interaction")
+        For Each res5
+          With asx
+            .Add(res5["condi"])
+            .Add(res5["detail"])
+            .Add(res5["ref"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Drug Contraindication") = True Then
+      res6 = $conn.Exec("select fldparent as code,fldtype as condi,fldchild as detail,fldreference as ref from tblmedcontraindication where fldparent=&1", code)
+      If res6.Available Then
+        $BillingReport.AddChapter("Drug Contraindication")
+        For Each res6
+          With asx
+            .Add(res6["condi"])
+            .Add(res6["detail"])
+            .Add(res6["ref"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Drug Side Effects") = True Then
+      res7 = $conn.Exec("select fldparent as code,fldtype as condi,fldchild as detail,fldreference as ref from tblmedadveffect where fldparent=&1", code)
+      If res7.Available Then
+        $BillingReport.AddChapter("Drug Side Effects")
+        For Each res7
+          With asx
+            .Add(res7["condi"])
+            .Add(res7["detail"])
+            .Add(res7["ref"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Laboratory Monitoring") = True Then
+      res8 = $conn.Exec("select fldparent as code,fldtype as condi,fldchild as detail,fldreference as ref from tblmedmonitor where fldparent=&1", code)
+      If res8.Available Then
+        $BillingReport.AddChapter("Laboratory Monitoring")
+        For Each res8
+          With asx
+            .Add(res8["condi"])
+            .Add(res8["detail"])
+            .Add(res8["ref"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Compatible Drugs") = True Then
+      res12x = $conn.Exec("select flddrug,fldroute from tbldrug where fldcodename=&1", code)
+      If res12x.Available Then
+        $BillingReport.AddChapter("Compatible Drugs")
+        For Each res12x
+
+          res12 = $conn.Exec("select fldchild from tblcompatdrug where fldparent=&1", res12x["flddrug"])
+          If res12.Available Then
+            With asx
+              .Add(res12x["flddrug"])
+              .Add(modControlSub.GetDirectFillresult(res12).Join(";"))
+              .Add(res12x["fldroute"])
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Incompatible Drugs") = True Then
+      res13x = $conn.Exec("select flddrug,fldroute from tbldrug where fldcodename=&1", code)
+      If res13x.Available Then
+        $BillingReport.AddChapter("Incompatible Drugs")
+        For Each res13x
+
+          res13 = $conn.Exec("select fldchild from tblincompatdrug where fldparent=&1", res13x["flddrug"])
+          If res13.Available Then
+            With asx
+              .Add(res13x["flddrug"])
+              .Add(modControlSub.GetDirectFillresult(res13).Join(";"))
+              .Add(res13x["fldroute"])
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Compatible Fluids") = True Then
+      res14x = $conn.Exec("select flddrug,fldroute from tbldrug where fldcodename=&1", code)
+      If res14x.Available Then
+        $BillingReport.AddChapter("Compatible Fluids")
+        For Each res14x
+
+          res14 = $conn.Exec("select fldchild from tblcompatfluid where fldparent=&1", res14x["flddrug"])
+          If res14.Available Then
+            With asx
+              .Add(res14x["flddrug"])
+              .Add(modControlSub.GetDirectFillresult(res14).Join(";"))
+              .Add(res14x["fldroute"])
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Incompatible Fluids") = True Then
+      res15x = $conn.Exec("select flddrug,fldroute from tbldrug where fldcodename=&1", code)
+      If res15x.Available Then
+        $BillingReport.AddChapter("Incompatible Fluids")
+        For Each res15x
+
+          res15 = $conn.Exec("select fldchild from tblincompatfluid where fldparent=&1", res15x["flddrug"])
+          If res15.Available Then
+            With asx
+              .Add(res15x["flddrug"])
+              .Add(modControlSub.GetDirectFillresult(res15).Join(";"))
+              .Add(res15x["fldroute"])
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Endif
+
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Dosage Forms") = True Then
+      res1 = $conn.Exec("select flddrug,fldroute from tbldrug where fldcodename=&1", code)
+      If res1.Available Then
+        $BillingReport.AddChapter("Dosage Forms")
+        For Each res1
+          With asx
+            .Add(res1["flddrug"])
+            .Add(modMedicine.GetBrandList(res1["flddrug"]).Join(";"))
+            .Add(res1["fldroute"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Out Patient Labels") = True Then
+      res9 = $conn.Exec("select flddrug,fldsubroute,fldopinfo,fldopfont,fldroute from tbllabel where flddrug in(select flddrug from tbldrug where fldcodename=&1)", code)
+      If res9.Available Then
+        $BillingReport.AddChapter("Out Patient Labels")
+        For Each res9
+          With asx
+            .Add(res9["flddrug"])
+            If res9["fldopfont"] Then
+              .Add(modString.TextToHTML(res9["fldopinfo"], res9["fldopfont"]))
+            Else
+              .Add(res9["fldopinfo"])
+            Endif
+            .Add(res9["fldsubroute"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("In Patient Labels") = True Then
+      res10 = $conn.Exec("select flddrug,fldsubroute,fldipinfo,fldroute from tbllabel where flddrug in(select flddrug from tbldrug where fldcodename=&1)", code)
+      If res10.Available Then
+        $BillingReport.AddChapter("In Patient Labels")
+        For Each res10
+          With asx
+            .Add(res10["flddrug"])
+            .Add(res10["fldipinfo"])
+            .Add(res10["fldsubroute"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    If sFactorList.Exist("Unit Dose Labels") = True Then
+      res11 = $conn.Exec("select flddrug,fldsubroute,fldasepinfo,fldroute from tbllabel where flddrug in(select flddrug from tbldrug where fldcodename=&1)", code)
+      If res11.Available Then
+        $BillingReport.AddChapter("Unit Dose Labels")
+        For Each res11
+          With asx
+            .Add(res11["flddrug"])
+            .Add(res11["fldasepinfo"])
+            .Add(res11["fldsubroute"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+        $BillingReport.AddSummary("")
+      Endif
+    Endif
+
+    With asx
+      .Add("****")
+      .Add("****")
+      .Add("****")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Next
+
+  Return $BillingReport.NewHTMLPath()
+
+End

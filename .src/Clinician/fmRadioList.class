@@ -1,0 +1,709 @@
+' Gambas class file
+
+Private $encid As String
+Private $BillMode As String
+Private $sPackage As String
+Private $bedLocation As String
+Private $xFinClear As Boolean
+Private $PatientNum As String
+Private $xNHISCode As String
+
+Private $TestList As String[]
+Private $rData As Result
+Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+Private $rData2 As Result
+Private $aMyFields2 As String[]
+
+Public Sub _new(encid As String, DiscType As String)
+
+  $encid = encid
+  $sPackage = DiscType
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  cmbdisctype.List = modBasic.$BillDiscountCash
+  If cmbdisctype.List.Count = 0 Then
+    cmbdisctype.Add($sPackage)
+  Endif
+  cmbdisctype.Text = $sPackage
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  $PatientNum = modPatient.GetPatientNoByEnc($encid)
+  $xNHISCode = modPatient.GetPatientExtCOdebyEnc($encid)
+  $BillMode = modNonMedical.GetDiscBindBillMode($sPackage)
+  If Not $BillMode Then
+    $BillMode = modpatient.GetPatBillingMode($encid)
+  Endif
+
+  $bedLocation = modPatient.GetPatientLocation($encid)
+  $xFinClear = modNonMedical.GetFinanceClearance($encid)
+  If modBasic.$ClinRadioGrouping = "Section" Then
+    cmbtestgroup.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldreport) as col from tblservicecost where flditemtype=&1 and fldreport like &2", "Radio Diagnostics", "%"))
+  Else
+    cmbtestgroup.List = modNonMedical.NonSTockCostingGroupList("Radio")
+  Endif
+  If cmbtestgroup.List.Count Then
+    pnlgroup.Enabled = True
+  Endif
+
+  btnrefer.Tag = modBillings.GetReferralUserSetting("Radio", $encid)
+  If btnrefer.Tag Then
+    btnrefer.Text = modGeneral.GetUserFullName(btnrefer.Tag)
+  Endif
+  If modBasic.$ReferralLockEntry = "Yes" Then
+    btnrefer.Enabled = False
+  Endif
+  cmbtarget.List = modBasic.$AllCompList
+  cmbtarget.Text = modSettings.ShowSettingFromFIle("Radiology/DefaultTarget")
+  $TestList = New String[]
+
+  SHowSavedGrid()
+  ShowSampled()
+  If $xFinClear = True Then
+    btnselect.Enabled = False
+  Endif
+  txtsearch.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Insert Then
+    btnselect_Click()
+  Else If Key.Code = Key.Esc Then
+    Me.Close
+  Else If Key.Code = Key.F1 Then
+    TabPanel1.Index = 0
+  Else If Key.Code = Key.F2 Then
+    TabPanel1.Index = 1
+  Else If Key.Code = Key.F3 Then
+    TabPanel1.Index = 2
+  Else If Key.Code = Key.F4 Then
+    TabPanel1.Index = 3
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub TabPanel1_Click()
+
+  If TabPanel1.Index = 0 Then
+    SHowSavedGrid()
+    ShowSampled()
+  Else If TabPanel1.Index = 1 Then
+    If modBasic.$DefaultRadioList Then
+      btnshowsel.Value = True
+      FillSelLabCOlumnView(modBasic.$DefaultRadioList)
+    Else
+      FillLabCOlumnView()
+    Endif
+    modFillContainer.FillListViewFromArray(ListView1, $TestList)
+    lstletter.List = modString.GetFirstLetterArray($TestList)
+    ShowGrid()
+  Else If TabPanel1.Index = 2 Then
+    lsttestname.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(fldtestid) as col from tblpatradiotest where fldencounterval=&1", $encid))
+
+  Endif
+
+End
+
+Public Sub btnrefer_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Referral User"), modBasic.$ReferUserList)
+  If xMedUser And If xMedUser.Count Then
+    btnrefer.Tag = xMedUser[0]
+    btnrefer.Text = xMedUser[1]
+  Else
+    btnrefer.Tag = ""
+    btnrefer.Text = ""
+  Endif
+
+End
+
+Public Sub btnrefer_Change()
+
+  If btnrefer.Text = "" Then
+    btnrefer.Tag = ""
+  Endif
+
+End
+
+Public Sub cmbdisctype_Click()
+
+  If cmbdisctype.Text Then
+    $BillMode = modNonMedical.GetDiscBindBillMode(cmbdisctype.Text)
+    If Not $BillMode Then
+      $BillMode = modpatient.GetPatBillingMode($encid)
+    Endif
+    If $TestList And If $TestList.Count Then
+      $TestList.Clear()
+    Endif
+    TabPanel1.Index = 0
+  Endif
+
+End
+
+Public Sub cmbdisctype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbdisctype)
+  modFillContainer.RestrictComboToContent(cmbdisctype)
+
+End
+
+''------------------------------------- Listview -----------------------------------
+Public Sub txtsearch_KeyRelease()
+
+  If Key.Code = Key.Down Then
+    ListView1.SetFocus
+  Endif
+
+End
+
+Public Sub txtsearch_Change()
+
+  modFillContainer.FillListViewFromArray(ListView1, modString.SelectStringArrayToText(txtsearch.Text, $TestList, chkleftmain.Value))
+
+End
+
+Public Sub txtsearch_Click()
+
+  txtsearch.Text = ""
+
+End
+
+Public Sub lstletter_Click()
+
+  txtsearch.Text = lstletter.Text
+
+End
+
+Private Sub FillLabCOlumnView()
+
+  Dim sstr1 As String
+  Dim res As Result
+  Dim xxx As String[]
+
+  If Not $TestList.Count Then
+    sstr1 = "select distinct(fldgroupname) as col from tblgroupradio where fldgroupname in(select flditemname from tblservicecost where (fldgroup=&1 or fldgroup=&2) and fldstatus=&3)"                                                   ''
+    res = modDatabase.$myConn.Exec(sstr1, $BillMode, "%", "Active")
+    xxx = modControlSub.GetDirectFillresult(res)
+    $TestList = xxx
+  Endif
+
+End
+
+Private Sub FillSelLabCOlumnView(sItem As String)
+
+  Dim sstr1 As String
+  Dim res As Result
+  Dim xxx As String[]
+
+  If Not $TestList.Count Then
+    If modBasic.$ClinRadioGrouping = "Section" Then
+      sstr1 = "select flditemname from tblservicecost where (fldgroup=&1 or fldgroup=&2) and fldstatus=&3 and fldreport=&4 and flditemtype=&5"
+      res = modDatabase.$myConn.Exec(sstr1, $BillMode, "%", "Active", sItem, "Radio Diagnostics")
+    Else
+      sstr1 = "select distinct(fldgroupname) as col from tblgroupradio where fldgroupname in(select flditemname from tblservicecost where (fldgroup=&1 or fldgroup=&2) and fldstatus=&3) and fldgroupname in(select flditemname from tblcostgroup where fldgroup=&4)"                                                   ''
+      res = modDatabase.$myConn.Exec(sstr1, $BillMode, "%", "Active", sItem)
+    Endif
+    xxx = modControlSub.GetDirectFillresult(res)
+    $TestList = xxx
+  Endif
+
+End
+
+Private Sub DisplayTestList()
+
+  If btnshowsel.Value = True Then
+    FillSelLabCOlumnView(modBasic.$DefaultRadioList)
+  Else
+    FillLabCOlumnView()
+  Endif
+  modFillContainer.FillListViewFromArray(ListView1, $TestList)
+  lstletter.List = modString.GetFirstLetterArray($TestList)
+
+End
+
+Public Sub btnshowsel_Click()
+
+  ListView1.Clear()
+  $TestList.Clear()
+  DisplayTestList()
+
+End
+
+Public Sub btnclear_Click()
+
+  ListView1.Clear()
+  $TestList.Clear()
+  cmbtestgroup.Text = ""
+  DisplayTestList()
+
+End
+
+Public Sub cmbtestgroup_Click()
+
+  If cmbtestgroup.Text Then
+    ListView1.Clear()
+    If $TestList And If $TestList.Count Then
+      $TestList.Clear()
+    Endif
+    FillSelLabCOlumnView(cmbtestgroup.Text)
+    modFillContainer.FillListViewFromArray(ListView1, $TestList)
+    lstletter.List = modString.GetFirstLetterArray($TestList)
+  Endif
+
+End
+
+Public Sub chkall_Click()
+
+  Dim xpict As Picture
+  Dim i As Integer
+
+  If chkall.Value = True Then
+    xpict = Picture["icons/checked.png"]
+  Else If chkall.Value = False Then
+    xpict = Picture["icons/unchecked.png"]
+  Endif
+
+  For i = 1 To ListView1.Count
+    ListView1[CStr(i)].Picture = xpict
+  Next
+
+End
+
+Public Sub ListView1_Click()
+
+  Dim xdate As Date
+
+  xdate = modBillings.CheckLastSalesItemDate(ListView1.Current.Text, $PatientNum, $xNHISCode, cmbdisctype.Text)
+  If xdate Then
+    txtlastsaledate.Text = modReportVar.GetDateTimeReport(xdate, gb.MediumDate)
+    If DateDiff(xdate, Now(), gb.Month) <= 3 Then
+      txtlastsaledate.Foreground = Color.Red
+    Else
+      txtlastsaledate.Foreground = Color.Default
+    Endif
+  Else
+    txtlastsaledate.Text = ""
+    txtlastsaledate.Foreground = Color.Default
+  Endif
+
+  modFillContainer.ShowCheckedListView(ListView1)
+
+End
+
+Public Sub ListView1_KeyRelease()
+
+  If Key.Code = Key.Space Then
+    ListView1_Click()
+  Endif
+
+End
+
+Public Sub ListView1_Menu()
+
+  mnufile.Popup
+
+End
+
+Public Sub mnuinfo_Click()
+
+  Dim xList As String[]
+
+  xList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldtestid from tblgroupradio where fldgroupname=&1", ListView1.Current.Text))
+  Balloon.Info(xList.Join(gb.NewLine), ListView1, ListView1.Current.X, ListView1.Current.Y - 15)
+  Balloon.Delay = modBasic.$BalloonDelay
+
+End
+
+Public Sub btnselect_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnselect_Click()
+  Endif
+
+End
+
+Public Sub btnselect_Click()
+
+  Dim i As Integer
+  Dim xauto As String
+
+  Dim xrefer As String
+  Dim xpayble As String
+
+  Dim xList As String[]
+  Dim j As Integer
+  Dim acount As Integer
+
+  acount = 0
+  If btnrefer.Tag Then
+    xrefer = btnrefer.Tag
+  Else
+    xrefer = modBillings.GetReferralUserSetting("Radio", $encid)
+  Endif
+  xpayble = ""
+
+  xauto = modBasic.$AutoBillRadio
+  Select xauto
+    Case "Partial"
+      xList = New String[]
+      For j = 0 To GridView1.Rows.Count - 1
+        xList.Add(GridView1[j, 2].Text)
+      Next
+    Case "Yes", "Full"
+      xList = New String[]
+      For j = 0 To GridView1.Rows.Count - 1
+        xList.Add(GridView1[j, 2].Text)
+      Next
+      xList.Insert($rData1.All("flditemname"))
+  End Select
+
+  If modMisc.AllowDiagnoBilling($encid) = True Then
+
+    Inc Application.Busy
+    For i = 1 To ListView1.Count
+      If ListView1[CStr(i)].Picture = Picture["icons/checked.png"] Then     '
+
+        If xauto = "Yes" Or If xauto = "Full" Or If xauto = "Partial" Then
+          If modMisc.GetDuplicationAllow(xList, ListView1[CStr(i)].Text, btnselect) = True Then
+            modBillings.GetAutoBillingClinic($encid, cmbdisctype.Text, "Radio", ListView1[CStr(i)].Text, 1, "Punched", 0, False, False, xpayble, xrefer, cmbtarget.Text)
+            acount = acount + 1
+          Endif
+          ListView1[CStr(i)].Picture = Picture["icons/unchecked.png"]
+        Endif
+
+      Endif
+    Next
+    Dec Application.Busy
+    ShowGrid()
+
+  Else
+    Message.Warning("Diagnosis not provided", ("OK"))
+  Endif
+
+  If acount Then
+    txtsearch.Text = ""
+    Balloon.Info(("Request added"), btnselect)
+    Balloon.Delay = modBasic.$BalloonDelay
+    txtsearch.SetFocus
+  Endif
+
+End
+
+''--------------------------------------------------- Gridview -------------------------------------------
+Private Sub ShowGrid()
+
+  Dim sql As String
+  Dim res As Result
+
+  sql = "select fldid,fldordtime,flditemname,fldstatus,fldreason,fldtarget from tblpatbilling where fldencounterval=&1 and flditemtype=&2 and fldsave=&3"
+  res = modDatabase.$myConn.Exec(sql, $encid, "Radio Diagnostics", False)
+  ShowInitialGridView(res)
+
+End
+
+Private Sub ShowInitialGridView(res As Result)
+
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res[fld.Name], gb.GeneralDate)
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[1].Text = "Date Time"
+    .Columns[2].Text = "Test Name"
+    .Columns[3].Text = "Status"
+    .Columns[5].Text = "Target"
+  End With
+
+End
+
+Private Sub SavePartialEntry(res As Result)
+
+  res["fldstatus"] = "Done"
+  res["fldsave"] = True
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["xyz"] = False
+  res.Update()
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res As Result
+  Dim xauto As String
+
+  xauto = modBasic.$AutoBillRadio
+  Inc Application.Busy
+  res = modDatabase.$myConn.Edit("tblpatbilling", "fldencounterval= &1 and flditemtype=&2 and fldsave=&3 and fldstatus=&4", $encid, "Radio Diagnostics", False, "Punched")                 ''
+  For Each res
+
+    If xauto = "Yes" Or If xauto = "Full" Then
+      If modNonMedical.AllowPreEntryWithDeposit($encid, "Radio", res["fldditemamt"], btnsave) = True Then
+        SavePartialEntry(res)
+      Endif
+    Else
+      If modBasic.$AutoBillSaveZero = "Yes" And If res["flditemrate"] = 0 Then
+        SavePartialEntry(res)
+      Else If modBasic.$AutoBillSaveZero = "Yes" And If res["flddiscper"] = 100 Then
+        SavePartialEntry(res)
+      Else If modBasic.$AutoBillSaveFullCredit = "Yes" And If res["fldbilltype"] = "Credit" And If res["fldcashincredit"] = 0 Then
+        SavePartialEntry(res)
+      Endif
+    Endif
+
+  Next
+  Dec Application.Busy
+  ShowGrid()
+
+End
+
+Public Sub btndefault_Click()
+
+  Dim xx As String
+
+  xx = InputCombo("Default Target", "Radiology", modBasic.$AllCompList, cmbtarget.Text, True)
+  If xx Then
+    cmbtarget.Text = xx
+    modSettings.SaveSettingsToFile("Radiology/DefaultTarget", xx)
+    Balloon.Info(("Information saved"), btndefault)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnutarget_Click()
+
+  Dim xx As String
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xx = InputCombo("Change Target", GridView1[GridView1.Row, 2].Text, modBasic.$AllCompList, GridView1[GridView1.Row, 5].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldtarget"] = xx
+      res["xyz"] = False
+      res.Update
+      ShowGrid()
+    Endif
+  Endif
+
+End
+
+Public Sub mnucomment_Click()
+
+  Dim xx As String
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xx = GetTextArea(GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 4].Text)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldreason"] = xx
+      res["xyz"] = False
+      res.Update
+      ShowGrid()
+    Endif
+  Endif
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Rows.Selection.Count Then
+    If Message.Question("Are you sure ?", ("No"), ("Yes")) = 2 Then
+      modDatabase.$myConn.Delete("tblpatbilling", "fldid=&1 and fldsave=&2", GridView1[GridView1.Row, 0].Text, False)
+      ShowGrid()
+    Endif
+  Endif
+
+End
+
+''----------------------------------- Billed but not reported ------------------------------------
+Private Sub SHowSavedGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,flditemname,fldrefer,fldordcomp from tblpatbilling where fldencounterval=&1 and flditemtype=&2 and fldsave=&3 and (fldstatus=&4 or fldstatus=&5) and fldsample=&6 and (flditemqty-fldretqty)>&7"
+  $rData1 = modDatabase.$myConn.Exec(sql, $encid, "Radio Diagnostics", True, "Done", "Cleared", "Waiting", 0)
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData1, $aMyFields1)
+
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Test Name"
+    .Columns[3].Text = "ReferBy"
+    .Columns[4].Text = "From"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 1 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.GeneralDate)
+  Else If Column = 3 Then
+    GridView2.Data.Text = modGeneral.GetUserFullName($rData1[$aMyFields1[Column]])
+  Else
+    GridView2.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+
+End
+
+''----------------------------- Accepted but not Reported -----------------------------
+Private Sub ShowSampled()
+
+  Dim sql As String
+
+  sql = "select fldid,fldmethod,fldtestid,fldabnormal,fldrefername,fldstatus from tblpatradiotest where fldencounterval=&1 and (fldstatus=&2 or fldstatus=&3)"
+  $rData2 = modDatabase.$myConn.Exec(sql, $encid, "Ordered", "Sampled")
+  $aMyFields2 = New String[]
+  modGridView.ReadSmallData(GridView3, $rData2, $aMyFields2)
+  With GridView3
+    .Columns[0].Width = 1
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Method"
+    .Columns[2].Text = "Test Name"
+    .Columns[4].Text = "Referral"
+    .Columns[5].Text = "Status"
+  End With
+
+End
+
+Public Sub GridView3_Data(Row As Integer, Column As Integer)
+
+  $rData2.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView3, Row)
+  If Column = 3 Then
+    GridView3.Data.Picture = Picture["icons/null.svg"]
+    GridView3.Data.Text = ""
+  Else
+    GridView3.Data.Text = $rData2[$aMyFields2[Column]]
+  Endif
+
+End
+
+Public Sub txtsearch_KeyPress()
+
+  modGeneralMain.InputTextSearchKeyOnly()
+
+End
+
+''------------------------------------- Reported -------------------------------------
+Public Sub FillLabtable()
+
+  Dim sql As String
+
+  sql = "select fldid,fldmethod,fldabnormal,fldid,fldstatus,fldtime_report,fldtest_type,fldcomp_report from tblpatradiotest where fldencounterval=&1 and fldtestid=&2 and (fldstatus=&3 or fldstatus=&4) and flvisible=&5"
+  $rData = modDatabase.$myConn.Exec(sql, $encid, lsttestname.Text, "Reported", "Verified", "Visible")
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(TableView1, $rData, $aMyFields)
+  With TableView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 1
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Method"
+    .Columns[3].Text = "Observation"
+    .Columns[4].Text = "Status"
+    .Columns[5].Text = "ReportDate"
+    .Columns[7].Text = "ReportComp"
+  End With
+
+End
+
+Public Sub TableView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(TableView1, Row)
+  If Column = 2 Then
+    TableView1.Data.Picture = Picture[modMisc.GetGridIcon($rData[$aMyFields[Column]])]
+    TableView1.Data.Text = ""
+  Else If Column = 3 Then
+    TableView1.Data.RichText = modRadioTest.GetRadiobTestValueSubString($rData["fldid"], True)
+    If modBasic.$RichtextResizeRow = "Yes" Then
+      TableView1.Rows[Row].Height = Max(TableView1.Rows[Row].Height, TableView1.Data.Font.RichTextHeight(TableView1.Data.RichText, TableView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (TableView1.Rows.Height - TableView1.Font.Height))
+    Endif
+  Else If Column = 5 Then
+    TableView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldtime_report"], gb.GeneralDate)
+  Else
+    TableView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  TableView1.Data.WordWrap = True
+
+End
+
+Public Sub lsttestname_Click()
+
+  If lsttestname.Text Then
+    FillLabtable()
+  Endif
+
+End
+
+Public Sub lsttestname_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    lsttestname_Click()
+  Endif
+
+End

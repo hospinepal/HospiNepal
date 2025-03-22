@@ -1,0 +1,536 @@
+' Gambas module file
+
+Public Sub AddToExistEntry(stockno As Long, qty As Float, sComp As String)
+
+  Dim res As Result
+  Dim xnew As Float
+
+  res = modDatabase.$myConn.Edit("tblentry", "fldstockno=&1 and fldcomp=&2", stockno, sComp)
+  xnew = res["fldqty"] + qty
+
+  res["fldqty"] = xnew
+  If xnew = 0 Then
+    res["fldstatus"] = 0
+  Endif
+  res["fldsav"] = True
+  res["xyz"] = False
+  res.Update()
+
+  If qty > 0 Then
+    If xnew = qty Then
+      UpdateSockOrderRetn(res["fldstockid"], sComp)
+    Endif
+
+  Else
+    If xnew = 0 Then
+      UpdateSockOrderSale(res["fldstockid"], sComp)
+    Else
+      If res["fldstatus"] = 0 Then
+        UpdateSockOrderSale(res["fldstockid"], sComp)
+      Endif
+    Endif
+
+  Endif
+  'dont catch error. allow to roll back
+
+End
+
+'update stock adjustment using curr value
+Public Sub AdjustStockByCurrentQTY(id As Long, qty As Float)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tbladjustment", "fldid=&1", id)
+  res["fldcurrqty"] = qty
+  res["xyz"] = False
+  res.Update
+  'dont catch error. allow to roll back
+
+End
+
+Public Sub BackupEntryStock(compid As String)
+
+  Dim res2 As Result
+  Dim res As Result
+  Dim ref As ResultField
+
+  res = modDatabase.$myConn.Exec("select *from tblentry where fldcomp=&1", compid)
+  For Each res
+    res2 = modDatabase.$myConn.Create("tblentrybackup")
+    For Each ref In res.Fields
+      res2[ref.Name] = res[ref.Name]
+    Next
+    res2["fldentrytime"] = Now()
+    res2["flduserid"] = modBasic.$lbluser
+    res2["xyz"] = False
+    res2.Update
+  Next
+
+End
+
+Public Sub AddAmountToVendor(txtsupp As String, txtamt As Float, txtpurtype As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Edit("tblsupplier", "fldsuppname=&1", txtsupp)
+  If txtpurtype = "Cash Payment" Then
+    res["fldpaiddebit"] = res["fldpaiddebit"] + txtamt
+    res["fldleftcredit"] = res["fldleftcredit"] + txtamt
+  Else If txtpurtype = "Credit Payment" Then
+    res["fldleftcredit"] = res["fldleftcredit"] + txtamt
+  Else If txtpurtype = "Payment" Then
+    res["fldpaiddebit"] = res["fldpaiddebit"] + txtamt
+  Else If txtpurtype = "Credit Note" Then
+    res["fldpaiddebit"] = res["fldpaiddebit"] + txtamt
+  Endif
+  res["xyz"] = False
+  res.Update()
+  'dont catch error. Error will toll back
+
+End
+
+'NOTE: ----------------- Update Stock and Order -----------------------------
+Public Sub UpdateSockByLastPos(stockNo As Integer, compid As String)
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim i As Integer
+
+  res1 = modDatabase.$myConn.Edit("tblentry", "fldstockno=&1", stockNo)
+  If res1.Available Then
+    res2 = modDatabase.$myConn.Exec("select MAX(fldstatus) as fldstatus from tblentry where fldstockid=&1 and fldqty>&2 and fldcomp=&3 and fldstatus>=&4 ORDER by fldstatus ASC", res1["fldstockid"], 0, compid, 0)
+    If res2.Available Then
+      i = res2["fldstatus"]
+    Else
+      i = 0
+    Endif
+
+    res1["fldstatus"] = i + 1
+    res1["xyz"] = False
+    res1.Update()
+  Endif
+
+End
+
+''update stock status sales
+Private Sub UpdateSockOrderSale(stockid As String, compid As String)
+
+  If modBasic.$SalesOutOrder = "Manual" Then
+    UpdateSaleSockByManual(stockid, compid)
+  Else
+    UpdateSaleSockByExpiry(stockid, compid)
+  Endif
+
+End
+
+''update stock status return
+Private Sub UpdateSockOrderRetn(stockid As String, compid As String)
+
+  If modBasic.$RetnOutOrder = "Manual" Then
+    UpdateRetnSockByManual(stockid, compid)
+  Else
+    UpdateSaleSockByExpiry(stockid, compid)
+  Endif
+
+End
+
+Private Sub UpdateRetnSockByManual(stockid As String, compid As String)
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim i As Integer
+
+  res2 = modDatabase.$myConn.Exec("select fldstockno from tblentry where fldstockid=&1 and fldqty>&2 and fldcomp=&3 and fldstatus>&4 ORDER by fldstatus ASC", stockid, 0, compid, 0)
+  If res2.Available Then
+    i = 1
+    For Each res2
+      res1 = modDatabase.$myConn.Edit("tblentry", "fldstockno=&1", res2["fldstockno"])
+      res1["fldstatus"] = i
+      res1["xyz"] = False
+      res1.Update()
+      i = i + 1
+    Next
+  Endif
+
+End
+
+Private Sub UpdateSaleSockByManual(stockid As String, compid As String)
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim i As Integer
+
+  res2 = modDatabase.$myConn.Exec("select fldstockno from tblentry where fldstockid=&1 and fldqty>&2 and fldcomp=&3 and fldstatus>=&4 ORDER by fldstatus ASC", stockid, 0, compid, 0)
+  If res2.Available Then
+    i = 1
+    For Each res2
+      res1 = modDatabase.$myConn.Edit("tblentry", "fldstockno=&1", res2["fldstockno"])
+      res1["fldstatus"] = i
+      res1["xyz"] = False
+      res1.Update()
+      i = i + 1
+    Next
+  Endif
+
+End
+
+Private Sub UpdateSaleSockByExpiry(stockid As String, compid As String)
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim i As Integer
+
+  res3 = modDatabase.$myConn.Edit("tblentry", "fldstockid=&1 and fldqty>&2 and fldcomp=&3 and fldexpiry<&4", stockid, 0, compid, Now())
+  If res3.Available Then
+    For Each res3
+      res3["fldstatus"] = 0
+      res3.Update
+    Next
+  Endif
+
+  res1 = modDatabase.$myConn.Exec("select fldstockno,fldexpiry from tblentry where fldstockid=&1 and fldqty>&2 and fldcomp=&3 and fldstatus>=&4 order by fldexpiry ASC", stockid, 0, compid, 0)
+  If res1.Available = True Then
+    i = 1
+    For Each res1
+      res2 = modDatabase.$myConn.Edit("tblentry", "fldstockno=&1", res1["fldstockno"])
+      res2["fldstatus"] = i
+      res2["xyz"] = False
+      res2.Update()
+      i = i + 1
+    Next
+  Endif
+
+End
+
+Public Sub GetCompwiseExpiredUpdate()
+
+  modDatabase.$myConn.Exec(db.Subst("UPDATE tblentry SET fldstatus=&1 where fldqty<=&2 and fldcomp=&3", 0, 0, modBasic.$compID))
+  modDatabase.$myConn.Exec(db.Subst("UPDATE tblentry SET fldstatus=&1 where fldexpiry<=&2 and fldcomp=&3", 0, Now(), modBasic.$compID))
+
+End
+
+Public Sub GetCompwiseOutOrderUpdate()
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select distinct(fldstockid) from tblentry where fldcomp=&1 and fldqty>&2 and fldstatus>=&3", modBasic.$compID, 0, 0)
+  For Each res
+    UpdateSockOrderSale(res["fldstockid"], modBasic.$compID)
+  Next
+
+End
+
+'NOTE: ----------------------------- COMBO for INVENTORY SELECTION ------------------------------------------------
+Public Function GetComboStockControl(txtroute As String, txtitem As String, rbgeneric As RadioButton, rbbrand As RadioButton, Optional xCon As Connection) As Boolean
+
+  Dim xx As Boolean
+  Dim sql As String
+  Dim res As Result
+  Dim txt As String
+  Dim sConn As Connection
+
+  If xCon Then
+    sConn = xCon
+  Else
+    sConn = modDatabase.$myConn
+  Endif
+
+  If txtroute = "Group" Then
+    xx = True
+  Else
+    txt = modNonMedical.GetBillItemCategoryFromCombo(txtroute)
+    If txt = "Medicines" Then
+      If rbgeneric.Value = True Then
+        sql = "select fldbrandid from tblmedbrand where fldbrandid=&1"
+      Else If rbbrand.Value = True Then
+        sql = "select fldbrand from tblmedbrand where fldbrand=&1"
+      Endif
+    Else If txt = "Surgicals" Then
+      sql = "select fldbrandid from tblsurgbrand where fldbrandid=&1"
+    Else If txt = "Extra Items" Then
+      sql = "select fldbrandid from tblextrabrand where fldbrandid=&1"
+    Endif
+    res = sConn.Exec(sql, txtitem)
+    xx = res.Available
+  Endif
+  Return xx
+
+End
+
+Public Function GetComboControlGeneric(txtroute As String, txtitem As String, Optional xCon As Connection) As Boolean
+
+  Dim xx As Boolean
+  Dim sql As String
+  Dim res As Result
+  Dim txt As String
+  Dim sConn As Connection
+
+  If xCon Then
+    sConn = xCon
+  Else
+    sConn = modDatabase.$myConn
+  Endif
+  If txtroute = "Group" Then
+    xx = True
+  Else If txtroute = "All" Then
+    sql = "select fldbrandid from tblmedbrand where fldbrandid=&1"
+    res = sConn.Exec(sql, txtitem)
+    xx = res.Available
+  Else
+    txt = modNonMedical.GetBillItemCategoryFromCombo(txtroute)
+    If txt = "Medicines" Then
+      sql = "select fldbrandid from tblmedbrand where fldbrandid=&1"
+    Else If txt = "Surgicals" Then
+      sql = "select fldbrandid from tblsurgbrand where fldbrandid=&1"
+    Else If txt = "Extra Items" Then
+      sql = "select fldbrandid from tblextrabrand where fldbrandid=&1"
+    Endif
+    res = sConn.Exec(sql, txtitem)
+    xx = res.Available
+  Endif
+  Return xx
+
+End
+
+'NOTE: -----------------------------------Brand or Generic Mode -------------------------------------------
+Public Sub GetBrandgenericSettingOption(sSetting As String, rbbrand As RadioButton, rbgeneric As RadioButton)
+
+  If sSetting Then
+    If sSetting = "Brand" Then
+      rbbrand.Value = True
+    Else If sSetting = "Generic" Then
+      rbgeneric.Value = True
+    Endif
+  Else
+    rbgeneric.Value = True
+  Endif
+
+End
+
+Public Sub DisplayDefaultTransferMode(rbbrand As RadioButton, rbgeneric As RadioButton)
+
+  Dim def As String
+
+  def = modSettings.ShowSettingFromFIle("BrandOrGeneric/Transfer")
+  modStockSub.GetBrandgenericSettingOption(def, rbbrand, rbgeneric)
+
+End
+
+Public Sub DisplayDefaultDispensingMode(rbbrand As RadioButton, rbgeneric As RadioButton)
+
+  Dim def As String
+
+  def = modSettings.ShowSettingFromFIle("BrandOrGeneric/Dispensing")
+  modStockSub.GetBrandgenericSettingOption(def, rbbrand, rbgeneric)
+
+End
+
+'NOTE: --------------------------------- Tree of Entered Items ----------------------------------------------
+Private Sub LoadPharmacyEntryTree(TreeView1 As TreeView, sType As String, stint As Integer, txtsearch As String)
+
+  Dim pic3 As Picture
+  Dim res As Result
+  Dim sstr1 As String
+
+  pic3 = Picture["icons/coll3.png"]
+  TreeView1.Clear
+  If txtsearch Then
+    sstr1 = "select distinct(fldstockid) as fldparent from tblentry where fldcategory=&1 and lower(fldstockid) like &2"
+    res = modDatabase.$myConn.Exec(sstr1, sType, LCase(txtsearch) & "%")
+  Else
+    sstr1 = "select distinct(fldstockid) as fldparent from tblentry where fldcategory=&1 ORDER BY fldstockid LIMIT 100 OFFSET &2"
+    res = modDatabase.$myConn.Exec(sstr1, sType, stint)
+  Endif
+  If res.Available Then
+    For Each res
+      TreeView1.Add(res["fldparent"], res["fldparent"], pic3)
+    Next
+  Endif
+
+End
+
+Public Function CompleteMedicineTreeEntered(TreeView1 As TreeView, stint As Integer, Optional txtsearch As String) As Integer
+
+  Dim pic1 As Picture
+  Dim res As Result
+  Dim sstr1 As String
+  Dim xval As Integer
+
+  Inc Application.Busy
+  pic1 = Picture["icons/coll1.png"]
+  TreeView1.Clear
+  If txtsearch Then
+    sstr1 = "select distinct(fldcodename) as fldparent from tblcode where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid in(select fldstockid from tblentry))) and lower(fldcodename) like &1"
+    res = modDatabase.$myConn.Exec(sstr1, LCase(txtsearch) & "%")
+  Else
+    sstr1 = "select distinct(fldcodename) as fldparent from tblcode where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid in(select fldstockid from tblentry))) ORDER BY fldcodename LIMIT 100 OFFSET &1"
+    res = modDatabase.$myConn.Exec(sstr1, stint)
+  Endif
+  If res.Available Then
+    For Each res
+      TreeView1.Add(res["fldparent"], res["fldparent"], pic1)
+    Next
+    xval = 1
+  Else
+    If txtsearch Then
+      LoadPharmacyEntryTree(TreeView1, "Medicines", stint, txtsearch)
+    Else
+      LoadPharmacyEntryTree(TreeView1, "Medicines", stint, "")
+    Endif
+    xval = 3
+  Endif
+  Dec Application.Busy
+
+  Return xval
+
+End
+
+Public Sub SelectMedicineTreeEnter(TreeView1 As TreeView, sItem As String)
+
+  Dim sstr2 As String
+  Dim sstr3 As String
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim pic2 As Picture
+  Dim pic3 As Picture
+
+  pic2 = Picture["icons/coll2.png"]
+  pic3 = Picture["icons/coll3.png"]
+  sstr2 = "select distinct(flddrug) as fldparent from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid in(select fldstockid from tblentry)) and fldcodename=&1"
+  res2 = modDatabase.$myConn.Exec(sstr2, sItem)
+  If res2.Available Then
+    For Each res2
+      TreeView1.Add(res2["fldparent"], res2["fldparent"], pic2, sItem)
+
+      sstr3 = "select distinct(fldbrandid) as fldparent from tblmedbrand where fldbrandid in(select fldstockid from tblentry) and flddrug=&1"
+      res3 = modDatabase.$myConn.Exec(sstr3, res2["fldparent"])
+      If res3.Available Then
+        For Each res3
+          TreeView1.Add(res3["fldparent"], res3["fldparent"], pic3, res2["fldparent"])
+        Next
+      Endif
+
+    Next
+  Endif
+
+End
+
+Public Function CompleteSurgicalTreeEntered(TreeView1 As TreeView, stint As Integer, Optional txtsearch As String) As Integer
+
+  Dim sstr1 As String
+  Dim pic1 As Picture
+  Dim res As Result
+  Dim xval As Integer
+
+  Inc Application.Busy
+  pic1 = Picture["icons/coll1.png"]
+  TreeView1.Clear
+  If txtsearch Then
+    sstr1 = "select distinct(fldsurgname) as fldparent from tblsurgicalname where fldsurgname in(select fldsurgname from tblsurgicals where fldsurgid in(select fldsurgid from tblsurgbrand where fldbrandid in(select fldstockid from tblentry))) and lower(fldsurgname) like &1"
+    res = modDatabase.$myConn.Exec(sstr1, LCase(txtsearch) & "%")
+  Else
+    sstr1 = Subst("select distinct(fldsurgname) as fldparent from tblsurgicalname where fldsurgname in(select fldsurgname from tblsurgicals where fldsurgid in(select fldsurgid from tblsurgbrand where fldbrandid in(select fldstockid from tblentry))) ORDER BY fldsurgname LIMIT 100 OFFSET &1", stint)
+    res = modDatabase.$myConn.Exec(sstr1, stint)
+  Endif
+  If res.Available Then
+    For Each res
+      TreeView1.Add(res["fldparent"], res["fldparent"], pic1)
+    Next
+    xval = 1
+  Else
+    If txtsearch Then
+      LoadPharmacyEntryTree(TreeView1, "Surgicals", stint, txtsearch)
+    Else
+      LoadPharmacyEntryTree(TreeView1, "Surgicals", stint, "")
+    Endif
+    xval = 3
+  Endif
+  Dec Application.Busy
+
+  Return xval
+
+End
+
+Public Sub SelectSurgicalTreeEnter(TreeView1 As TreeView, sItem As String)
+
+  Dim sstr2 As String
+  Dim sstr3 As String
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim pic2 As Picture
+  Dim pic3 As Picture
+
+  pic2 = Picture["icons/coll2.png"]
+  pic3 = Picture["icons/coll3.png"]
+  sstr2 = "select distinct(fldsurgid) as fldparent from tblsurgicals where fldsurgid in(select fldsurgid from tblsurgbrand where fldbrandid in(select fldstockid from tblentry)) and fldsurgname=&1"
+  res2 = modDatabase.$myConn.Exec(sstr2, sItem)
+  If res2.Available Then
+    For Each res2
+      TreeView1.Add(res2["fldparent"], res2["fldparent"], pic2, sItem)
+
+      sstr3 = "select distinct(fldbrandid) as fldparent from tblsurgbrand where fldbrandid in(select fldstockid from tblentry) and fldsurgid=&1"
+      res3 = modDatabase.$myConn.Exec(sstr3, res2["fldparent"])
+      If res3.Available Then
+        For Each res3
+          TreeView1.Add(res3["fldparent"], res3["fldparent"], pic3, res2["fldparent"])
+        Next
+      Endif
+
+    Next
+  Endif
+
+End
+
+Public Function CompleteExtraTreeEntered(TreeView1 As TreeView, stint As Integer, Optional txtsearch As String) As Integer
+
+  Dim sstr1 As String
+  Dim pic1 As Picture
+  Dim res As Result
+  Dim xval As Integer
+
+  Inc Application.Busy
+  pic1 = Picture["icons/coll1.png"]
+  TreeView1.Clear
+  If txtsearch Then
+    sstr1 = "select distinct(fldextraid) as fldparent from tblextra where fldextraid in(select fldextraid from tblextrabrand where fldbrandid in(select fldstockid from tblentry)) and lower(fldextraid) like &1"
+    res = modDatabase.$myConn.Exec(sstr1, LCase(txtsearch) & "%")
+  Else
+    sstr1 = Subst("select distinct(fldextraid) as fldparent from tblextra where fldextraid in(select fldextraid from tblextrabrand where fldbrandid in(select fldstockid from tblentry)) ORDER BY fldextraid LIMIT 100 OFFSET &1", stint)
+    res = modDatabase.$myConn.Exec(sstr1, stint)
+  Endif
+  If res.Available Then
+    For Each res
+      TreeView1.Add(res["fldparent"], res["fldparent"], pic1)
+    Next
+    xval = 1
+  Else
+    If txtsearch Then
+      LoadPharmacyEntryTree(TreeView1, "Extra Items", stint, txtsearch)
+    Else
+      LoadPharmacyEntryTree(TreeView1, "Extra Items", stint, "")
+    Endif
+    xval = 3
+  Endif
+  Dec Application.Busy
+
+  Return xval
+
+End
+
+Public Sub SelectExtraTreeEnter(TreeView1 As TreeView, sItem As String)
+
+  Dim sstr2 As String
+  Dim res2 As Result
+  Dim pic2 As Picture
+
+  pic2 = Picture["icons/coll2.png"]
+  sstr2 = "select distinct(fldbrandid) as fldparent from tblextrabrand where fldbrandid in(select fldstockid from tblentry) and fldextraid=&1"
+  res2 = modDatabase.$myConn.Exec(sstr2, sItem)
+  If res2.Available Then
+    For Each res2
+      TreeView1.Add(res2["fldparent"], res2["fldparent"], pic2, sItem)
+    Next
+  Endif
+
+End

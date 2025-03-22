@@ -1,0 +1,1430 @@
+' Gambas module file
+
+Public $CodeReference As Collection
+Public $DrugReference As Collection
+Public $CodeAllowPRN As Collection
+Public $CodeChemiClass As Collection
+Public $DrugAgeContra As Collection
+Public $StockPreservIn As Collection
+Public $StockAllowTabBreak As Collection
+
+Public $CodePregnancyPrec As Collection
+Public $CodeHepaticPrec As Collection
+Public $CodeDrugIntxn As Collection
+Public $CodeDiseaseContra As Collection
+Public $CodeAdverseRxn As Collection
+Public $CodeDrugAllergy As Collection
+Public $DrugInjecIncompat As Collection
+Public $DrugFluidIncompat As Collection
+
+''========================================
+Private $CheckPreviousSensitivity As String
+Private $AgeContraindication As String
+Private $DrugAllergy As String
+Private $AntibioticResistance As String
+Private $DiseaseContraindication As String
+Private $DrugInteraction As String
+Private $ExaminationInteraction As String
+Private $HepaticPrecaution As String
+Private $InjectionIncompatibility As String
+Private $IVFluidIncompatibility As String
+Private $LaboratoryInteraction As String
+Private $MaxDailyDose As String
+Private $MaxFrequency As String
+Private $MaxUnitDose As String
+Private $MinDailyDose As String
+Private $PregnancyPrecaution As String
+Private $PreservativePrecaution As String
+Private $PRNRestriction As String
+Private $RenalPrecaution As String
+Private $SideEffects As String
+Private $DoseBreak As String
+Private $PreAdminMonitor As String
+
+Private $encnt As String[]
+Private $categ As String[]
+Private $drug As String[]
+Private $condi As String[]
+Private $warn As String[]
+
+Public Sub MedicationReviewSettings()
+
+  $CheckPreviousSensitivity = modSettings.ShowSettingFromFIle("MedicineSetting/CheckPreviousSensitivity")
+
+  $AgeContraindication = modSettings.ShowSettingFromFIle("MedicationReview/AgeContraindication")
+  $DrugAllergy = modSettings.ShowSettingFromFIle("MedicationReview/DrugAllergy")
+  $AntibioticResistance = modSettings.ShowSettingFromFIle("MedicationReview/AntibioticResistance")
+  $DiseaseContraindication = modSettings.ShowSettingFromFIle("MedicationReview/DiseaseContraindication")
+  $DrugInteraction = modSettings.ShowSettingFromFIle("MedicationReview/DrugInteraction")
+  $ExaminationInteraction = modSettings.ShowSettingFromFIle("MedicationReview/ExaminationInteraction")
+  $HepaticPrecaution = modSettings.ShowSettingFromFIle("MedicationReview/HepaticPrecaution")
+  $InjectionIncompatibility = modSettings.ShowSettingFromFIle("MedicationReview/InjectionIncompatibility")
+  $IVFluidIncompatibility = modSettings.ShowSettingFromFIle("MedicationReview/IVFluidIncompatibility")
+  $LaboratoryInteraction = modSettings.ShowSettingFromFIle("MedicationReview/LaboratoryInteraction")
+  $MaxDailyDose = modSettings.ShowSettingFromFIle("MedicationReview/MaxDailyDose")
+  $MaxFrequency = modSettings.ShowSettingFromFIle("MedicationReview/MaxFrequency")
+  $MaxUnitDose = modSettings.ShowSettingFromFIle("MedicationReview/MaxUnitDose")
+  $MinDailyDose = modSettings.ShowSettingFromFIle("MedicationReview/MinDailyDose")
+  $PregnancyPrecaution = modSettings.ShowSettingFromFIle("MedicationReview/PregnancyPrecaution")
+  $PreservativePrecaution = modSettings.ShowSettingFromFIle("MedicationReview/PreservativePrecaution")
+  $PRNRestriction = modSettings.ShowSettingFromFIle("MedicationReview/PRNRestriction")
+  $RenalPrecaution = modSettings.ShowSettingFromFIle("MedicationReview/RenalPrecaution")
+  $SideEffects = modSettings.ShowSettingFromFIle("MedicationReview/SideEffects")
+  $DoseBreak = modSettings.ShowSettingFromFIle("MedicationReview/DoseBreak")
+  $PreAdminMonitor = modSettings.ShowSettingFromFIle("MedicationReview/Pre-AdminMonitoring")
+
+End
+
+'Note: -------------------------------------- Create Review Report (Sing/Mult) ------------------------------------
+Public Sub ShowMedCompatibleSingleDosID(dosid As Long, druglist As String[], strOutput As String)
+
+  Dim res As Result
+  Dim xdrug As String
+
+  StartReview()
+  res = modDatabase.$myConn.Exec("select fldencounterval,fldroute,flditem,flddose,fldfreq,flddays,fldtime from tblpatdosing where fldid=&1", dosid)                                                                      ''
+  If res.Available = True Then
+    Inc Application.Busy
+    For Each xdrug In druglist
+      MedicationReviewCurrentMultipleDrugs(res["fldencounterval"], res["flditem"], xdrug)
+    Next
+    Dec Application.Busy
+    OutFormatShow(res["fldencounterval"], strOutput)
+  Endif
+
+End
+
+Public Sub ShowMedicationReviewSingleDosID(dosid As Long, druglist As String[], strOutput As String)
+
+  Dim res As Result
+  Dim xdrug As String
+  Dim codeid As String
+
+  StartReview()
+  res = modDatabase.$myConn.Exec("select fldencounterval,fldroute,flditem,flddose,fldfreq,flddays,fldtime from tblpatdosing where fldid=&1", dosid)                                                                      ''
+  If res.Available = True Then
+    codeid = modMedConstant.GetCodeFromStockID(res["flditem"])
+
+    Inc Application.Busy
+    If UseSingleDrugRev() = True Then
+      MedicationReviewSingleDrug(res["fldencounterval"], res["flditem"], codeid, res["fldroute"], res["flddose"], res["fldfreq"])
+    Endif
+    If UseDrugAllerRev() = True Then
+      MedicationReviewDugAllergy(res["fldencounterval"], res["flditem"], codeid)
+    Endif
+    If UseCurrDiseaseRev() = True Then
+      GetMedicationReviewDrugCurrentDisease(res["fldencounterval"], res["flditem"], codeid)
+    Endif
+    If UseMultiDrugRev() = True Then
+      For Each xdrug In druglist
+        MedicationReviewCurrentMultipleDrugs(res["fldencounterval"], res["flditem"], xdrug)
+      Next
+    Endif
+    If UseLabDrugRev() = True Then
+      MedicationReviewDugCurrentLab(res["fldencounterval"], res["flditem"], codeid)
+    Endif
+    If UseExamDrugRev() = True Then
+      MedicationReviewDugExamination(res["fldencounterval"], res["flditem"], codeid)
+    Endif
+    Dec Application.Busy
+    OutFormatShow(res["fldencounterval"], strOutput)
+
+  Endif
+
+End
+
+Public Sub ShowMedicationReviewMultipleDosID(encid As String, dosid As Long[], strOutput As String)
+
+  Dim res As Result
+  Dim druglist As String[]
+  Dim xdrug As String
+  Dim dos As Long
+  Dim xval As String
+  Dim codeid As String
+
+  StartReview()
+  Inc Application.Busy
+  druglist = New String[]
+  For Each dos In dosid
+    xval = modMedConstant.GetDrugFromStockID(modPharmacy.GetStockIDFromDosing(dos))
+    If druglist.Count = 0 Then
+      druglist.Add(xval)
+    Else
+      If druglist.Exist(xval) = False Then
+        druglist.Add(xval)
+      Endif
+    Endif
+  Next
+  If druglist Then
+    druglist.Sort()
+  Endif
+
+  For Each dos In dosid
+    res = modDatabase.$myConn.Exec("select fldencounterval,fldroute,flditem,flddose,fldfreq,flddays,fldtime from tblpatdosing where fldid=&1 and fldencounterval=&2", dos, encid)                                                                      ''
+    If res.Available = True Then
+      codeid = modMedConstant.GetCodeFromStockID(res["flditem"])
+
+      If UseSingleDrugRev() = True Then
+        MedicationReviewSingleDrug(res["fldencounterval"], res["flditem"], codeid, res["fldroute"], res["flddose"], res["fldfreq"])
+      Endif
+      If UseDrugAllerRev() = True Then
+        MedicationReviewDugAllergy(res["fldencounterval"], res["flditem"], codeid)
+      Endif
+      If UseCurrDiseaseRev() = True Then
+        GetMedicationReviewDrugCurrentDisease(res["fldencounterval"], res["flditem"], codeid)
+      Endif
+      If UseMultiDrugRev() = True Then
+        For Each xdrug In druglist
+          MedicationReviewCurrentMultipleDrugs(res["fldencounterval"], res["flditem"], xdrug)
+        Next
+      Endif
+      If UseLabDrugRev() = True Then
+        MedicationReviewDugCurrentLab(res["fldencounterval"], res["flditem"], codeid)
+      Endif
+      If UseExamDrugRev() = True Then
+        MedicationReviewDugExamination(res["fldencounterval"], res["flditem"], codeid)
+      Endif
+    Endif
+  Next
+  Dec Application.Busy
+
+  OutFormatShow(encid, strOutput)
+
+End
+
+Public Function ShowMedicationReviewPunching(encid As String, txtroute As String, stockid As String, dose As Float, freq As String, drglist As String[], strOutput As String) As Integer
+
+  Dim xdrug As String
+  Dim codeid As String
+
+  StartReview()
+  codeid = modMedConstant.GetCodeFromStockID(stockid)
+  Inc Application.Busy
+  If UseSingleDrugRev() = True Then
+    MedicationReviewSingleDrug(encid, stockid, codeid, txtroute, dose, freq)
+  Endif
+  If UseDrugAllerRev() = True Then
+    MedicationReviewDugAllergy(encid, stockid, codeid)
+  Endif
+  If UseCurrDiseaseRev() = True Then
+    GetMedicationReviewDrugCurrentDisease(encid, stockid, codeid)
+  Endif
+  If UseMultiDrugRev() = True Then
+    For Each xdrug In drglist
+      MedicationReviewCurrentMultipleDrugs(encid, stockid, xdrug)
+    Next
+  Endif
+  If UseLabDrugRev() = True Then
+    MedicationReviewDugCurrentLab(encid, stockid, codeid)
+  Endif
+  If UseExamDrugRev() = True Then
+    MedicationReviewDugExamination(encid, stockid, codeid)
+  Endif
+  Dec Application.Busy
+
+  OutFormatShow(encid, strOutput)
+  Return $encnt.Count
+
+End
+
+Public Sub MedicalAuditReport(dtfir As Date, dtlast As Date)
+
+  Dim tot As String[]
+  Dim enc As String
+  Dim xPath As String
+
+  Dim xenc As String
+  Dim xclst As String[]
+
+  Dim dos As Long
+  Dim dosid As Long[]
+
+  Dim xdrug As String
+  Dim druglist As String[]
+  Dim xval As String
+  Dim res As Result
+  Dim codeid As String
+
+  xenc = modSettings.ShowSettingFromFIle("MedicineSetting/DisableDrugProblems")
+  If xenc Then
+    xclst = Split(xenc, ";")
+  Else
+    xclst = New String[]
+  Endif
+
+  StartReview()
+  Inc Application.Busy
+  tot = modPharmacy.PatientTakingMed(dtfir, dtlast)
+  For Each enc In tot
+    If xclst.Exist(enc) = False Then
+
+      dosid = modPharmacy.PatientDoseIDByDate(enc, dtfir, dtlast)
+      druglist = New String[]
+      For Each dos In dosid
+        xval = modMedConstant.GetDrugFromStockID(modPharmacy.GetStockIDFromDosing(dos))
+        If druglist.Count = 0 Then
+          druglist.Add(xval)
+        Else
+          If druglist.Exist(xval) = False Then
+            druglist.Add(xval)
+          Endif
+        Endif
+      Next
+      If druglist Then
+        druglist.Sort()
+      Endif
+
+      For Each dos In dosid
+        res = modDatabase.$myConn.Exec("select fldencounterval,fldroute,flditem,flddose,fldfreq,flddays,fldtime from tblpatdosing where fldid=&1 and flditemtype=&2 and fldcurval=&3", dos, "Medicines", "Continue")                       ''                                                                      ''
+        If res.Available = True Then
+          codeid = modMedConstant.GetCodeFromStockID(res["flditem"])
+
+          If UseSingleDrugRev() = True Then
+            MedicationReviewSingleDrug(res["fldencounterval"], res["flditem"], codeid, res["fldroute"], res["flddose"], res["fldfreq"])
+          Endif
+          If UseDrugAllerRev() = True Then
+            MedicationReviewDugAllergy(res["fldencounterval"], res["flditem"], codeid)
+          Endif
+          If UseCurrDiseaseRev() = True Then
+            GetMedicationReviewDrugCurrentDisease(res["fldencounterval"], res["flditem"], codeid)
+          Endif
+          If UseMultiDrugRev() = True Then
+            For Each xdrug In druglist
+              MedicationReviewCurrentMultipleDrugs(res["fldencounterval"], res["flditem"], xdrug)
+            Next
+          Endif
+          If UseLabDrugRev() = True Then
+            MedicationReviewDugCurrentLab(res["fldencounterval"], res["flditem"], codeid)
+          Endif
+          If UseExamDrugRev() = True Then
+            MedicationReviewDugExamination(res["fldencounterval"], res["flditem"], codeid)
+          Endif
+        Endif
+      Next
+
+    Endif
+  Next
+  Dec Application.Busy
+
+  If $encnt.Count = $categ.Count And If $encnt.Count = $drug.Count And If $encnt.Count = $condi.Count And If $encnt.Count = $warn.Count Then
+    Inc Application.Busy
+    xPath = modReportExtra.ShowMedicationAuditReportHTML($encnt, $categ, $drug, $condi, $warn, tot.Count)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+'NOTE:-------------------------------- common modules for Review Report ----------------------------------------------
+Private Sub StartReview()
+
+  $encnt = New String[]
+  $categ = New String[]
+  $drug = New String[]
+  $condi = New String[]
+  $warn = New String[]
+
+End
+
+Private Sub OutFormatShow(encid As String, strOutput As String)
+
+  Dim i As Integer
+  Dim messlst As String[]
+  Dim xval As String
+  Dim xPath As String
+
+  If $encnt.Count = $categ.Count And If $encnt.Count = $drug.Count And If $encnt.Count = $condi.Count And If $encnt.Count = $warn.Count Then
+    If strOutput = "Report" Then
+      Inc Application.Busy
+      xPath = modCHTMLPatient.ShowMedicationReviewReportHTML(encid, $categ, $drug, $condi, $warn)
+      Dec Application.Busy
+      modControlSub.OpenHTMLPreview(encid, xPath, "ReportSize")
+
+    Else
+      messlst = New String[]
+      For i = 0 To $categ.Count - 1
+        messlst.Add("<p><u>" & $categ[i] & "</u>" & "<br>" & "<b>" & $condi[i] & "</b>" & "::" & $warn[i] & "</p>")
+      Next
+      If messlst.Count Then
+        xval = MessageHtml("Drug related Problems", messlst.Join(gb.NewLine), [("Useless"), ("Neutral"), ("Useful")])
+        If modBasic.$MedLogRecommend = "Yes" Then
+          For i = 0 To $categ.Count - 1
+            AddDrugProblemsPopUp(encid, $categ[i], $drug[i], $condi[i], $warn[i], xval)
+          Next
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Private Sub AddDrugProblemsPopUp(encid As String, sCategory As String, sMedicine As String, sCondition As String, sReview As String, sValue As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Create("tbldrugproblems")
+  res["fldencounterval"] = encid
+  res["fldcategory"] = sCategory
+  res["fldmedicine"] = sMedicine
+  res["fldcondition"] = sCondition
+  res["fldrecommend"] = sReview
+  res["fldlevel"] = sValue
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res.Update
+
+End
+
+''--------------------------------------- ONLY SINGLE OUTPUT POSSIBLE ----------------------------------------
+Private Sub MedicationReviewSingleDrug(encid As String, stockid As String, codeid As String, route As String, dose As Float, freq As String)
+
+  Dim freqval As Float
+  Dim dtbir As Date
+  Dim dtdoa As Date
+  Dim xWarn As String
+
+  Dim maxunitdose As Float
+  Dim maxdaydose As Float
+  Dim mindaydose As Float
+  Dim maxfreq As Float
+  Dim pregstat As String
+  Dim hepstat As String
+  Dim cretclr As Float
+  Dim ciage As Float
+  Dim presr As String
+
+  Dim cForm As CDoseLimits
+
+  freqval = modPharmLabel.ConvertFrequencyToNumber(freq)
+  If $MaxUnitDose = "Yes" Or If $MaxDailyDose = "Yes" Or If $MinDailyDose = "Yes" Or If $MaxFrequency = "Yes" Then
+    cForm = New CDoseLimits(encid, codeid)
+
+    'Maximum Unit Dose
+    If $MaxUnitDose = "Yes" Then
+      maxunitdose = cForm.GetMaxUnitDose()    'MaxUnitDoseDrug(encid, stockid)
+      If maxunitdose > 0 Then
+        If dose > maxunitdose Then
+
+          $encnt.Add(encid)
+          $categ.Add("Unit Dose")
+          $drug.Add(codeid)
+          $condi.Add(CStr(dose) & " mg")
+          $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/MaxUnitDose", maxunitdose))
+
+        Endif
+      Endif
+    Endif
+
+    'Maximum Dauly Dose
+    If $MaxDailyDose = "Yes" Then
+      maxdaydose = cForm.GetMaxDailyDose()      'MaxDailyDoseDrug(encid, stockid)
+      If maxdaydose > 0 Then
+        If dose * freqval > maxdaydose Then
+
+          $encnt.Add(encid)
+          $categ.Add("Daily Dose")
+          $drug.Add(codeid)
+          $condi.Add(CStr(dose * freqval) & " mg")
+          $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/MaxDailyDose", maxdaydose))
+
+        Endif
+      Endif
+    Endif
+
+    'Minimum Daily Dose
+    If $MinDailyDose = "Yes" Then
+      mindaydose = cForm.GetMinDailyDose()       'MinDailyDoseDrug(encid, stockid)
+      If mindaydose > 0 Then
+        If dose * freqval < mindaydose Then
+
+          $encnt.Add(encid)
+          $categ.Add("Daily Dose")
+          $drug.Add(codeid)
+          $condi.Add(CStr(dose * freqval) & " mg")
+          $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/MinDailyDose", mindaydose))
+
+        Endif
+      Endif
+    Endif
+
+    'Maximum Frequency
+    If $MaxFrequency = "Yes" Then
+      maxfreq = cForm.GetMaxFrequency()       'GetMaxFrequency(encid, stockid)
+      If maxfreq > 0 Then
+        If freqval > maxfreq Then
+
+          $encnt.Add(encid)
+          $categ.Add("Frequency")
+          $drug.Add(codeid)
+          $condi.Add(CStr(freqval) & " times")
+          $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/MaxFrequency", maxfreq))
+
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+  'PRN Restriction
+  If $PRNRestriction = "Yes" Then
+    If GetAllowPRN(stockid) = "No" Then
+      If freq = "PRN" Then
+
+        $encnt.Add(encid)
+        $categ.Add("PRN Use")
+        $drug.Add(codeid)
+        $condi.Add("PRN")
+        $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/PRNRestriction"))
+
+      Endif
+    Endif
+  Endif
+
+  ''Pregnancy
+  If $PregnancyPrecaution = "Yes" Then
+    pregstat = modClinic.GetPregnancyStatus(encid)
+    If pregstat And If pregstat <> "None" Then
+      xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/PregnancyPrecaution", pregstat)
+      If xWarn Then
+
+        $encnt.Add(encid)
+        $categ.Add("Pregnancy/Breastfeeding")
+        $drug.Add(codeid)
+        $condi.Add(pregstat)
+        $warn.Add(xWarn)
+
+      Endif
+    Endif
+  Endif
+
+  ''Liver impairment
+  If $HepaticPrecaution = "Yes" Then
+    hepstat = modClinic.GetHepaticStatus(encid)
+    If hepstat And If hepstat <> "Normal" Then
+      xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/HepaticPrecaution", hepstat)
+      If xWarn Then
+
+        $encnt.Add(encid)
+        $categ.Add("Hepatic Function")
+        $drug.Add(codeid)
+        $condi.Add(hepstat)
+        $warn.Add(xWarn)
+
+      Endif
+    Endif
+  Endif
+
+  'renal impairment
+  If $RenalPrecaution = "Yes" Then
+    cretclr = modSysCons.GetCreatinineClearance(encid)
+    If cretclr > 0 And If cretclr < 120 Then
+      xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/RenalPrecaution", CStr(cretclr))
+      If xWarn Then
+
+        $encnt.Add(encid)
+        $categ.Add("Renal Function")
+        $drug.Add(codeid)
+        $condi.Add(cretclr & " mL/min")
+        $warn.Add(xWarn)
+
+      Endif
+    Endif
+  Endif
+
+  If $AgeContraindication = "Yes" Or If $PreservativePrecaution = "Yes" Then
+    dtbir = modPatient.GetPatientBirthDay(encid)
+    dtdoa = modPatient.GetRecordDate(encid)
+
+    'Age Contraindication
+    If $AgeContraindication = "Yes" Then
+      If dtbir Then
+        ciage = GetContraIndicatedLowerAge(stockid)
+        If ciage > 0 Then
+          If DateDiff(dtbir, dtdoa, gb.Year) < ciage Then
+
+            $encnt.Add(encid)
+            $categ.Add("Age Contraindication")
+            $drug.Add(route & Space(1) & codeid)
+            $condi.Add(CStr(DateDiff(dtbir, dtdoa, gb.Year)) & " years")
+            $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/AgeContraindication", ciage))
+
+          Endif
+        Endif
+      Endif
+    Endif
+
+    'Preservative Precaution
+    If $PreservativePrecaution = "Yes" Then
+      If dtbir Then
+        presr = GetPreservativeContent(stockid)
+        If presr Then
+          If DateDiff(dtbir, dtdoa, gb.Month) < 6 Then
+
+            $encnt.Add(encid)
+            $categ.Add("Preservatives: " & presr)
+            $drug.Add(stockid)
+            $condi.Add(CStr(DateDiff(dtbir, dtdoa, gb.Month)) & " months")
+            $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/PreservativePrecaution", presr))
+
+          Endif
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+  'Dose Breaking
+  If $DoseBreak = "Yes" Then
+    If GetAllowTabBreak(stockid) = "No" Then
+      If dose > 0 And If modMedConstant.GetDrugInitialStrength(stockid) > dose And If route = "oral" Then
+
+        $encnt.Add(encid)
+        $categ.Add("Dosage Form Breaking")
+        $drug.Add(stockid)
+        $condi.Add(CStr(dose) & " mg")
+        $warn.Add(GetMedicineReviewWarning(stockid, "MedicationReview/DoseBreak"))
+
+      Endif
+    Endif
+  Endif
+
+End
+
+''---------------------------------------------------DRUG ALLERGY OPTIONS------------------------------------------------------------------------------
+Private Sub MedicationReviewDugAllergy(encid As String, stockid As String, codeid As String)
+
+  Dim res As Result
+  Dim chmclas As String
+  Dim xWarn As String
+
+  If $DrugAllergy = "Yes" Then
+
+    If $CheckPreviousSensitivity = "No" Then
+      res = modDatabase.$myConn.Exec("select distinct(fldcode) as fldcode from tblpatfindings where fldencounterval=&1 and fldtype=&2 and fldsave=&3", encid, "Allergic Drugs", True)
+    Else
+      res = modDatabase.$myConn.Exec("select distinct(fldcode) as fldcode from tblpatfindings where fldtype=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2) and fldsave=&3", "Allergic Drugs", modPatient.GetPatientNoByEnc(encid), True)                                ''
+    Endif
+
+    If res.Available = True Then
+      chmclas = GetChemicalClass(res["fldcode"])
+      For Each res
+        xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/DrugAllergy", chmclas)
+        If xWarn Then
+
+          $encnt.Add(encid)
+          $categ.Add("Drug Sensitivity")
+          $drug.Add(codeid)
+          $condi.Add(res["fldcode"])
+          $warn.Add(xWarn)
+
+        Else If res["fldcode"] = codeid Then
+
+          $encnt.Add(encid)
+          $categ.Add("Drug Sensitivity")
+          $drug.Add(codeid)
+          $condi.Add(res["fldcode"])
+          $warn.Add("Sensitive to " & codeid)
+
+        Endif
+      Next
+    Endif
+
+  Endif
+
+End
+
+''------------------------------------------------DISEASE RELATIONS ----------------------------------------------------------------------
+Private Sub GetMedicationReviewDrugCurrentDisease(encid As String, stockid As String, codeid As String)
+
+  Dim res As Result
+  Dim xWarn As String
+
+  'drug contraindicated is specific disease
+  If $DiseaseContraindication = "Yes" Then
+    res = modDatabase.$myConn.Exec("select distinct(fldcode) from tblpatfindings where fldencounterval=&1 and (fldtype=&2 or fldtype=&3) and fldsave=&4", encid, "Final Diagnosis", "Provisional Diagnosis", True)
+    If res.Available = True Then
+      For Each res
+        xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/DiseaseContraindication", res["fldcode"])
+        If xWarn Then
+
+          $encnt.Add(encid)
+          $categ.Add("Drug Contraindication")
+          $drug.Add(codeid)
+          $condi.Add(res["fldcode"])
+          $warn.Add(xWarn)
+
+        Endif
+      Next
+    Endif
+  Endif
+
+  'drug causing same symptoms as listed
+  If $SideEffects = "Yes" Then
+
+    res = modDatabase.$myConn.Exec("select distinct(fldcode) as fldcode from tblpatfindings where fldencounterval=&1 and (fldtype=&2 or fldtype=&3) and fldsave=&4", encid, "Final Diagnosis", "Provisional Diagnosis", True)
+    If res.Available = True Then
+      For Each res
+        xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/SideEffects", res["fldcode"])
+        If xWarn Then
+
+          $encnt.Add(encid)
+          $categ.Add("Drug Side Effects")
+          $drug.Add(codeid)
+          $condi.Add(res["fldcode"])
+          $warn.Add(xWarn)
+
+        Endif
+      Next
+    Endif
+
+    res = modDatabase.$myConn.Exec("select distinct(flditem) as flditem from tblexamgeneral where fldencounterval=&1 and fldinput=&2 and fldsave=&3", encid, "Patient Symptoms", True)
+    If res.Available = True Then
+      For Each res
+        xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/SideEffects", res["flditem"])
+        If xWarn Then
+
+          $encnt.Add(encid)
+          $categ.Add("Drug Side Effects")
+          $drug.Add(codeid)
+          $condi.Add(res["flditem"])
+          $warn.Add(xWarn)
+
+        Endif
+      Next
+    Endif
+
+  Endif
+
+End
+
+''-----------------------------------------------MULTIPLE OUTPUT POSSIBLE -----------------------------------------------------------------
+Private Sub MedicationReviewCurrentMultipleDrugs(encid As String, stockid As String, drugid As String)
+
+  Dim codeid As String
+  Dim xWarn As String
+
+  ''get code of drugid
+  codeid = modMedConstant.GetCodeFromDrugID(drugid)
+
+  'Drug-drug interaction
+  If $DrugInteraction = "Yes" Then
+    xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/DrugInteraction", codeid)
+    If xWarn Then
+
+      $encnt.Add(encid)
+      $categ.Add("Drug Interaction")
+      $drug.Add(modMedConstant.GetCodeFromStockID(stockid))
+      $condi.Add(codeid)
+      $warn.Add(xWarn)
+
+    Endif
+  Endif
+
+  'drug-injection incompatibility
+  If $InjectionIncompatibility = "Yes" Then
+    xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/InjectionIncompatibility", codeid)
+    If xWarn Then
+
+      $encnt.Add(encid)
+      $categ.Add("Drug Incompatibility")
+      $drug.Add(modMedConstant.GetDrugFromStockID(stockid))
+      $condi.Add(codeid)
+      $warn.Add(xWarn)
+
+    Endif
+  Endif
+
+  'drug-IV fluid incompatibility
+  If $IVFluidIncompatibility = "Yes" Then
+    xWarn = GetMedicineReviewWarningMultiple(stockid, "MedicationReview/IVFluidIncompatibility", drugid)
+    If xWarn Then
+
+      $encnt.Add(encid)
+      $categ.Add("IV Fluid Incompatibility")
+      $drug.Add(modMedConstant.GetDrugFromStockID(stockid))
+      $condi.Add(drugid)
+      $warn.Add(xWarn)
+
+    Endif
+  Endif
+
+End
+
+''-----------------------------------------------------------------------------------------------------------------------------------------
+Private Sub MedicationReviewDugCurrentLab(encid As String, stockid As String, codeid As String)
+
+  Dim xx As String
+  Dim yy As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim sensid As String
+
+  Dim xhypo As String[]
+  Dim xhyper As String[]
+  Dim prelablist As String[]
+  Dim donelablist As String[]
+
+  If $LaboratoryInteraction = "Yes" Then
+
+    xhypo = modLabTest.GetHypoTestList(encid)
+    For Each xx In xhypo
+      res = modDatabase.$medConn.Exec("select fldparent,fldchild,fldreference from tblcodehypo where fldparent=&1 and fldchild=&2", xx, codeid)
+      If res.Available Then
+        $encnt.Add(encid)
+        $categ.Add("Drug-LabTest Interaction")
+        $drug.Add(res["fldchild"])
+        $condi.Add(res["fldparent"])
+        $warn.Add(res["fldparent"] & " values further DECREASED by " & res["fldchild"] & " [" & res["fldreference"] & "]")
+      Endif
+    Next
+
+    xhyper = modLabTest.GetHyperTestList(encid)
+    For Each yy In xhyper
+      res1 = modDatabase.$medConn.Exec("select fldparent,fldchild,fldreference from tblcodehyper where fldparent=&1 and fldchild=&2", yy, codeid)
+      If res1.Available Then
+        $encnt.Add(encid)
+        $categ.Add("Drug-LabTest Interaction")
+        $drug.Add(res1["fldchild"])
+        $condi.Add(res1["fldparent"])
+        $warn.Add(res1["fldparent"] & " values further INCREASED by " & res1["fldchild"] & " [" & res1["fldreference"] & "]")
+      Endif
+    Next
+
+  Endif
+
+  'drug-drug resistance
+  If $AntibioticResistance = "Yes" Then
+    sensid = modMedConstant.GetSensiNameFromStockID(stockid)
+
+    res = modDatabase.$myConn.Exec("select fldvariable,fldvalue FROM tblpatlabsubtable where fldsubtestid in(select fldid from tblpatlabsubtest where fldencounterval=&1) and fldvariable=&2 and (fldvalue=&3 or fldvalue=&4)", encid, sensid, "Intermediate", "Resistant")
+    If res.Available = True Then
+
+      For Each res
+        $encnt.Add(encid)
+        $categ.Add("Antibiotics Resistance")
+        $drug.Add(codeid)
+        $condi.Add(res["fldvalue"])
+        $warn.Add(sensid & " Found " & res["fldvalue"] & " to isolated organism")
+      Next
+
+    Endif
+  Endif
+
+  'pre admin monitoring
+  If $PreAdminMonitor = "Yes" Then
+    prelablist = modMedConstant.GetPreAdminTestList(codeid)
+    donelablist = modLabTest.PaientAllTestNameArray(encid)
+    For Each xx In prelablist
+      If donelablist.Exist(xx) = False Then
+
+        $encnt.Add(encid)
+        $categ.Add("Pre-Admin Monitoring")
+        $drug.Add(codeid)
+        $condi.Add(xx)
+        $warn.Add("Values of " & xx & " required before prescribing")
+
+      Endif
+    Next
+  Endif
+
+End
+
+Private Sub MedicationReviewDugExamination(encid As String, stockid As String, codeid As String)
+
+  Dim xx As String
+  Dim yy As String
+  Dim res As Result
+  Dim res1 As Result
+
+  Dim xbrady As String[]
+  Dim xtachy As String[]
+
+  If $ExaminationInteraction = "Yes" Then
+
+    xbrady = modClinic.GetBradyExamList(encid)
+    For Each xx In xbrady
+      res = modDatabase.$medConn.Exec("select fldparent,fldchild,fldreference from tblcodebrady where fldparent=&1 and fldchild=&2", xx, codeid)
+      If res.Available Then
+        $encnt.Add(encid)
+        $categ.Add("Drug-Examimation Interaction")
+        $drug.Add(res["fldchild"])
+        $condi.Add(res["fldparent"])
+        $warn.Add(res["fldparent"] & " values further DECREASED by " & res["fldchild"] & " [" & res["fldreference"] & "]")
+      Endif
+    Next
+
+    xtachy = modClinic.GetTachyExamList(encid)
+    For Each yy In xtachy
+      res1 = modDatabase.$medConn.Exec("select fldparent,fldchild,fldreference from tblcodetachy where fldparent=&1 and fldchild=&2", yy, codeid)
+      If res1.Available Then
+        $encnt.Add(encid)
+        $categ.Add("Drug-Examination Interaction")
+        $drug.Add(res1["fldchild"])
+        $condi.Add(res1["fldparent"])
+        $warn.Add(res1["fldparent"] & " values further INCREASED by " & res1["fldchild"] & " [" & res1["fldreference"] & "]")
+      Endif
+    Next
+
+  Endif
+
+End
+
+'NOTE: --------------------------- Check for requested DRP first ----------------------------------
+Private Function UseSingleDrugRev() As Boolean
+
+  Dim xx As Boolean
+
+  xx = False
+
+  'Maximum Unit Dose
+  If $MaxUnitDose = "Yes" Then
+    xx = True
+  Endif
+
+  'Maximum Dauly Dose
+  If $MaxDailyDose = "Yes" Then
+    xx = True
+  Endif
+
+  'Minimum Daily Dose
+
+  If $MinDailyDose = "Yes" Then
+    xx = True
+  Endif
+
+  'Maximum Frequency
+  If $MaxFrequency = "Yes" Then
+    xx = True
+  Endif
+
+  'PRN Restriction
+  If $PRNRestriction = "Yes" Then
+    xx = True
+  Endif
+
+  ''Pregnancy
+  If $PregnancyPrecaution = "Yes" Then
+    xx = True
+  Endif
+
+  ''Liver impairment
+  If $HepaticPrecaution = "Yes" Then
+    xx = True
+  Endif
+
+  'renal impairment
+  If $RenalPrecaution = "Yes" Then
+    xx = True
+  Endif
+
+  'Age Contraindication
+  If $AgeContraindication = "Yes" Then
+    xx = True
+  Endif
+
+  'Preservative Precaution
+  If $PreservativePrecaution = "Yes" Then
+    xx = True
+  Endif
+
+  'Dose Breaking
+  If $DoseBreak = "Yes" Then
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+Private Function UseDrugAllerRev() As Boolean
+
+  Dim xx As Boolean
+
+  xx = False
+  If $DrugAllergy = "Yes" Then
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+Private Function UseCurrDiseaseRev() As Boolean
+
+  Dim xx As Boolean
+
+  xx = False
+
+  'drug contraindicated is specific disease
+  If $DiseaseContraindication = "Yes" Then
+    xx = True
+  Endif
+
+  'drug causing same symptoms as listed
+  If $SideEffects = "Yes" Then
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+Private Function UseMultiDrugRev() As Boolean
+
+  Dim xx As Boolean
+
+  xx = False
+
+  'Drug-drug interaction
+  If $DrugInteraction = "Yes" Then
+    xx = True
+  Endif
+
+  'drug-injection incompatibility
+  If $InjectionIncompatibility = "Yes" Then
+    xx = True
+  Endif
+
+  'drug-IV fluid incompatibility
+  If $IVFluidIncompatibility = "Yes" Then
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+Private Function UseLabDrugRev() As Boolean
+
+  Dim xx As Boolean
+
+  xx = False
+  'drug lab intxn
+  If $LaboratoryInteraction = "Yes" Then
+    xx = True
+  Endif
+
+  'drug-drug resistance
+  If $AntibioticResistance = "Yes" Then
+    xx = True
+  Endif
+
+  'pre admin monitoring
+  If $PreAdminMonitor = "Yes" Then
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+Private Function UseExamDrugRev() As Boolean
+
+  Dim xx As Boolean
+
+  xx = False
+  If $ExaminationInteraction = "Yes" Then
+    xx = True
+  Endif
+
+  Return xx
+
+End
+
+''----------------------------------SET A WARNING ----------------------------------------------------------------------------
+Private Function GetMedicineReviewWarning(stockid As String, strCategory As String, Optional sValue As Variant) As String                                       ''
+
+  Dim xx As String
+  Dim ref As String
+  Dim refdrug As String
+
+  xx = ""
+  '---------------------Code -------------------------------
+  If strCategory = "MedicationReview/MaxUnitDose" Then ''complete
+    ref = GetInfoReferenceForCode(stockid)
+    xx = "MAXIMUM Unit Dose is " & CStr(sValue) & " mg [" & ref & "]"
+
+  Else If strCategory = "MedicationReview/MaxDailyDose" Then ''complete
+    ref = GetInfoReferenceForCode(stockid)
+    xx = "MAXIMUM Daily Dose is " & CStr(sValue) & " mg [" & ref & "]"
+
+  Else If strCategory = "MedicationReview/MinDailyDose" Then ''complete
+    ref = GetInfoReferenceForCode(stockid)
+    xx = "MINIMUM Daily Dose is " & CStr(sValue) & " mg [" & ref & "]"
+
+  Else If strCategory = "MedicationReview/MaxFrequency" Then ''complete
+    ref = GetInfoReferenceForCode(stockid)
+    xx = "MAXIMUM Frequency is " & CStr(sValue) & " times [" & ref & "]"
+
+  Else If strCategory = "MedicationReview/PRNRestriction" Then
+    ref = GetInfoReferenceForCode(stockid)
+    xx = "Not prescribed on PRN basis [" & ref & "]"
+
+    '-------------------------------------Drug --------------------------------------------
+  Else If strCategory = "MedicationReview/AgeContraindication" Then
+    refdrug = GetInfoReferenceForDrug(stockid)
+    xx = "CONTRAINDICATED below " & CStr(sValue) & " year [" & refdrug & "]"
+
+    '------------------------------------ Brand --------------------------------------
+  Else If strCategory = "MedicationReview/PreservativePrecaution" Then
+    xx = "Contains PRESERVATIVE(" & sValue & "). May not be appropriate"
+
+  Else If strCategory = "MedicationReview/DoseBreak" Then
+    xx = "BREAKING of Dosage Form not appropriate"
+
+  Endif
+
+  Return xx
+
+End
+
+'-------------------------------------SET B warningd-------------------------------------------------------------------------------------------
+Private Function GetMedicineReviewWarningMultiple(stockid As String, strCategory As String, strVal As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As String
+  Dim codeid As String
+  Dim drugid As String
+
+  xx = ""
+  codeid = modMedConstant.GetCodeFromStockID(stockid)
+  drugid = modMedConstant.GetDrugFromStockID(stockid)
+  ''---------------------------------------------------single option -----------------------------------------------------------
+  If strCategory = "MedicationReview/PregnancyPrecaution" Then
+    xx = modHelpVariable.GetCollectionValue($CodePregnancyPrec, codeid & "|" & strVal, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldoutput,fldreference from tblmedpregnancy where fldcodename=&1 and fldcondition=&2"
+      res = modDatabase.$medConn.Exec(sql, codeid, strVal)
+      If res.Available = True Then
+        res.MoveLast
+        xx = res["fldoutput"] & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodePregnancyPrec.Add(xx, codeid & "|" & strVal)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else If strCategory = "MedicationReview/HepaticPrecaution" Then
+    xx = modHelpVariable.GetCollectionValue($CodeHepaticPrec, codeid & "|" & strVal, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldoutput,fldreference from tblmedhepatic where fldcodename=&1 and fldcondition=&2"
+      res = modDatabase.$medConn.Exec(sql, codeid, strVal)
+      If res.Available = True Then
+        res.MoveLast
+        xx = res["fldoutput"] & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeHepaticPrec.Add(xx, codeid & "|" & strVal)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else If strCategory = "MedicationReview/RenalPrecaution" Then
+    sql = "select fldoutput,fldreference from tblmedrenal where fldcodename=&1 and fldgfrfrom<=&2 and fldgfrto>=&3"
+    res = modDatabase.$medConn.Exec(sql, codeid, CFloat(strVal), CFloat(strVal))
+    If res.Available = True Then
+      res.MoveLast
+      xx = res["fldoutput"] & " [" & res["fldreference"] & "]"
+    Else
+      xx = ""
+    Endif
+
+    ''----------------------------------------Multiple options --------------------------------------------------------------------
+  Else If strCategory = "MedicationReview/DrugInteraction" Then
+    xx = modHelpVariable.GetCollectionValue($CodeDrugIntxn, codeid & "|" & strVal, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldoutput,fldreference from tblmedinteraction where fldcodename=&1 and fldcondition=&2"
+      res = modDatabase.$medConn.Exec(sql, codeid, strVal)
+      If res.Available = True Then
+        res.MoveLast
+        xx = res["fldoutput"] & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeDrugIntxn.Add(xx, codeid & "|" & strVal)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else If strCategory = "MedicationReview/DrugAllergy" Then
+    xx = modHelpVariable.GetCollectionValue($CodeDrugAllergy, codeid & "|" & strVal, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldchemclass,fldreference from tblcode where fldcodename=&1 and fldchemclass=&2"
+      res = modDatabase.$medConn.Exec(sql, codeid, strVal)
+      If res.Available = True Then
+        res.MoveLast
+        xx = "SENSITIVE to drugs of " & res["fldchemclass"] & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeDrugAllergy.Add(xx, codeid & "|" & strVal)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else If strCategory = "MedicationReview/DiseaseContraindication" Then
+    xx = modHelpVariable.GetCollectionValue($CodeDiseaseContra, codeid & "|" & strVal, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldreference from tblmedcontraindication where fldparent=&1 and fldchild=&2"
+      res = modDatabase.$medConn.Exec(sql, codeid, strVal)
+      If res.Available = True Then
+        res.MoveLast
+        xx = "CONTRAINDICATED to " & strVal & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeDiseaseContra.Add(xx, codeid & "|" & strVal)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else If strCategory = "MedicationReview/SideEffects" Then
+    xx = modHelpVariable.GetCollectionValue($CodeAdverseRxn, codeid & "|" & strVal, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldtype,fldreference from tblmedadveffect where fldparent=&1 and fldchild=&2"
+      res = modDatabase.$medConn.Exec(sql, codeid, strVal)
+      If res.Available = True Then
+        res.MoveLast
+        xx = "Drug may WORSEN existing " & res["fldtype"] & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeAdverseRxn.Add(xx, codeid & "|" & strVal)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else If strCategory = "MedicationReview/InjectionIncompatibility" Then
+    xx = modHelpVariable.GetCollectionValue($DrugInjecIncompat, drugid & "|" & strVal, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldparent,fldreference from tblincompatdrug where fldparent=&1 and fldchild=&2"
+      res = modDatabase.$medConn.Exec(sql, drugid, strVal)
+      If res.Available = True Then
+        res.MoveLast
+        xx = "INCOMPATIBLE to " & res["fldparent"] & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $DrugInjecIncompat.Add(xx, drugid & "|" & strVal)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Else If strCategory = "MedicationReview/IVFluidIncompatibility" Then
+    xx = modHelpVariable.GetCollectionValue($DrugFluidIncompat, strVal & "|" & drugid, modBasic.$AppCacheDrugRelatedProblems)
+    If Not xx Then
+      sql = "select fldchild,fldreference from tblincompatfluid where fldparent=&1 and fldchild=&2"
+      res = modDatabase.$medConn.Exec(sql, strVal, drugid)
+      If res.Available = True Then
+        res.MoveLast
+        xx = "INCOMPATIBLE to " & res["fldchild"] & " [" & res["fldreference"] & "]"
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $DrugFluidIncompat.Add(xx, strVal & "|" & drugid)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Endif
+
+  Endif
+
+  Return xx
+
+End
+
+''----------------------------- Individual precautions -----------------------------------
+Private Function GetContraIndicatedLowerAge(stockid As String) As Float
+
+  Dim sql As String
+  Dim res As Result
+  Dim xx As Float
+  Dim xval As Variant
+
+  xval = modHelpVariable.GetCollectionValue($DrugAgeContra, stockid, modBasic.$AppCacheDrugRelatedProblems)
+  If xval Then
+    xx = CFloat(xval)
+  Else
+    xx = 0
+  Endif
+  If Not xx Then
+    sql = "select fldciyear from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid=&1)"
+    res = modDatabase.$medConn.Exec(sql, stockid)
+    If res.Available Then
+      If res["fldciyear"] Then
+        xx = res["fldciyear"]
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $DrugAgeContra.Add(xx, stockid)
+        Endif
+      Else
+        xx = 0
+      Endif
+    Else
+      xx = 0
+    Endif
+  Endif
+  Return xx
+
+End
+
+Private Function GetPreservativeContent(stockid As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  xx = modHelpVariable.GetCollectionValue($StockPreservIn, stockid, modBasic.$AppCacheDrugRelatedProblems)
+  If Not xx Then
+    res = modDatabase.$medConn.Exec("select fldpreservative from tblmedbrand where fldbrandid=&1", stockid)
+    If res.Available Then
+      If res["fldpreservative"] Then
+        xx = res["fldpreservative"]
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $StockPreservIn.Add(xx, stockid)
+        Endif
+      Else
+        xx = ""
+      Endif
+    Else
+      xx = ""
+    Endif
+  Endif
+  Return xx
+
+End
+
+Private Function GetInfoReferenceForCode(stockid As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim ref As String
+
+  ref = modHelpVariable.GetCollectionValue($CodeReference, stockid, modBasic.$AppCacheDrugRelatedProblems)
+  If Not ref Then
+    sql = "select fldreference from tblcode where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid=&1))"
+    res = modDatabase.$medConn.Exec(sql, stockid)
+    If res.Available Then
+      If res["fldreference"] Then
+        ref = res["fldreference"]
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeReference.Add(ref, stockid)
+        Endif
+      Else
+        ref = ""
+      Endif
+    Else
+      ref = ""
+    Endif
+  Endif
+  Return ref
+
+End
+
+Private Function GetInfoReferenceForDrug(stockid As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim ref As String
+
+  ref = modHelpVariable.GetCollectionValue($DrugReference, stockid, modBasic.$AppCacheDrugRelatedProblems)
+  If Not ref Then
+    sql = "select fldreference from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid=&1)"
+    res = modDatabase.$medConn.Exec(sql, stockid)
+    If res.Available Then
+      If res["fldreference"] Then
+        ref = res["fldreference"]
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $DrugReference.Add(ref, stockid)
+        Endif
+      Else
+        ref = ""
+      Endif
+    Else
+      ref = ""
+    Endif
+  Endif
+  Return ref
+
+End
+
+Private Function GetAllowPRN(stockid As String) As String
+
+  Dim sql As String
+  Dim res As Result
+  Dim prn As String
+
+  prn = modHelpVariable.GetCollectionValue($CodeAllowPRN, stockid, modBasic.$AppCacheDrugRelatedProblems)
+  If Not prn Then
+    sql = "select fldprn from tblcode where fldcodename in(select fldcodename from tbldrug where flddrug in(select flddrug from tblmedbrand where fldbrandid=&1))"
+    res = modDatabase.$medConn.Exec(sql, stockid)
+    If res.Available Then
+      If res["fldprn"] Then
+        prn = res["fldprn"]
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeAllowPRN.Add(prn, stockid)
+        Endif
+      Else
+        prn = "Yes"
+      Endif
+    Else
+      prn = "Yes"
+    Endif
+  Endif
+  Return prn
+
+End
+
+Private Function GetAllowTabBreak(stockid As String) As String
+
+  Dim res As Result
+  Dim xx As String
+
+  xx = modHelpVariable.GetCollectionValue($StockAllowTabBreak, stockid, modBasic.$AppCacheDrugRelatedProblems)
+  If Not xx Then
+    res = modDatabase.$medConn.Exec("select fldtabbreak from tblmedbrand where fldbrandid=&1", stockid)
+    If res.Available Then
+      If res["fldtabbreak"] Then
+        xx = res["fldtabbreak"]
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $StockAllowTabBreak.Add(xx, stockid)
+        Endif
+      Else
+        xx = "Yes"
+      Endif
+    Else
+      xx = "Yes"
+    Endif
+  Endif
+  Return xx
+
+End
+
+Private Function GetChemicalClass(txtcode As String) As String
+
+  Dim res As Result
+  Dim allergy As String
+
+  allergy = modHelpVariable.GetCollectionValue($CodeChemiClass, txtcode, modBasic.$AppCacheDrugRelatedProblems)
+  If Not allergy Then
+    res = modDatabase.$medConn.Exec("select fldchemclass from tblcode where fldcodename=&1", txtcode)
+    If res.Available Then
+      If res["fldchemclass"] Then
+        allergy = res["fldchemclass"]
+        If modBasic.$AppCacheDrugRelatedProblems = "Yes" Then
+          $CodeChemiClass.Add(allergy, txtcode)
+        Endif
+      Else
+        allergy = ""
+      Endif
+    Else
+      allergy = ""
+    Endif
+  Endif
+  Return allergy
+
+End

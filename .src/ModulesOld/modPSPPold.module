@@ -1,0 +1,1184 @@
+' Gambas module file
+
+Private $ProgressBar1 As ProgressBar
+
+Private Function FormatPSPPFile(sText As String) As String
+
+  Dim xx As String
+
+  xx = Replace(sText, "{ConfidenceInterval}", CStr(modBasic.$StatConfInterval))
+  Return xx
+
+End
+
+'Note: ------------------------------------ PSPP -----------------------------------------------
+Private Sub PSPPScript(sType As String, sFile As String) As String
+
+  Dim xx As String
+  Dim xval As Float
+
+  xx = File.Load(modHelpVariable.$psppDirectory &/ sType)
+  xx = FormatPSPPFile(xx)
+  If sType = "t-test" Then
+    xval = InputValue("Test Value", "One Sample T-Test", 0)
+    xx = Replace(xx, "{TestValue}", Format(xval, gb.Fixed))
+  Endif
+  xx = Replace(xx, "{DataList}", File.Load(sFile))
+
+  Return xx
+
+End
+
+''PSPP output
+Public Function CreatePSPPStatFIleOld(sType As String, sFile As String) As String
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+  Dim xval As String
+
+  If sFile Then
+    xPath = Temp() & ".sps"
+    xTemp = Temp()
+    sOutput = xTemp & ".html"
+    File.Save(xPath, PSPPScript(sType, sFile))
+    If System.Exist("pspp") = True Then
+      xcmd = ["pspp", xPath, "-o", sOutput]
+      modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+      Exec xcmd Wait
+    Endif
+  Endif
+
+  If sType = "frequency" Or If sType = "barplot" Then
+    xval = xTemp & "-1.png"
+  Else
+    xval = sOutput
+  Endif
+  Return xval
+
+End
+
+''univariate menu
+Public Function GetEncChartGridOld(GridView1 As GridView, encColumn As Integer) As String
+
+  Dim i As Integer
+  Dim xData As String[]
+  Dim xx As String
+  Dim xTitle As String
+  Dim sType As String
+  Dim xval As Variant
+  Dim aa As Variant
+  Dim bb As Variant
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+  Dim pprow As String
+  Dim qqrow As String
+
+  xTitle = modSettings.ShowSettingFromFIle("UnivariateAnalysis/DataType")
+  If xTitle Then
+
+    If MMain.$IsGUIApp = True Then
+      $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+      $ProgressBar1.Visible = True
+      $ProgressBar1.Value = 0
+    Endif
+    xData = New String[]
+
+    Inc Application.Busy
+    For i = 0 To GridView1.Rows.Count - 1
+      If GridView1.Rows[i].Height Then
+
+        If modCustPatient.$EncUseGridVal = "Yes" Then    ''if data input from GridView Column
+          If modCustPatient.$EncGridIndex Then  '' if data input direct from Gridview column
+            If GridView1[i, (modCustPatient.$EncGridIndex - 1)].RichText Then
+              aa = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$EncGridIndex - 1)].RichText)
+            Else
+              aa = GridView1[i, (modCustPatient.$EncGridIndex - 1)].Text
+            Endif
+            xval = aa
+
+          Else  ''if data input after SQL formating of Gridview column
+            If modCustPatient.$EncGridOptionFir <= GridView1.Columns.Count Then    ''if first option Column <=max column index
+              If GridView1[i, (modCustPatient.$EncGridOptionFir - 1)].RichText Then
+                aa = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$EncGridOptionFir - 1)].RichText)
+              Else
+                aa = GridView1[i, (modCustPatient.$EncGridOptionFir - 1)].Text
+              Endif
+              xval = modCustPatient.UnivGridValue(aa)     ''SQL formatting
+            Endif
+          Endif
+
+        Else  ''if data input from provided encounter column and using distinct encounter values
+          xval = modCustPatient.EncChartValue(GridView1[i, encColumn].Text)
+        Endif
+        bb = modCustPatient.FormatUnivariate(xval)
+        If bb = "NA" Then  ''if custom variable doesnot yield value
+          bb = ""
+        Endif
+
+        If xTitle = "Scale" Then
+          If TypeOf(bb) = gb.Float Or If TypeOf(bb) = gb.Integer Then
+            pprow = Format(bb, gb.Fixed)
+          Else If TypeOf(bb) = gb.String Then
+            If Len(bb) Then
+              If InStr(bb, modBasic.$currency) > 0 Then
+                pprow = Trim(Replace(bb, modBasic.$currency, ""))
+              Else
+                If IsNumber(bb) Then
+                  pprow = Format(bb, gb.Fixed)
+                Endif
+              Endif
+            Endif
+          Endif
+          qqrow = modCustPatient.GetLimitValueUnivar(pprow)
+          If Len(qqrow) Then
+            xData.Add(qqrow)
+          Endif
+
+        Else
+          If Len(bb) Then   ''if gridview column data is string or date or other
+            xData.Add(bb)
+          Endif
+        Endif
+
+        If MMain.$IsGUIApp = True Then
+          $ProgressBar1.Value = (i + 1) / GridView1.Rows.Count
+          Wait
+        Endif
+
+      Endif
+    Next
+
+    If xData.Count Then
+      If xTitle = "Scale" Then
+        sType = "statistics"
+      Else
+        sType = "statistics-string"
+      Endif
+      xx = File.Load(modHelpVariable.$psppDirectory &/ sType)
+      xx = FormatPSPPFile(xx)
+      xx = Replace(xx, "{DataList}", xData.Join(gb.NewLine))
+
+      xPath = Temp() & ".sps"
+      xTemp = Temp()
+      sOutput = xTemp & ".html"
+      File.Save(xPath, xx)
+      If System.Exist("pspp") = True Then
+        xcmd = ["pspp", xPath, "-o", sOutput]
+        modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+        Exec xcmd Wait
+      Endif
+    Endif
+
+    If MMain.$IsGUIApp = True Then
+      If $ProgressBar1 Then
+        $ProgressBar1.Visible = False
+      Endif
+    Endif
+    modExternal.$ExecValueColl.Clear()
+    Dec Application.Busy
+
+  Endif
+
+  Return sOutput
+
+End
+
+''crosstab menu
+Public Function GetCrssChartGridOld(GridView1 As GridView, Column As Integer) As String
+
+  Dim xx As String
+
+  If modCustPatient.$CrossIndepType = "Numerical" And If modCustPatient.$CrossOutcomeType = "Nominal" Then
+  Else If modCustPatient.$CrossIndepType = "Numerical" And If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+  Else
+    xx = CrossTabChartGrid(GridView1, Column, False)
+  Endif
+  Return xx
+
+End
+
+Public Function GetCrssTabChartOnlyOld(GridView1 As GridView, Column As Integer) As String
+
+  Dim xx As String
+
+  If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Nominal" Then
+    xx = CrossTabChartGrid(GridView1, Column, True)
+  Endif
+  Return xx
+
+End
+
+Private Function CrossTabChartGrid(GridView1 As GridView, encColumn As Integer, ChartOnly As Boolean) As String
+
+  Dim i As Integer
+  Dim xData As String[]
+  Dim xsortVar As String[]
+  Dim xx As String
+  Dim aa As Variant
+  Dim bb As Variant
+  Dim aafinal As Variant
+  Dim bbfinal As Variant
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+
+  Dim xrow As Variant
+  Dim xcol As Variant
+  Dim pprow As String
+  Dim ppcol As String
+  Dim xindep As String
+  Dim xoutdep As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  xData = New String[]
+
+  Inc Application.Busy
+  xsortVar = New String[]
+  For i = 0 To GridView1.Rows.Count - 1
+    If GridView1.Rows[i].Height Then
+
+      ''independent
+      If modCustPatient.$CrossUseGridValRow = "Yes" Then
+        If modCustPatient.$CrossGridRow Then
+          If GridView1[i, (modCustPatient.$CrossGridRow - 1)].RichText Then
+            aa = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$CrossGridRow - 1)].RichText)
+          Else
+            aa = GridView1[i, (modCustPatient.$CrossGridRow - 1)].Text
+          Endif
+          xrow = aa
+        Else
+          If modCustPatient.$CrosGridOptionFirRow <= GridView1.Columns.Count Then
+            If GridView1[i, (modCustPatient.$CrosGridOptionFirRow - 1)].RichText Then
+              aa = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$CrosGridOptionFirRow - 1)].RichText)
+            Else
+              aa = GridView1[i, (modCustPatient.$CrosGridOptionFirRow - 1)].Text
+            Endif
+            xrow = modCustPatient.CrossRowGridValue(aa)
+          Endif
+        Endif
+      Else
+        xrow = modCustPatient.CrossRowChartValue(GridView1[i, encColumn].Text)
+      Endif
+      aafinal = modCustPatient.FormatCrossRow(xrow)
+      If aafinal = "NA" Then
+        aafinal = ""
+      Endif
+
+      ''dependent variable
+      If modCustPatient.$CrossUseGridValCol = "Yes" Then
+        If modCustPatient.$CrossGridColumn Then
+          If GridView1[i, (modCustPatient.$CrossGridColumn - 1)].RichText Then
+            bb = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$CrossGridColumn - 1)].RichText)
+          Else
+            bb = GridView1[i, (modCustPatient.$CrossGridColumn - 1)].Text
+          Endif
+          xcol = bb
+        Else
+          If modCustPatient.$CrosGridOptionFirCol <= GridView1.Columns.Count Then
+            If GridView1[i, (modCustPatient.$CrosGridOptionFirCol - 1)].RichText Then
+              bb = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$CrosGridOptionFirCol - 1)].RichText)
+            Else
+              bb = GridView1[i, (modCustPatient.$CrosGridOptionFirCol - 1)].Text
+            Endif
+            xcol = modCustPatient.CrossColGridValue(bb)
+          Endif
+        Endif
+      Else
+        xcol = modCustPatient.CrossColChartValue(GridView1[i, encColumn].Text)
+      Endif
+      bbfinal = modCustPatient.FormatCrossColumn(xcol)
+      If bbfinal = "NA" Then
+        bbfinal = ""
+      Endif
+
+      ''select analysis
+      If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Nominal" Then
+        If Len(aafinal) And If Len(bbfinal) Then
+          ''for variable coding
+          If xsortVar.Count = 0 Then
+            xsortVar.Add(Quote(aafinal))
+          Else
+            If xsortVar.Exist(Quote(aafinal)) = False Then
+              xsortVar.Add(Quote(aafinal))
+            Endif
+          Endif
+          ''for data list
+          xData.Add(Quote(aafinal) & gb.Tab & Quote(bbfinal))
+        Endif
+
+      Else If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+        If Len(aafinal) And If Len(bbfinal) Then
+          ''for variable coding
+          If xsortVar.Count = 0 Then
+            xsortVar.Add(Quote(aafinal))
+          Else
+            If xsortVar.Exist(Quote(aafinal)) = False Then
+              xsortVar.Add(Quote(aafinal))
+            Endif
+          Endif
+          ''for data list
+          xData.Add(Quote(aafinal) & gb.Tab & Quote(bbfinal))
+        Endif
+
+      Else If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Scale" Then
+        If TypeOf(bbfinal) = gb.Float Or If TypeOf(bbfinal) = gb.Integer Then
+          ppcol = Format(bbfinal, gb.Fixed)
+        Else If TypeOf(bbfinal) = gb.String Then
+          If Len(bbfinal) Then
+            If InStr(bbfinal, modBasic.$currency) > 0 Then
+              ppcol = Trim(Replace(bbfinal, modBasic.$currency, ""))
+            Else
+              If IsNumber(bbfinal) Then
+                ppcol = Format(bbfinal, gb.Fixed)
+              Endif
+            Endif
+          Endif
+        Endif
+        xoutdep = modCustPatient.GetLimitCrossOutcome(ppcol)
+        If Len(aafinal) And If xoutdep Then
+          ''for variable coding
+          If xsortVar.Count = 0 Then
+            xsortVar.Add(Quote(aafinal))
+          Else
+            If xsortVar.Exist(Quote(aafinal)) = False Then
+              xsortVar.Add(Quote(aafinal))
+            Endif
+          Endif
+          ''for data list
+          xData.Add(Quote(aafinal) & gb.Tab & xoutdep)
+        Endif
+
+      Else If modCustPatient.$CrossIndepType = "Numerical" And If modCustPatient.$CrossOutcomeType = "Scale" Then
+        If TypeOf(aafinal) = gb.Float Or If TypeOf(aafinal) = gb.Integer Then
+          pprow = Format(aafinal, gb.Fixed)
+        Else If TypeOf(aafinal) = gb.String Then
+          If Len(aafinal) Then
+            If InStr(aafinal, modBasic.$currency) > 0 Then
+              pprow = Trim(Replace(aafinal, modBasic.$currency, ""))
+            Else
+              If IsNumber(aafinal) Then
+                pprow = Format(aafinal, gb.Fixed)
+              Endif
+            Endif
+          Endif
+        Endif
+        xindep = modCustPatient.GetLimitCrossIndep(pprow)
+        If TypeOf(bbfinal) = gb.Float Or If TypeOf(bbfinal) = gb.Integer Then
+          ppcol = Format(bbfinal, gb.Fixed)
+        Else If TypeOf(bbfinal) = gb.String Then
+          If Len(bbfinal) Then
+            If InStr(bbfinal, modBasic.$currency) > 0 Then
+              ppcol = Trim(Replace(bbfinal, modBasic.$currency, ""))
+            Else
+              If IsNumber(bbfinal) Then
+                ppcol = Format(bbfinal, gb.Fixed)
+              Endif
+            Endif
+          Endif
+        Endif
+        xoutdep = modCustPatient.GetLimitCrossOutcome(ppcol)
+        If xindep And If xoutdep Then
+          xData.Add(xindep & gb.Tab & xoutdep)
+        Endif
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (i + 1) / GridView1.Rows.Count
+        Wait
+      Endif
+
+    Endif
+  Next
+
+  If xData.Count Then
+    If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Nominal" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "crosstab")
+    Else If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Ordinal" Then
+      If xsortVar.Count = 2 Then
+        xx = File.Load(modHelpVariable.$psppDirectory &/ "mann-whitney")
+        xx = Replace(xx, "{var1}", CStr(1))
+        xx = Replace(xx, "{var2}", CStr(2))
+      Else
+        xx = File.Load(modHelpVariable.$psppDirectory &/ "kruskal-wallis")    ''
+        xx = Replace(xx, "{var1}", CStr(1))
+        xx = Replace(xx, "{var2}", CStr(xsortVar.Count))
+      Endif
+    Else If modCustPatient.$CrossIndepType = "String" And If modCustPatient.$CrossOutcomeType = "Scale" Then
+      If xsortVar.Count = 2 Then
+        xx = File.Load(modHelpVariable.$psppDirectory &/ "indep-t-test")
+        xx = Replace(xx, "{var1}", xsortVar[0])
+        xx = Replace(xx, "{var2}", xsortVar[1])
+      Else
+        xx = File.Load(modHelpVariable.$psppDirectory &/ "oneway-anova")
+      Endif
+
+    Else If modCustPatient.$CrossIndepType = "Numerical" And If modCustPatient.$CrossOutcomeType = "Scale" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "correlation")
+    Endif
+
+    If ChartOnly = True Then
+      xTemp = Temp()
+      File.Save(xTemp, xData.Join(gb.NewLine))
+      sOutput = xTemp
+
+    Else
+      xx = FormatPSPPFile(xx)
+      xx = Replace(xx, "{DataList}", xData.Join(gb.NewLine))
+      xPath = Temp() & ".sps"
+      xTemp = Temp()
+      sOutput = xTemp & ".html"
+      File.Save(xPath, xx)
+      If System.Exist("pspp") = True Then
+        xcmd = ["pspp", xPath, "-o", sOutput]
+        modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+        Exec xcmd Wait
+      Endif
+    Endif
+
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    If $ProgressBar1 Then
+      $ProgressBar1.Visible = False
+    Endif
+  Endif
+  modExternal.$ExecValueColl.Clear()
+  Dec Application.Busy
+
+  Return sOutput
+
+End
+
+''Regression analysis
+Public Function RegressionChartGridOld(GridView1 As GridView, encColumn As Integer) As String
+
+  Dim i As Integer
+  Dim xData As String[]
+  Dim xsortVar As String
+  Dim xx As String
+  Dim bb As Variant
+  Dim aa1 As Variant
+  Dim aa2 As Variant
+  Dim aa3 As Variant
+  Dim aa4 As Variant
+  Dim aa5 As Variant
+  Dim bbfinal As Variant
+  Dim aafinal1 As Variant
+  Dim aafinal2 As Variant
+  Dim aafinal3 As Variant
+  Dim aafinal4 As Variant
+  Dim aafinal5 As Variant
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+
+  Dim xcol As Variant
+  Dim xrow1 As Variant
+  Dim xrow2 As Variant
+  Dim xrow3 As Variant
+  Dim xrow4 As Variant
+  Dim xrow5 As Variant
+
+  Dim ppcol As String
+  Dim pprow1 As String
+  Dim pprow2 As String
+  Dim pprow3 As String
+  Dim pprow4 As String
+  Dim pprow5 As String
+  Dim xoutdep As String
+  Dim xindep1 As String
+  Dim xindep2 As String
+  Dim xindep3 As String
+  Dim xindep4 As String
+  Dim xindep5 As String
+
+  Dim xvarlst As String
+  Dim xdovar1 As Integer
+  Dim xdovar2 As Integer
+  Dim xdovar3 As Integer
+  Dim xdovar4 As Integer
+  Dim xdovar5 As Integer
+  Dim p As Integer
+  Dim coltot As Integer
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  xData = New String[]
+
+  If modCustPatient.$RegVar1UseGridVal = "Yes" Or If modCustPatient.$RegVar1Variable Or If modCustPatient.$RegVar1SQLText Then
+    xdovar1 = 1
+  Else
+    xdovar1 = 0
+  Endif
+  If modCustPatient.$RegVar2UseGridVal = "Yes" Or If modCustPatient.$RegVar2Variable Or If modCustPatient.$RegVar2SQLText Then
+    xdovar2 = 1
+  Else
+    xdovar2 = 0
+  Endif
+  If modCustPatient.$RegVar3UseGridVal = "Yes" Or If modCustPatient.$RegVar3Variable Or If modCustPatient.$RegVar3SQLText Then
+    xdovar3 = 1
+  Else
+    xdovar3 = 0
+  Endif
+  If modCustPatient.$RegVar4UseGridVal = "Yes" Or If modCustPatient.$RegVar4Variable Or If modCustPatient.$RegVar4SQLText Then
+    xdovar4 = 1
+  Else
+    xdovar4 = 0
+  Endif
+  If modCustPatient.$RegVar5UseGridVal = "Yes" Or If modCustPatient.$RegVar5Variable Or If modCustPatient.$RegVar5SQLText Then
+    xdovar5 = 1
+  Else
+    xdovar5 = 0
+  Endif
+  xvarlst = ""
+  coltot = xdovar1 + xdovar2 + xdovar3 + xdovar4 + xdovar5
+  For p = 1 To coltot
+    xvarlst = xvarlst & Space(1) & "v" & CStr(p)
+  Next
+
+  Inc Application.Busy
+  For i = 0 To GridView1.Rows.Count - 1
+    If GridView1.Rows[i].Height Then
+
+      ''dependent variable
+      If modCustPatient.$RegDepUseGridVal = "Yes" Then
+        If modCustPatient.$RegDepGrid Then
+          If GridView1[i, (modCustPatient.$RegDepGrid - 1)].RichText Then
+            bb = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegDepGrid - 1)].RichText)
+          Else
+            bb = GridView1[i, (modCustPatient.$RegDepGrid - 1)].Text
+          Endif
+          xcol = bb
+        Else
+          If modCustPatient.$RegDepGridOptionFir <= GridView1.Columns.Count Then
+            If GridView1[i, (modCustPatient.$RegDepGridOptionFir - 1)].RichText Then
+              bb = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegDepGridOptionFir - 1)].RichText)
+            Else
+              bb = GridView1[i, (modCustPatient.$RegDepGridOptionFir - 1)].Text
+            Endif
+            xcol = modCustPatient.GridValueDepRegression(bb)
+          Endif
+        Endif
+      Else
+        xcol = modCustPatient.EncValueDepRegression(GridView1[i, encColumn].Text)
+      Endif
+      bbfinal = modCustPatient.FormatDepRegression(xcol)
+      If bbfinal = "NA" Then
+        bbfinal = ""
+      Endif
+
+      If TypeOf(bbfinal) = gb.Float Or If TypeOf(bbfinal) = gb.Integer Then
+        ppcol = Format(bbfinal, gb.Fixed)
+      Else If TypeOf(bbfinal) = gb.String Then
+        If Len(bbfinal) Then
+          If InStr(bbfinal, modBasic.$currency) > 0 Then
+            ppcol = Trim(Replace(bbfinal, modBasic.$currency, ""))
+          Else
+            If IsNumber(bbfinal) Then
+              ppcol = Format(bbfinal, gb.Fixed)
+            Endif
+          Endif
+        Endif
+      Endif
+      xoutdep = modCustPatient.GetLimitDepRegression(ppcol)
+      xsortVar = xoutdep
+
+      ''independent var1
+      If xdovar1 = 1 Then
+        If modCustPatient.$RegVar1UseGridVal = "Yes" Then
+          If modCustPatient.$RegVar1Grid Then
+            If GridView1[i, (modCustPatient.$RegVar1Grid - 1)].RichText Then
+              aa1 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar1Grid - 1)].RichText)
+            Else
+              aa1 = GridView1[i, (modCustPatient.$RegVar1Grid - 1)].Text
+            Endif
+            xrow1 = aa1
+          Else
+            If modCustPatient.$RegVar1GridOptionFir <= GridView1.Columns.Count Then
+              If GridView1[i, (modCustPatient.$RegVar1GridOptionFir - 1)].RichText Then
+                aa1 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar1GridOptionFir - 1)].RichText)
+              Else
+                aa1 = GridView1[i, (modCustPatient.$RegVar1GridOptionFir - 1)].Text
+              Endif
+              xrow1 = modCustPatient.GridValueVar1Regression(aa1)
+            Endif
+          Endif
+        Else
+          xrow1 = modCustPatient.EncValueVar1Regression(GridView1[i, encColumn].Text)
+        Endif
+        aafinal1 = modCustPatient.FormatVar1Regression(xrow1)
+        If aafinal1 = "NA" Then
+          aafinal1 = ""
+        Endif
+
+        If aafinal1 Then
+          If TypeOf(aafinal1) = gb.Float Or If TypeOf(aafinal1) = gb.Integer Then
+            pprow1 = Format(aafinal1, gb.Fixed)
+          Else If TypeOf(aafinal1) = gb.String Then
+            If Len(aafinal1) Then
+              If InStr(aafinal1, modBasic.$currency) > 0 Then
+                pprow1 = Trim(Replace(aafinal1, modBasic.$currency, ""))
+              Else
+                If IsNumber(aafinal1) Then
+                  pprow1 = Format(aafinal1, gb.Fixed)
+                Endif
+              Endif
+            Endif
+          Endif
+          xindep1 = modCustPatient.GetLimitVar1Regression(pprow1)
+        Else
+          xindep1 = ""
+        Endif
+        xsortVar = xsortVar & gb.Tab & xindep1
+      Endif
+
+      ''independent var2
+      If xdovar2 = 1 Then
+        If modCustPatient.$RegVar2UseGridVal = "Yes" Then
+          If modCustPatient.$RegVar2Grid Then
+            If GridView1[i, (modCustPatient.$RegVar2Grid - 1)].RichText Then
+              aa2 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar2Grid - 1)].RichText)
+            Else
+              aa2 = GridView1[i, (modCustPatient.$RegVar2Grid - 1)].Text
+            Endif
+            xrow2 = aa2
+          Else
+            If modCustPatient.$RegVar2GridOptionFir <= GridView1.Columns.Count Then
+              If GridView1[i, (modCustPatient.$RegVar2GridOptionFir - 1)].RichText Then
+                aa2 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar2GridOptionFir - 1)].RichText)
+              Else
+                aa2 = GridView1[i, (modCustPatient.$RegVar2GridOptionFir - 1)].Text
+              Endif
+              xrow2 = modCustPatient.GridValueVar2Regression(aa2)
+            Endif
+          Endif
+        Else
+          xrow2 = modCustPatient.EncValueVar2Regression(GridView1[i, encColumn].Text)
+        Endif
+        aafinal2 = modCustPatient.FormatVar2Regression(xrow2)
+        If aafinal2 = "NA" Then
+          aafinal2 = ""
+        Endif
+
+        If aafinal2 Then
+          If TypeOf(aafinal2) = gb.Float Or If TypeOf(aafinal2) = gb.Integer Then
+            pprow2 = Format(aafinal2, gb.Fixed)
+          Else If TypeOf(aafinal2) = gb.String Then
+            If Len(aafinal2) Then
+              If InStr(aafinal2, modBasic.$currency) > 0 Then
+                pprow2 = Trim(Replace(aafinal2, modBasic.$currency, ""))
+              Else
+                If IsNumber(aafinal2) Then
+                  pprow2 = Format(aafinal2, gb.Fixed)
+                Endif
+              Endif
+            Endif
+          Endif
+          xindep2 = modCustPatient.GetLimitVar2Regression(pprow2)
+        Else
+          xindep2 = ""
+        Endif
+        xsortVar = xsortVar & gb.Tab & xindep2
+      Endif
+
+      ''independent var3
+      If xdovar3 = 1 Then
+        If modCustPatient.$RegVar3UseGridVal = "Yes" Then
+          If modCustPatient.$RegVar3Grid Then
+            If GridView1[i, (modCustPatient.$RegVar3Grid - 1)].RichText Then
+              aa3 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar3Grid - 1)].RichText)
+            Else
+              aa3 = GridView1[i, (modCustPatient.$RegVar3Grid - 1)].Text
+            Endif
+            xrow3 = aa3
+          Else
+            If modCustPatient.$RegVar3GridOptionFir <= GridView1.Columns.Count Then
+              If GridView1[i, (modCustPatient.$RegVar3GridOptionFir - 1)].RichText Then
+                aa3 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar3GridOptionFir - 1)].RichText)
+              Else
+                aa3 = GridView1[i, (modCustPatient.$RegVar3GridOptionFir - 1)].Text
+              Endif
+              xrow3 = modCustPatient.GridValueVar3Regression(aa3)
+            Endif
+          Endif
+        Else
+          xrow3 = modCustPatient.EncValueVar3Regression(GridView1[i, encColumn].Text)
+        Endif
+        aafinal3 = modCustPatient.FormatVar3Regression(xrow3)
+        If aafinal3 = "NA" Then
+          aafinal3 = ""
+        Endif
+
+        If aafinal3 Then
+          If TypeOf(aafinal3) = gb.Float Or If TypeOf(aafinal3) = gb.Integer Then
+            pprow3 = Format(aafinal3, gb.Fixed)
+          Else If TypeOf(aafinal3) = gb.String Then
+            If Len(aafinal3) Then
+              If InStr(aafinal3, modBasic.$currency) > 0 Then
+                pprow3 = Trim(Replace(aafinal3, modBasic.$currency, ""))
+              Else
+                If IsNumber(aafinal3) Then
+                  pprow3 = Format(aafinal3, gb.Fixed)
+                Endif
+              Endif
+            Endif
+          Endif
+          xindep3 = modCustPatient.GetLimitVar3Regression(pprow3)
+        Else
+          xindep3 = ""
+        Endif
+        xsortVar = xsortVar & gb.Tab & xindep3
+      Endif
+
+      ''independent var4
+      If xdovar4 = 1 Then
+        If modCustPatient.$RegVar4UseGridVal = "Yes" Then
+          If modCustPatient.$RegVar4Grid Then
+            If GridView1[i, (modCustPatient.$RegVar4Grid - 1)].RichText Then
+              aa4 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar4Grid - 1)].RichText)
+            Else
+              aa4 = GridView1[i, (modCustPatient.$RegVar4Grid - 1)].Text
+            Endif
+            xrow4 = aa4
+          Else
+            If modCustPatient.$RegVar4GridOptionFir <= GridView1.Columns.Count Then
+              If GridView1[i, (modCustPatient.$RegVar4GridOptionFir - 1)].RichText Then
+                aa4 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar4GridOptionFir - 1)].RichText)
+              Else
+                aa4 = GridView1[i, (modCustPatient.$RegVar4GridOptionFir - 1)].Text
+              Endif
+              xrow4 = modCustPatient.GridValueVar4Regression(aa4)
+            Endif
+          Endif
+        Else
+          xrow4 = modCustPatient.EncValueVar4Regression(GridView1[i, encColumn].Text)
+        Endif
+        aafinal4 = modCustPatient.FormatVar4Regression(xrow4)
+        If aafinal4 = "NA" Then
+          aafinal4 = ""
+        Endif
+
+        If aafinal4 Then
+          If TypeOf(aafinal4) = gb.Float Or If TypeOf(aafinal4) = gb.Integer Then
+            pprow4 = Format(aafinal4, gb.Fixed)
+          Else If TypeOf(aafinal4) = gb.String Then
+            If Len(aafinal4) Then
+              If InStr(aafinal4, modBasic.$currency) > 0 Then
+                pprow4 = Trim(Replace(aafinal4, modBasic.$currency, ""))
+              Else
+                If IsNumber(aafinal4) Then
+                  pprow4 = Format(aafinal4, gb.Fixed)
+                Endif
+              Endif
+            Endif
+          Endif
+          xindep4 = modCustPatient.GetLimitVar4Regression(pprow4)
+        Else
+          xindep4 = ""
+        Endif
+        xsortVar = xsortVar & gb.Tab & xindep4
+      Endif
+
+      ''independent var5
+      If xdovar5 = 1 Then
+        If modCustPatient.$RegVar5UseGridVal = "Yes" Then
+          If modCustPatient.$RegVar5Grid Then
+            If GridView1[i, (modCustPatient.$RegVar5Grid - 1)].RichText Then
+              aa5 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar5Grid - 1)].RichText)
+            Else
+              aa5 = GridView1[i, (modCustPatient.$RegVar5Grid - 1)].Text
+            Endif
+            xrow5 = aa5
+          Else
+            If modCustPatient.$RegVar5GridOptionFir <= GridView1.Columns.Count Then
+              If GridView1[i, (modCustPatient.$RegVar5GridOptionFir - 1)].RichText Then
+                aa5 = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$RegVar5GridOptionFir - 1)].RichText)
+              Else
+                aa5 = GridView1[i, (modCustPatient.$RegVar5GridOptionFir - 1)].Text
+              Endif
+              xrow5 = modCustPatient.GridValueVar5Regression(aa5)
+            Endif
+          Endif
+        Else
+          xrow5 = modCustPatient.EncValueVar5Regression(GridView1[i, encColumn].Text)
+        Endif
+        aafinal5 = modCustPatient.FormatVar5Regression(xrow5)
+        If aafinal5 = "NA" Then
+          aafinal5 = ""
+        Endif
+
+        If aafinal5 Then
+          If TypeOf(aafinal5) = gb.Float Or If TypeOf(aafinal5) = gb.Integer Then
+            pprow5 = Format(aafinal5, gb.Fixed)
+          Else If TypeOf(aafinal5) = gb.String Then
+            If Len(aafinal5) Then
+              If InStr(aafinal5, modBasic.$currency) > 0 Then
+                pprow5 = Trim(Replace(aafinal5, modBasic.$currency, ""))
+              Else
+                If IsNumber(aafinal5) Then
+                  pprow5 = Format(aafinal5, gb.Fixed)
+                Endif
+              Endif
+            Endif
+          Endif
+          xindep5 = modCustPatient.GetLimitVar5Regression(pprow5)
+        Else
+          xindep5 = ""
+        Endif
+        xsortVar = xsortVar & gb.Tab & xindep5
+      Endif
+
+      If xoutdep Then
+        xData.Add(xsortVar)
+      Endif
+      xsortVar = ""
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (i + 1) / GridView1.Rows.Count
+        Wait
+      Endif
+
+    Endif
+  Next
+
+  If xData.Count Then
+    xx = File.Load(modHelpVariable.$psppDirectory &/ "regression")
+    xx = FormatPSPPFile(xx)
+    xx = Replace(xx, "{VarCount}", "v" & CStr(coltot))
+    xx = Replace(xx, "{DataList}", xData.Join(gb.NewLine))
+    xx = Replace(xx, "{VarList}", xvarlst)
+
+    xPath = Temp() & ".sps"
+    xTemp = Temp()
+    sOutput = xTemp & ".html"
+    File.Save(xPath, xx)
+    If System.Exist("pspp") = True Then
+      xcmd = ["pspp", xPath, "-o", sOutput]
+      modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+      Exec xcmd Wait
+    Endif
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    If $ProgressBar1 Then
+      $ProgressBar1.Visible = False
+    Endif
+  Endif
+  modExternal.$ExecValueColl.Clear()
+  Dec Application.Busy
+
+  Return sOutput
+
+End
+
+''Timeseries menu
+Public Function GetTimeChartGridOld(GridView1 As GridView, Column As Integer) As String
+
+  Dim xx As String
+
+  If modCustPatient.$TimeIndepType = modCustPatient.$TimeOutcomeType Then
+    xx = TimeSeriesChartGrid(GridView1, Column, False)
+  Endif
+  Return xx
+
+End
+
+Private Function TimeSeriesChartGrid(GridView1 As GridView, encColumn As Integer, ChartOnly As Boolean) As String
+
+  Dim i As Integer
+  Dim xData As String[]
+  Dim xx As String
+  Dim aa As Variant
+  Dim bb As Variant
+  Dim aafinal As Variant
+  Dim bbfinal As Variant
+
+  Dim sOutput As String
+  Dim xPath As String
+  Dim xcmd As String[]
+  Dim xTemp As String
+
+  Dim xrow As Variant
+  Dim xcol As Variant
+  Dim pprow As String
+  Dim ppcol As String
+  Dim xindep As String
+  Dim xoutdep As String
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+  xData = New String[]
+
+  Inc Application.Busy
+  For i = 0 To GridView1.Rows.Count - 1
+    If GridView1.Rows[i].Height Then
+
+      ''independent
+      If modCustPatient.$TimeUseGridValRow = "Yes" Then
+        If modCustPatient.$TimeGridRow Then
+          If GridView1[i, (modCustPatient.$TimeGridRow - 1)].RichText Then
+            aa = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$TimeGridRow - 1)].RichText)
+          Else
+            aa = GridView1[i, (modCustPatient.$TimeGridRow - 1)].Text
+          Endif
+          xrow = aa
+        Else
+          If modCustPatient.$TimeGridOptionFirRow <= GridView1.Columns.Count Then
+            If GridView1[i, (modCustPatient.$TimeGridOptionFirRow - 1)].RichText Then
+              aa = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$TimeGridOptionFirRow - 1)].RichText)
+            Else
+              aa = GridView1[i, (modCustPatient.$TimeGridOptionFirRow - 1)].Text
+            Endif
+            xrow = modCustPatient.TimeRowGridValue(aa)
+          Endif
+        Endif
+      Else
+        xrow = modCustPatient.TimeRowChartValue(GridView1[i, encColumn].Text)
+      Endif
+      aafinal = modCustPatient.FormatTimeRow(xrow)
+      If aafinal = "NA" Then
+        aafinal = ""
+      Endif
+
+      ''dependent variable
+      If modCustPatient.$TimeUseGridValCol = "Yes" Then
+        If modCustPatient.$TimeGridColumn Then
+          If GridView1[i, (modCustPatient.$TimeGridColumn - 1)].RichText Then
+            bb = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$TimeGridColumn - 1)].RichText)
+          Else
+            bb = GridView1[i, (modCustPatient.$TimeGridColumn - 1)].Text
+          Endif
+          xcol = bb
+        Else
+          If modCustPatient.$TimeGridOptionFirCol <= GridView1.Columns.Count Then
+            If GridView1[i, (modCustPatient.$TimeGridOptionFirCol - 1)].RichText Then
+              bb = modString.ConvertRichTextToPlain(GridView1[i, (modCustPatient.$TimeGridOptionFirCol - 1)].RichText)
+            Else
+              bb = GridView1[i, (modCustPatient.$TimeGridOptionFirCol - 1)].Text
+            Endif
+            xcol = modCustPatient.TimeColGridValue(bb)
+          Endif
+        Endif
+      Else
+        xcol = modCustPatient.TimeColChartValue(GridView1[i, encColumn].Text)
+      Endif
+      bbfinal = modCustPatient.FormatTimeColumn(xcol)
+      If bbfinal = "NA" Then
+        bbfinal = ""
+      Endif
+
+      ''select analysis
+      If modCustPatient.$TimeIndepType = "Nominal" And If modCustPatient.$TimeOutcomeType = "Nominal" Then
+        If Len(aafinal) And If Len(bbfinal) Then
+          xData.Add(Quote(aafinal) & gb.Tab & Quote(bbfinal))
+        Endif
+
+      Else If modCustPatient.$TimeIndepType = "Ordinal" And If modCustPatient.$TimeOutcomeType = "Ordinal" Then
+        If Len(aafinal) And If Len(bbfinal) Then
+          xData.Add(Quote(aafinal) & gb.Tab & Quote(bbfinal))
+        Endif
+
+      Else If modCustPatient.$TimeIndepType = "Scale" And If modCustPatient.$TimeOutcomeType = "Scale" Then
+        If TypeOf(aafinal) = gb.Float Or If TypeOf(aafinal) = gb.Integer Then
+          pprow = Format(aafinal, gb.Fixed)
+        Endif
+        xindep = modCustPatient.GetLimitTimeIndep(pprow)
+        If TypeOf(bbfinal) = gb.Float Or If TypeOf(bbfinal) = gb.Integer Then
+          ppcol = Format(bbfinal, gb.Fixed)
+        Endif
+        xoutdep = modCustPatient.GetLimitTimeOutcome(ppcol)
+        If xindep And If xoutdep Then
+          xData.Add(xindep & gb.Tab & xoutdep)
+        Endif
+      Endif
+
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (i + 1) / GridView1.Rows.Count
+        Wait
+      Endif
+
+    Endif
+  Next
+
+  If xData.Count Then
+    If modCustPatient.$TimeIndepType = "Nominal" And If modCustPatient.$TimeOutcomeType = "Nominal" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "mcnemar")
+    Else If modCustPatient.$TimeIndepType = "Ordinal" And If modCustPatient.$TimeOutcomeType = "Ordinal" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "wilcoxon")
+    Else If modCustPatient.$TimeIndepType = "Scale" And If modCustPatient.$TimeOutcomeType = "Scale" Then
+      xx = File.Load(modHelpVariable.$psppDirectory &/ "paired-t-test")
+    Endif
+
+    If ChartOnly = True Then
+      xTemp = Temp()
+      File.Save(xTemp, xData.Join(gb.NewLine))
+      sOutput = xTemp
+
+    Else
+      xx = FormatPSPPFile(xx)
+      xx = Replace(xx, "{DataList}", xData.Join(gb.NewLine))
+      xPath = Temp() & ".sps"
+      xTemp = Temp()
+      sOutput = xTemp & ".html"
+      File.Save(xPath, xx)
+      If System.Exist("pspp") = True Then
+        xcmd = ["pspp", xPath, "-o", sOutput]
+        modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+        Exec xcmd Wait
+      Endif
+    Endif
+
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    If $ProgressBar1 Then
+      $ProgressBar1.Visible = False
+    Endif
+  Endif
+  modExternal.$ExecValueColl.Clear()
+  Dec Application.Busy
+
+  Return sOutput
+
+End
+
+''Selected Tests
+Public Function GridPSPPTestReportOld(GridView1 As GridView, sArgs As Variant[]) As String
+
+  Dim indep As Integer
+  Dim dep As Integer
+  Dim testname As String
+
+  Dim xData As String[]
+  Dim Row As Integer
+  Dim tempFile As String
+  Dim sOutput As String
+  Dim xcmd As String[]
+  Dim xx As String
+  Dim aa As String
+  Dim bb As String
+
+  Dim xindep As String
+  Dim xdep As String
+  Dim xdisvar As String[]
+  Dim xsortVar As String[]
+
+  If MMain.$IsGUIApp = True Then
+    $ProgressBar1 = modHelpVariable.FindWorkProgressBar(modHelpVariable.$LogInCategory)
+    $ProgressBar1.Visible = True
+    $ProgressBar1.Value = 0
+  Endif
+
+  indep = sArgs[1] - 1
+  dep = sArgs[2] - 1
+  xData = New String[]
+
+  If sArgs[0] = "Chi Square Test" Then
+    testname = "crosstab"
+  Else If sArgs[0] = "Kruskal Wallis H Test" Then
+  Else If sArgs[0] = "Mann Whitney U Test" Then
+  Else If sArgs[0] = "Independent Sample T Test" Then
+    testname = "indep-t-test"
+    xdisvar = New String[]
+  Else If sArgs[0] = "One Way Anova" Then
+    testname = "oneway-anova"
+  Else If sArgs[0] = "Bivariate Correlation" Then
+    testname = "correlation"
+  Endif
+
+  For Row = 0 To GridView1.Rows.Count - 1
+    If GridView1.Rows[Row].Height Then
+
+      If GridView1[Row, indep].RichText Then
+        aa = modString.ConvertRichTextToPlain(GridView1[Row, indep].RichText)
+      Else
+        aa = GridView1[Row, indep].Text
+      Endif
+      If GridView1[Row, dep].RichText Then
+        bb = modString.ConvertRichTextToPlain(GridView1[Row, dep].RichText)
+      Else
+        bb = GridView1[Row, dep].Text
+      Endif
+
+      aa = Trim(aa)
+      bb = Trim(bb)
+      If aa And If bb Then
+
+        If IsNumber(aa) Then
+          xindep = Format(aa, gb.Fixed)
+        Else
+          xindep = Quote(aa)
+        Endif
+
+        If IsNumber(bb) Then
+          xdep = Format(bb, gb.Fixed)
+        Else
+          xdep = Quote(bb)
+        Endif
+
+        xData.Add(xindep & gb.Tab & xdep)
+        If sArgs[0] = "Independent Sample T Test" Then
+          If GridView1[Row, indep].Text Then
+            xdisvar.Add(aa)
+          Endif
+        Endif
+
+      Endif
+      If MMain.$IsGUIApp = True Then
+        $ProgressBar1.Value = (Row + 1) / GridView1.Rows.Count
+        Wait
+      Endif
+
+    Endif
+  Next
+
+  tempFile = Temp() & ".sps"
+  sOutput = Temp() & ".html"
+
+  xx = File.Load(modHelpVariable.$psppDirectory &/ testname)
+  xx = FormatPSPPFile(xx)
+  If sArgs[0] = "Independent Sample T Test" Then
+    xsortVar = modString.BinaryDistinctStringArray(xdisvar)
+    If xsortVar.Count = 2 Then
+      xx = Replace(xx, "{var1}", xsortVar[0])
+      xx = Replace(xx, "{var2}", xsortVar[1])
+    Endif
+  Endif
+  xx = Replace(xx, "{DataList}", xData.Join(gb.NewLine))
+  File.Save(tempFile, xx)
+
+  If System.Exist("pspp") = True Then
+    xcmd = ["pspp", tempFile, "-o", sOutput]
+    modBasic.DebugString("Execute " & xcmd.Join(Space(1)))
+    Exec xcmd Wait
+  Endif
+
+  If MMain.$IsGUIApp = True Then
+    If $ProgressBar1 Then
+      $ProgressBar1.Visible = False
+    Endif
+  Endif
+  modExternal.$ExecValueColl.Clear()
+
+  Return sOutput
+
+End

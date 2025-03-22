@@ -1,0 +1,409 @@
+' Gambas class file
+
+Private $encid As String
+Private $BillMode As String
+Private $sPackage As String
+Private $rData As Result
+Private $aMyFields As String[]
+Private $ProcList As String[]
+
+Public Sub _new(encid As String, DiscType As String)
+
+  $encid = encid
+  $sPackage = DiscType
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  $BillMode = modNonMedical.GetDiscBindBillMode($sPackage)
+  If Not $BillMode Then
+    $BillMode = modpatient.GetPatBillingMode($encid)
+  Endif
+
+  $ProcList = New String[]
+  dtplan.Value = Now()
+
+  btnrefer.Tag = modBillings.GetReferralUserSetting("Procedure", $encid)
+  If btnrefer.Tag Then
+    btnrefer.Text = modGeneral.GetUserFullName(btnrefer.Tag)
+  Endif
+  If modBasic.$ReferralLockEntry = "Yes" Then
+    btnrefer.Enabled = False
+  Endif
+  SHowSavedGrid()
+  txtsearch.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Insert Then
+    btnselect_Click()
+  Else If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub TabPanel1_Click()
+
+  If TabPanel1.Index = 0 Then
+    SHowSavedGrid()
+  Else If TabPanel1.Index = 1 Then
+    FillLabCOlumnView()
+    modFillContainer.FillListViewFromArray(ListView1, $ProcList)
+    lstletter.List = modString.GetFirstLetterArray($ProcList)
+    ShowGrid()
+  Else If TabPanel1.Index = 2 Then
+    cmbtestnam.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select distinct(flditem) as col from tblpatgeneral where fldencounterval=&1 and fldinput=&2", $encid, "Extra Procedures"))
+  Endif
+
+End
+
+Public Sub btnrefer_Click()
+
+  Dim xMedUser As String[]
+
+  xMedUser = MedicalSelectedValue(("Select Referral User"), modBasic.$ReferUserList)
+  If xMedUser And If xMedUser.Count Then
+    btnrefer.Tag = xMedUser[0]
+    btnrefer.Text = xMedUser[1]
+  Else
+    btnrefer.Tag = ""
+    btnrefer.Text = ""
+  Endif
+
+End
+
+Public Sub btnrefer_Change()
+
+  If btnrefer.Text = "" Then
+    btnrefer.Tag = ""
+  Endif
+
+End
+
+''------------------------------------- Listview -----------------------------------
+Public Sub txtsearch_KeyRelease()
+
+  If Key.Code = Key.Down Then
+    ListView1.SetFocus
+  Endif
+
+End
+
+Public Sub txtsearch_Change()
+
+  modFillContainer.FillListViewFromArray(ListView1, modString.SelectStringArrayToText(txtsearch.Text, $ProcList, chkleftmain.Value))
+
+End
+
+Public Sub txtsearch_Click()
+
+  txtsearch.Text = ""
+
+End
+
+Public Sub lstletter_Click()
+
+  txtsearch.Text = lstletter.Text
+
+End
+
+Private Sub FillLabCOlumnView()
+
+  Dim sstr1 As String
+  Dim res As Result
+  Dim xxx As String[]
+
+  If Not $ProcList.Count Then
+    sstr1 = "select distinct(fldgroupname) as col from tblgroupproc where fldgroupname in(select flditemname from tblservicecost where (fldgroup=&1 or fldgroup=&2) and fldstatus=&3)"                                                   ''
+    res = modDatabase.$myConn.Exec(sstr1, $BillMode, "%", "Active")
+    xxx = modControlSub.GetDirectFillresult(res)
+    If xxx Then
+      $ProcList = xxx
+    Endif
+  Endif
+
+End
+
+Public Sub ListView1_Click()
+
+  modFillContainer.ShowCheckedListView(ListView1)
+
+End
+
+Public Sub ListView1_KeyRelease()
+
+  If Key.Code = Key.Space Then
+    ListView1_Click()
+  Endif
+
+End
+
+Public Sub btnselect_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnselect_Click()
+  Endif
+
+End
+
+Public Sub btnselect_Click()
+
+  Dim i As Integer
+  Dim xauto As String
+
+  Dim xrefer As String
+  Dim xpayble As String
+
+  If btnrefer.Tag Then
+    xrefer = btnrefer.Tag
+  Else
+    xrefer = modBillings.GetReferralUserSetting("Procedure", $encid)
+  Endif
+  xpayble = modBillings.GetPayableUserSetting("Procedure", $encid)
+
+  xauto = modBasic.$AutoBillProcedure
+  If xauto = "Yes" Or If xauto = "Full" Or If xauto = "Partial" Then
+    Inc Application.Busy
+    For i = 1 To ListView1.Count
+      If ListView1[CStr(i)].Picture = Picture["icons/checked.png"] Then     '
+        modBillings.GetAutoBillingEntry($encid, $sPackage, "Procedure", ListView1[CStr(i)].Text, 1, "Punched", 0, False, False, xpayble, xrefer, "Extra")
+        ListView1[CStr(i)].Picture = Picture["icons/unchecked.png"]
+      Endif
+    Next
+    Dec Application.Busy
+    ShowGrid()
+    txtsearch.Text = ""
+    txtsearch.SetFocus
+  Endif
+
+End
+
+''--------------------------------------------------- Gridview -------------------------------------------
+Private Sub ShowGrid()
+
+  Dim sql As String
+  Dim res As Result
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  sql = "select fldid,fldordtime,flditemname,fldstatus,fldreason,fldtarget from tblpatbilling where fldencounterval=&1 and flditemtype=&2 and fldtarget=&3 and fldsave=&4"
+  res = modDatabase.$myConn.Exec(sql, $encid, "Procedures", "Extra", False)
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res[fld.Name], gb.GeneralDate)
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView1.Row = 0
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+    .Columns[5].Width = 1
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Procedure"
+    .Columns[3].Text = "Status"
+  End With
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res As Result
+  Dim xauto As String
+
+  Dim xdat As Date
+  Dim xx As String
+  Dim xList As String[]
+  Dim i As Integer
+
+  xauto = modBasic.$AutoBillProcedure
+  If xauto = "Yes" Or If xauto = "Full" Then
+    res = modDatabase.$myConn.Edit("tblpatbilling", "fldencounterval=&1 and flditemtype=&2 and fldtarget=&3 and fldsave=&4 and fldstatus=&5", $encid, "Procedures", "Extra", False, "Punched")                 ''
+    Inc Application.Busy
+    modDatabase.$myConn.Begin
+    For Each res
+
+      If chkaddcompo.Value = True Then
+        If res!fldsample = "Waiting" Then
+          xdat = dtplan.Value
+          If xdat Then
+            xList = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldprocname as col from tblgroupproc where fldgroupname=&1", res!flditemname))
+            For Each xx In xList
+              For i = 1 To (res!flditemqty - res!fldretqty)
+                modPatientGeneral.AddProcedureData(res!fldencounterval, res["fldid"], "Extra Procedures", xx, "Planned", res!fldbillingmode, xdat, "Cleared", "")
+              Next
+            Next
+            res["fldsample"] = "Sampled"
+          Endif
+        Endif
+      Endif
+
+      res["fldstatus"] = "Done"
+      res["fldsave"] = True
+      res["flduserid"] = modBasic.$lbluser
+      res["fldtime"] = Now()
+      res["fldcomp"] = modBasic.$compID
+      res["xyz"] = False
+      res.Update()
+    Next
+    modDatabase.$myConn.Commit
+    Dec Application.Busy
+    ShowGrid()
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub mnucomment_Click()
+
+  Dim xx As String
+  Dim res As Result
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xx = GetTextArea(GridView1[GridView1.Row, 2].Text, GridView1[GridView1.Row, 4].Text)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldreason"] = xx
+      res["xyz"] = False
+      res.Update
+      ShowGrid()
+    Endif
+  Endif
+
+End
+
+Public Sub mnudel_Click()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    modDatabase.$myConn.Delete("tblpatbilling", "fldid=&1 and fldsave=&2", GridView1[GridView1.Row, 0].Text, False)
+    ShowGrid()
+  Endif
+
+End
+
+''----------------------------------- Billed but not reported ------------------------------------
+Private Sub SHowSavedGrid()
+
+  Dim sql As String
+
+  sql = "select fldid,fldtime,flditemname,fldrefer,fldtarget from tblpatbilling where fldencounterval=&1 and flditemtype=&2 and fldtarget=&3 and fldsave=&4 and (fldstatus=&5 or fldstatus=&6)"
+  $rData = modDatabase.$myConn.Exec(sql, $encid, "Procedures", "Extra", True, "Done", "Cleared")
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView2, $rData, $aMyFields)
+
+  With GridView2
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Procedure"
+    .Columns[3].Text = "ReferBy"
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+  If Column = 1 Then
+    GridView2.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else If Column = 3 Then
+    GridView2.Data.Text = modGeneral.GetUserFullName($rData[$aMyFields[Column]])
+  Else
+    GridView2.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub txtsearch_KeyPress()
+
+  modGeneralMain.InputTextSearchKeyOnly()
+
+End
+
+''------------------------------------- Reported -------------------------------------
+Public Sub FillLabtable()
+
+  Dim sql As String
+  Dim xx As String
+
+  If cmbtestnam.Text Then
+    xx = cmbtestnam.Text
+  Else
+    xx = "%"
+  Endif
+  sql = "select fldid,flditem,fldreportquali,fldnewdate,fldstatus,flddetail from tblpatgeneral where fldencounterval=&1 and flditem like &2 and fldinput=&3 and (fldreportquali like &4 or fldreportquali like &5)"
+  $rData = modDatabase.$myConn.Exec(sql, $encid, xx, "Extra Procedures", "Planned", "Done")
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(TableView1, $rData, $aMyFields)
+  With TableView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 25
+    .Columns[5].Width = 300 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Procedure"
+    .Columns[2].Text = "Status"
+    .Columns[3].Text = "Date"
+    .Columns[5].Text = "Description"
+  End With
+
+End
+
+Public Sub TableView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(TableView1, Row)
+  If Column = 3 Then
+    TableView1.Data.Text = modReportVar.GetDateTimeReport($rData["fldnewdate"], gb.GeneralDate)
+  Else
+    TableView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  FillLabtable()
+
+End

@@ -1,0 +1,320 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $strType As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  If MMain.$WebReport = "Multiple" Then
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      pnlocat.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+  Else
+    pnlocat.Visible = False
+    Label3.Visible = False
+    txtamt.Visible = False
+  Endif
+  cmbmonth.List = ["1 Month", "2 Month", "3 Month", "6 Month", "9 Month", "12 Month", "15 Month"]
+  rbgeneric.Value = True
+  rbmed.Value = True
+  $strType = "Medicines"
+  If MMain.$WebReport = "Multiple" Then
+    cmbroute.Enabled = False
+  Else
+    cmbroute.List = ["%", "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"]
+  Endif
+  rbany.Value = True
+  chkcurrent.Value = True
+  cmbroute.Text = "%"
+
+  Select modHelpVariable.$LogInCategory
+    Case "Dispensar"
+      cmblocat.Text = modBasic.$compID
+      cmblocat.Enabled = False
+    Case "Purchase", "Store", "Pharmacist"
+      If modBasic.$ViewLockInventory = "Location" Then
+        cmblocat.Text = modBasic.$compID
+        cmblocat.Enabled = False
+      Else
+        cmblocat.List = modBasic.$AllCompPerList
+        cmblocat.Text = "%"
+      Endif
+    Case Else
+      cmblocat.List = modBasic.$AllCompPerList
+      cmblocat.Text = "%"
+  End Select
+  txtname.SetFocus
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub cmblocation_Click()
+
+  cmbvalue.Clear()
+  If cmblocation.Text Then
+    cmbvalue.List = modDataRepo.GetRepoValueListType(cmblocation.Text)
+  Endif
+
+End
+
+Private Sub GetTotalValue()
+
+  Dim xtot As Float
+
+  xtot = 0
+  If MMain.$WebReport = "Multiple" Then
+    For Each $rData
+      If $rData["xsell"] And If $rData["qty"] Then
+        xtot = xtot + $rData["xsell"] * $rData["qty"]
+      Endif
+    Next
+  Endif
+  txtamt.Value = Round(xtot, -2)
+
+End
+
+'NOTE:TWO CON
+Private Sub ShowStockGrid()
+
+  Dim xstr As String
+  Dim xorder As String
+  Dim xstate As String
+  Dim xnear As Integer
+  Dim xsearch As String
+  Dim xroute As String
+  Dim xgroup As String
+
+  If rbmed.Value = True Then
+    If rbbrand.Value = True And If Len(Trim(txtname.Text)) Then
+      xroute = " and fldstockid in(select fldbrandid from tblmedbrand where lower(fldbrand) like &1 and flddrug in(select flddrug From tbldrug where fldroute like &7))"
+    Else
+      xroute = " and fldstockid in(select fldbrandid from tblmedbrand where flddrug in(select flddrug From tbldrug where fldroute like &7))"
+    Endif
+  Else If rbsurg.Value = True Then
+    xroute = " and fldstockid in(select fldbrandid from tblsurgbrand where fldsurgid in(select fldsurgid from tblsurgicals where fldsurgcateg like &7))"
+  Else If rbextra.Value = True Then
+    xroute = ""
+  Endif
+
+  If rbany.Value = True Then
+    xstate = ""
+  Else If rbnear.Value = True Then
+    xstate = " and fldexpiry>&5 and fldexpiry<=&6"
+  Else If rbexpired.Value = True Then
+    xstate = " and fldexpiry<=&5"
+  Endif
+  xnear = modMisc.GetExpiryMonth(cmbmonth.Text)
+
+  If chkabsent.Value = True Then
+    xgroup = " GROUP BY fldstockid HAVING SUM(fldqty)=&3"
+  Else If chkallstock.Value = True Then
+    xgroup = " GROUP BY fldstockid"
+  Else
+    xgroup = " GROUP BY fldstockid HAVING SUM(fldqty)>&3"
+  Endif
+  xorder = " ORDER BY fldstockid ASC"
+
+  If chkleftmain.Value Then
+    xsearch = "%" & LCase(txtname.Text) & "%"
+  Else
+    xsearch = LCase(txtname.Text) & "%"
+  Endif
+
+  If MMain.$WebReport = "Multiple" Then
+    xstr = modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+    If rbmed.Value = True Then
+      $rData = modDatabase.$syConn.Exec("select fldstockid,fldstockid,AVG(fldsellpr) as xsell,SUM(fldqty) as qty,fldstockid from tblentry where lower(fldstockid) like &1 and fldcomp like &2 and fldcategory=&4" & xstate & xstr & xgroup & xorder, xsearch, cmblocat.Text, 0, "Medicines", Now(), DateAdd(Now(), gb.Month, xnear))
+    Else If rbsurg.Value = True Then
+      $rData = modDatabase.$syConn.Exec("select fldstockid,fldstockid,AVG(fldsellpr) as xsell,SUM(fldqty) as qty,fldstockid from tblentry where lower(fldstockid) like &1 and fldcomp like &2 and fldcategory=&4" & xstate & xstr & xgroup & xorder, xsearch, cmblocat.Text, 0, "Surgicals", Now(), DateAdd(Now(), gb.Month, xnear))
+    Else If rbextra.Value = True Then
+      $rData = modDatabase.$syConn.Exec("select fldstockid,fldstockid,AVG(fldsellpr) as xsell,SUM(fldqty) as qty,fldstockid from tblentry where lower(fldstockid) like &1 and fldcomp like &2 and fldcategory=&4" & xstate & xstr & xgroup & xorder, xsearch, cmblocat.Text, 0, "Extra Items", Now(), DateAdd(Now(), gb.Month, xnear))
+    Endif
+
+  Else
+    If rbmed.Value = True Then
+      If rbbrand.Value = True And If Len(Trim(txtname.Text)) Then
+        $rData = modDatabase.$syConn.Exec("select fldstockid,fldstockid,fldstockid,SUM(fldqty) as qty,fldstockid from tblentry where fldcomp like &2 and fldcategory=&4" & xstate & xroute & xgroup & xorder, xsearch, cmblocat.Text, 0, "Medicines", Now(), DateAdd(Now(), gb.Month, xnear), cmbroute.Text)
+      Else
+        $rData = modDatabase.$syConn.Exec("select fldstockid,fldstockid,fldstockid,SUM(fldqty) as qty,fldstockid from tblentry where lower(fldstockid) like &1 and fldcomp like &2 and fldcategory=&4" & xstate & xroute & xgroup & xorder, xsearch, cmblocat.Text, 0, "Medicines", Now(), DateAdd(Now(), gb.Month, xnear), cmbroute.Text)
+      Endif
+    Else If rbsurg.Value = True Then
+      $rData = modDatabase.$syConn.Exec("select fldstockid,fldstockid,fldstockid,SUM(fldqty) as qty,fldstockid from tblentry where lower(fldstockid) like &1 and fldcomp like &2 and fldcategory=&4" & xstate & xroute & xgroup & xorder, xsearch, cmblocat.Text, 0, "Surgicals", Now(), DateAdd(Now(), gb.Month, xnear), cmbroute.Text)
+    Else If rbextra.Value = True Then
+      $rData = modDatabase.$syConn.Exec("select fldstockid,fldstockid,fldstockid,SUM(fldqty) as qty,fldstockid from tblentry where lower(fldstockid) like &1 and fldcomp like &2 and fldcategory=&4" & xstate & xroute & xgroup & xorder, xsearch, cmblocat.Text, 0, "Extra Items", Now(), DateAdd(Now(), gb.Month, xnear), cmbroute.Text)
+    Endif
+
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 375 * modBasic.$AppWidthRatio
+    If MMain.$WebReport = "Multiple" Then
+      .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    Else
+      .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    Endif
+    .Columns[3].Width = 65 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+
+    .Columns[0].Text = "Generic Name"
+    If MMain.$WebReport = "Multiple" Then
+      .Columns[1].Text = "Type"
+      .Columns[2].Text = "Rate"
+    Else
+      .Columns[1].Text = "Brand Name"
+      .Columns[2].Text = "Type"
+    Endif
+    .Columns[3].Text = "QTY"
+  End With
+  txtamt.Value = 0
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    If MMain.$WebReport = "Multiple" Then
+      GridView1.Data.Text = modMedicine.GetRouteFromItem($rData[$aMyFields[Column]], $strType)
+    Else
+      GridView1.Data.Text = modMedConstant.ConvertGenericToBrand($rData[$aMyFields[Column]])
+    Endif
+  Else If Column = 2 Then
+    If MMain.$WebReport = "Multiple" Then
+      GridView1.Data.Text = modReportVar.GetLocaleNumberFormat($rData[$aMyFields[Column]], gb.Currency)
+    Else
+      GridView1.Data.Text = modMedicine.GetRouteFromItem($rData[$aMyFields[Column]], $strType)
+    Endif
+  Else If Column = 3 Then
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+  GridView1.Rows[Row].Height = Max(GridView1.Rows[Row].Height, GridView1.Data.Font.RichTextHeight(GridView1.Data.Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+  GridView1.Data.WordWrap = True
+
+End
+
+Public Sub rbmed_Click()
+
+  $strType = "Medicines"
+  cmbroute.List = ["%", "oral", "liquid", "fluid", "injection", "resp", "topical", "eye/ear", "anal/vaginal"]
+
+End
+
+Public Sub rbsurg_Click()
+
+  $strType = "Surgicals"
+  cmbroute.List = ["%", "suture", "msurg", "ortho"]
+
+End
+
+Public Sub rbextra_Click()
+
+  $strType = "Extra Items"
+  cmbroute.List = ["%", "extra"]
+
+End
+
+Public Sub btnrefresh_Click()
+
+  ShowStockGrid()
+  GetTotalValue()
+
+End
+
+Public Sub txtname_Change()
+
+  ShowStockGrid()
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim hForm As FRequest
+  Dim sql As String
+  Dim res As Result
+  Dim xitem As String
+  Dim xstate As String
+  Dim xnear As Integer
+
+  If rbany.Value = True Then
+    xstate = ""
+  Else If rbnear.Value = True Then
+    xstate = " and fldexpiry>&4 and fldexpiry<=&5"
+  Else If rbexpired.Value = True Then
+    xstate = " and fldexpiry<=&4"
+  Endif
+  xnear = modMisc.GetExpiryMonth(cmbmonth.Text)
+  xitem = GridView1[GridView1.Row, 0].Text
+  If MMain.$WebReport = "Multiple" Then
+    sql = "select fldstockno,fldstockid,fldbatch,fldexpiry,fldqty,fldsellpr,fldstatus,fldcomp,fldhospcode from tblentry where fldstockid=&1 and fldqty>&2 and fldcomp like &3" & xstate & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text)
+  Else
+    sql = "select fldstockno,fldstockid,fldbatch,fldexpiry,fldqty,fldsellpr,fldstatus,fldcomp from tblentry where fldstockid=&1 and fldqty>&2 and fldcomp like &3" & xstate
+  Endif
+  res = modDatabase.$syConn.Exec(sql, xitem, 0, cmblocat.Text, Now(), DateAdd(Now(), gb.Month, xnear))
+  If res.Available Then
+    hForm = New FRequest(res, xitem, "StockDB", False)
+    hForm.ShowModal
+  Endif
+
+End
+
+Public Sub btnfullrep_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, $strType, "Total Quantity")
+
+End
+
+Public Sub btninvent_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHTMLStock.ShowTotalInventory($strType, cmblocat.Text, cmblocation.Text, cmbvalue.Text)
+  Dec Application.Busy
+  modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+
+End
+
+Public Sub txtname_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End
+
+Public Sub rbnear_Click()
+
+  cmbmonth.Text = "3 Month"
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close()
+  Endif
+
+End

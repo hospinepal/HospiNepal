@@ -1,0 +1,448 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $status As String[] = ["Complete", "Partial"]
+Private $consent As String[] = ["Yes", "No"]
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  FillCustomMenu()
+
+  cmbstudycode.List = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldstudycode as col from tblresearch where fldstatus=&1", "Running"))                                   ''
+  cmbstudycode.SetFocus
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub btnrefresh_Click()
+
+  Dim res As Result
+
+  If cmbstudycode.Text Then
+    res = modDatabase.$myConn.Exec("select fldstudyname,fldstudylocat,fldstudystart,fldstudyend from tblresearch where fldstudycode=&1", cmbstudycode.Text)
+    If res.Available Then
+      txtstudyname.Text = res!fldstudyname
+      txtstudylocation.Text = res!fldstudylocat
+      If res!fldstudystart < Now() And If Now() < res!fldstudyend Then
+        btnaddpat.Enabled = True
+      Endif
+    Endif
+    ShowAddedPatients()
+  Endif
+
+End
+
+Public Sub btnaddpat_Click()
+
+  If cmbstudycode.Text Then
+    AddEligiblePatints()
+    ShowAddedPatients()
+    Balloon.Info(("Information saved"), btnaddpat)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Private Sub AddEligiblePatints()
+
+  Dim aql As String
+  Dim sql As String
+  Dim res As Result
+  Dim res1 As Result
+  Dim enclist As String[]
+
+  aql = modResearch.GetStudySelection(cmbstudycode.Text)
+  sql = "SELECT " & modDBApp.GetSecureSQL(aql)
+  res = modDatabase.$myConn.Exec(sql)
+  If res.Available Then
+    Inc Application.Busy
+    enclist = modControlSub.GetDirectFillresult(modDatabase.$myConn.Exec("select fldencounterval as col from tblpatientstudy where fldstudycode=&1", cmbstudycode.Text))
+
+    For Each res
+      If enclist.Exist(res!col) = False Then
+        res1 = modDatabase.$myConn.Create("tblpatientstudy")
+        res1["fldencounterval"] = res!col
+        res1["fldstudycode"] = cmbstudycode.Text
+        res1["fldconsentautodata"] = ""
+        res1["fldstatusautodata"] = ""
+        res1["fldconsentinterview"] = ""
+        res1["fldstatusinterview"] = ""
+        res1["fldstatus"] = "Active"
+        res1["flduserid"] = modBasic.$lbluser
+        res1["fldtime"] = Now()
+        res1["fldcomp"] = modBasic.$compID
+        res1["fldsave"] = True
+        res1.Update
+      Endif
+    Next
+    Dec Application.Busy
+
+  Endif
+
+End
+
+Private Sub ShowAddedPatients()
+
+  $rData = modDatabase.$myConn.Exec("select tblpatientstudy.fldid,tblpatientstudy.fldencounterval,tblpatientstudy.fldencounterval,tblencounter.fldcurrlocat,tblencounter.fldadmission,tblpatientstudy.fldpatcode,tblpatientstudy.fldconsentautodata,tblpatientstudy.fldstatusautodata,tblpatientstudy.fldconsentinterview,tblpatientstudy.fldstatusinterview,tblpatientstudy.fldstatus from tblpatientstudy inner join tblencounter on tblpatientstudy.fldencounterval=tblencounter.fldencounterval where tblpatientstudy.fldstudycode=&1 and tblpatientstudy.fldstatus=&2 and tblencounter.fldcurrlocat like &3 and tblencounter.fldadmission like &4", cmbstudycode.Text, "Active", txtlocation.Text & "%", txtstatus.Text & "%")                                                             ''
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 50 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "EncID"
+    .Columns[2].Text = "Name"
+    .Columns[3].Text = "Location"
+    .Columns[4].Text = "Status"
+    .Columns[5].Text = "Code"
+    .Columns[6].Text = "Data Cons"
+    .Columns[7].Text = "Data Status"
+    .Columns[8].Text = "Intv Cons"
+    .Columns[9].Text = "Intv Status"
+    .Columns[10].Text = "Status"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 2 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]])
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_Menu()
+
+  mnuhide.Popup
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim Column As Integer
+  Dim res As Result
+  Dim xx As String
+  Dim xstat As String[] = ["Active", "Inactive"]
+
+  Column = GridView1.Column
+  If Column = 5 Then
+    xx = InputBox("Enter Patient Code for this Study", GridView1[GridView1.Row, 1].Text, GridView1[GridView1.Row, 5].Text)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatientstudy", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldpatcode"] = xx
+      res.Update
+      ShowAddedPatients()
+    Endif
+
+  Else If Column = 6 Then
+    xx = InputCombo("Enter Data Consent", GridView1[GridView1.Row, 1].Text, $consent, GridView1[GridView1.Row, 6].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatientstudy", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldconsentautodata"] = xx
+      res.Update
+      ShowAddedPatients()
+    Endif
+
+  Else If Column = 7 Then
+    xx = InputCombo("Enter Data Status", GridView1[GridView1.Row, 1].Text, $status, GridView1[GridView1.Row, 7].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatientstudy", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldstatusautodata"] = xx
+      res.Update
+      ShowAddedPatients()
+    Endif
+
+  Else If Column = 8 Then
+    xx = InputCombo("Enter Interview Consent", GridView1[GridView1.Row, 1].Text, $consent, GridView1[GridView1.Row, 8].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatientstudy", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldconsentinterview"] = xx
+      res.Update
+      ShowAddedPatients()
+    Endif
+
+  Else If Column = 9 Then
+    xx = InputCombo("Enter Interview Status", GridView1[GridView1.Row, 1].Text, $status, GridView1[GridView1.Row, 9].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatientstudy", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldstatusinterview"] = xx
+      res.Update
+      ShowAddedPatients()
+    Endif
+
+  Else If Column = 10 Then
+    xx = InputCombo("Enter Subject Status", GridView1[GridView1.Row, 1].Text, xstat, GridView1[GridView1.Row, 10].Text, True)
+    If xx Then
+      res = modDatabase.$myConn.Edit("tblpatientstudy", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      res["fldstatus"] = xx
+      res.Update
+      ShowAddedPatients()
+    Endif
+
+  Endif
+
+End
+
+''----------------------------------- menu ---------------------------------------------
+Private Sub FillCustomMenu()
+
+  Dim xform1 As String
+  Dim xform2 As String
+  Dim xform3 As String
+  Dim xform4 As String
+  Dim xform5 As String
+  Dim xform6 As String
+  Dim xform7 As String
+  Dim xform8 As String
+  Dim xform9 As String
+  Dim xform10 As String
+
+  xform1 = modSettings.ShowSettingFromFIle("StudyReport1/Name")
+  xform2 = modSettings.ShowSettingFromFIle("StudyReport2/Name")
+  xform3 = modSettings.ShowSettingFromFIle("StudyReport3/Name")
+  xform4 = modSettings.ShowSettingFromFIle("StudyReport4/Name")
+  xform5 = modSettings.ShowSettingFromFIle("StudyReport5/Name")
+  xform6 = modSettings.ShowSettingFromFIle("StudyReport6/Name")
+  xform7 = modSettings.ShowSettingFromFIle("StudyReport7/Name")
+  xform8 = modSettings.ShowSettingFromFIle("StudyReport8/Name")
+  xform9 = modSettings.ShowSettingFromFIle("StudyReport9/Name")
+  xform10 = modSettings.ShowSettingFromFIle("StudyReport10/Name")
+
+  If xform1 Then
+    mnucust1.Caption = xform1
+    mnucust1.Tag = "StudyReport1"
+    mnucust1.Enabled = True
+  Endif
+
+  If xform2 Then
+    mnucust2.Caption = xform2
+    mnucust2.Tag = "StudyReport2"
+    mnucust2.Enabled = True
+  Endif
+
+  If xform3 Then
+    mnucust3.Caption = xform3
+    mnucust3.Tag = "StudyReport3"
+    mnucust3.Enabled = True
+  Endif
+
+  If xform4 Then
+    mnucust4.Caption = xform4
+    mnucust4.Tag = "StudyReport4"
+    mnucust4.Enabled = True
+  Endif
+
+  If xform5 Then
+    mnucust5.Caption = xform5
+    mnucust5.Tag = "StudyReport5"
+    mnucust5.Enabled = True
+  Endif
+
+  If xform6 Then
+    mnucust6.Caption = xform6
+    mnucust6.Tag = "StudyReport6"
+    mnucust6.Enabled = True
+  Endif
+
+  If xform7 Then
+    mnucust7.Caption = xform7
+    mnucust7.Tag = "StudyReport7"
+    mnucust7.Enabled = True
+  Endif
+
+  If xform8 Then
+    mnucust8.Text = xform8
+    mnucust8.Tag = "StudyReport8"
+    mnucust8.Enabled = True
+  Endif
+
+  If xform9 Then
+    mnucust9.Caption = xform9
+    mnucust9.Tag = "StudyReport9"
+    mnucust9.Enabled = True
+  Endif
+
+  If xform10 Then
+    mnucust10.Caption = xform10
+    mnucust10.Tag = "StudyReport10"
+    mnucust10.Enabled = True
+  Endif
+
+End
+
+Public Sub mnucust1_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust1.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust2_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust2.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust3_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust3.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust4_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust4.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust5_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust5.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust6_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust6.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust7_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust7.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust8_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust8.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust9_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust9.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub mnucust10_Click()
+
+  Dim hCls As CReportCustom
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    hCls = New CReportCustom(GridView1[GridView1.Row, 1].Text, mnucust10.Tag, "ReportSize", MMain.$defUnit)
+    hCls.Preview()
+  Endif
+
+End
+
+Public Sub btnexpo_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, cmbstudycode.Text, "Date: " & modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+
+End
+
+Public Sub btnserenc_Click()
+
+  ShowAddedPatients()
+
+End
+
+Public Sub mnuscreen_Click()
+
+  Dim xPath As String
+
+  If cmbstudycode.Text Then
+    Inc Application.Busy
+    xPath = modCHTMLResearch.AllSampleReport(cmbstudycode.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub mnuinclude_Click()
+
+  Dim xPath As String
+
+  If cmbstudycode.Text Then
+    Inc Application.Busy
+    xPath = modCHTMLResearch.InclusionReport(cmbstudycode.Text)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End

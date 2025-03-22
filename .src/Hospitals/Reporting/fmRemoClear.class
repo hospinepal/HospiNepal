@@ -1,0 +1,525 @@
+' Gambas class file
+
+Public Sub _new(encid As String)
+
+  If encid Then
+    txtencid.Text = encid
+    modHospitalReport.CreateLabConnections()
+    btnrefresh_Click()
+  Else
+    modHospitalReport.CreateLabConnections()
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  dtfromdate.Value = Now()
+  dttodate.Value = Now()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  Try modHospitalReport.$lab1Con.Close
+  Try modHospitalReport.$lab2Con.Close
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub btnrefresh_Click()
+
+  LoadLabReceipts("NDC", GridView1)
+  LoadLabReceipts("NLNP", GridView2)
+  txtndctotal.Value = modGridView.SumGridAmountt(GridView1, 8)
+  txtnlnptotal.Value = modGridView.SumGridAmountt(GridView2, 8)
+
+End
+
+Private Sub LoadLabReceipts(sLab As String, xGridView1 As GridView)
+
+  Dim res As Result
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  If txtencid.Text Then
+    res = modDatabase.$myConn.Exec("select fldid,fldbillitem,fldtime,fldencounterval,fldbillitem,flditemrate,fldtaxper,flddiscper,fldditemamt,fldbillitem,fldbillno from tblduebilling where fldprint=&1 and fldencounterval=&2 and fldbillitem in(select fldbillno from tbltempbilldetail where fldhostmac=&3)", True, Trim(txtencid.Text), sLab)                             ''
+  Else
+    res = modDatabase.$myConn.Exec("select fldid,fldbillitem,fldtime,fldencounterval,fldbillitem,flditemrate,fldtaxper,flddiscper,fldditemamt,fldbillitem,fldbillno from tblduebilling where fldprint=&1 and fldtime>=&2 and fldtime<=&3 and fldbillitem in(select fldbillno from tbltempbilldetail where fldhostmac=&4)", True, modDate.StartSqlDate(dtfromdate.value), modDate.EndSqlDate(dttodate.value), sLab)                             ''
+  Endif
+
+  xGridView1.Clear
+  xGridView1.Columns.Count = res.Fields.Count
+  xGridView1.Rows.Count = res.Count
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(xGridView1, res.Index, Column)
+      If Column = 1 Then
+        xGridView1[res.Index, Column].Picture = Picture[GetClearIcon(sLab, res[fld.Name])]
+        xGridView1[res.Index, Column].Text = ""
+      Else If Column = 2 Then
+        xGridView1[res.Index, Column].Text = modReportVar.GetDateTimeReport(res["fldtime"], gb.GeneralDate)
+      Else If Column = 9 Then
+        xGridView1[res.Index, Column].Text = GetLabInvoiceFromRecep(sLab, res[fld.Name])
+      Else
+        xGridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  xGridView1.Row = 0
+
+  With xGridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 1
+    .Columns[7].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 125 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "DateTime"
+    .Columns[3].Text = "Encounter"
+    .Columns[4].Text = "Particulars"
+    .Columns[5].Text = "Total"
+    .Columns[7].Text = "Disc%"
+    .Columns[8].Text = "Recv"
+    .Columns[9].Text = "Lab Invoice"
+    .Columns[10].Text = "Clearance"
+  End With
+
+End
+
+Private Function GetClearIcon(sLab As String, sBillNo As String) As String
+
+  Dim xbillNo As String
+  Dim xicon As String
+
+  xbillNo = GetRecepClearanceData(sLab, sBillNo)
+  If xbillNo Then
+    xicon = "icon:/small/lock"
+  Else
+    xicon = "icons/unchecked.png"
+  Endif
+  Return xicon
+
+End
+
+Private Function GetLabInvoiceFromRecep(sLab As String, sBillNo As String) As String
+
+  Dim sCon As Connection
+  Dim res As Result
+  Dim xval As String
+
+  If sLab = "NDC" Then
+    sCon = modHospitalReport.$lab1Con
+  Else If sLab = "NLNP" Then
+    sCon = modHospitalReport.$lab2Con
+  Endif
+
+  res = sCon.Exec("select fldbillno from tblpatbilldetail where fldtaxgroup=&1", sBillNo)
+  If res.Available Then
+    If res["fldbillno"] Then
+      xval = res["fldbillno"]
+    Else
+      xval = ""
+    Endif
+  Else
+    xval = ""
+  Endif
+  Return xval
+
+End
+
+Private Function GetRecepClearanceData(sLab As String, sBillNo As String) As String
+
+  Dim sCon As Connection
+  Dim res As Result
+  Dim xval As String
+
+  If sLab = "NDC" Then
+    sCon = modHospitalReport.$lab1Con
+  Else If sLab = "NLNP" Then
+    sCon = modHospitalReport.$lab2Con
+  Endif
+
+  res = sCon.Exec("select fldbillno from tblduebilling where fldprint=&1 and fldbillitem in(select fldbillno from tblpatbilldetail where fldtaxgroup=&2)", True, sBillNo)
+  If res.Available Then
+    If res["fldbillno"] Then
+      xval = res["fldbillno"]
+    Else
+      xval = ""
+    Endif
+  Else
+    xval = ""
+  Endif
+  Return xval
+
+End
+
+Public Sub GridView1_Click()
+
+  modGridView.CheckUncheckGridNoDB(GridView1, 1)
+  If GridView1.Rows.Selection.Count Then
+    txtencid.Text = GridView1[GridView1.Row, 3].Text
+  Endif
+
+End
+
+Public Sub GridView2_Click()
+
+  modGridView.CheckUncheckGridNoDB(GridView2, 1)
+  If GridView2.Rows.Selection.Count Then
+    txtencid.Text = GridView2[GridView2.Row, 3].Text
+  Endif
+
+End
+
+''----------------- Module---------------------------
+Private Sub LabInsertBlankBillClearance($con As Connection, encid As String, sBilType As String, sLedgerAC As String, itemtyp As String, itemname As String, itemAMT As Float, sDisc As Float, sNetAmt As Float)
+
+  Dim res As Result
+
+  res = $con.Create("tblduebilling")
+  res["fldencounterval"] = encid
+  res["flditemtype"] = itemtyp
+  res["fldbillitem"] = itemname
+  res["flditemrate"] = itemAMT
+  res["flditemqty"] = 1
+  res["fldtaxper"] = 0
+  res["flddiscper"] = sDisc
+  res["fldditemamt"] = sNetAmt
+  res["fldbillno"] = ""
+  res["fldstatus"] = "Done"
+
+  res["fldorduserid"] = modBasic.$lbluser
+  res["fldordtime"] = Now()
+  res["fldordcomp"] = modBasic.$compID
+
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["xyz"] = False
+
+  res["fldsave"] = True
+  res["fldprint"] = False
+  res["fldalert"] = True
+
+  res["fldbilltype"] = sBilType
+  res["fldacledger"] = sLedgerAC
+  res["fldhostmac"] = ""
+  res["fldextracol"] = ""
+  res["fldextrarow"] = ""
+
+  res.Update()
+  'dont catch error. Error will rollback
+
+End
+
+Public Sub InsertDueBillDetail($con As Connection, encid As String, sbillNo As String)
+
+  Dim res As Result
+
+  res = $con.Create("tblduebilldetail")
+  res["fldbillno"] = sbillNo
+  res["fldencounterval"] = encid
+  res["flduserid"] = modBasic.$lbluser
+  res["fldtime"] = Now()
+  res["fldcomp"] = modBasic.$compID
+  res["fldsave"] = True
+  res["fldhostmac"] = ""
+  res["xyz"] = False
+  res.Update
+
+End
+
+Private Function GetPatStatusCode() As Integer
+
+  Dim xcode As Integer
+  Dim xstatus As String
+
+  xstatus = modPatient.CurrentAdmissionStatus(Trim(txtencid.Text))
+  Select xstatus
+    Case "Discharged", "LAMA", "Death", "Refer", "Absconder"
+      xcode = 3
+    Case "Admitted"
+      xcode = 2
+    Case Else
+      xcode = 1
+  End Select
+
+  Return xcode
+
+End
+
+Private Function GetInvoiceClearanceValue(sCon As Connection, sLab As String) As String
+
+  Dim inv As String
+  Dim sCode As String
+
+  sCode = "DCL"
+  inv = sCode & "-" & CStr(CurrentClearanceNum(sCon)) & sLab
+  Return inv
+  'donot catch error. Error will rollback
+
+End
+
+Private Function CurrentClearanceNum(sCon As Connection) As Long
+
+  Dim res As Result
+  Dim xx As Long
+
+  res = sCon.Edit("tblautoid", "fldtype=&1", "DueClearanceNo")
+  xx = res!fldvalue
+  res["fldvalue"] = xx + 1
+  res.Update()
+  Return xx
+  'donot catch error. Error will rollback
+
+End
+
+Public Function RemoteLockTableForID(sCon As Connection, sType As String) As Boolean
+
+  Dim res As Result
+  Dim xx As Boolean
+
+  res = sCon.Create("tbllock")
+  res["fldlock"] = sType
+  res.Update
+  xx = True
+  modBasic.DebugString("Process Locked for " & sType)
+  Return xx
+
+Catch
+  xx = False
+  If MMain.$IsGUIApp = True Then
+    Message.Warning(("Transaction Locked. Type: ") & sType, ("OK"))
+  Endif
+  Return xx
+
+End
+
+Public Sub RemoteReleaseLockTable(sCon As Connection, sType As String)
+
+  sCon.Delete("tbllock", "fldlock=&1", sType)
+  modBasic.DebugString("Lock Released for " & sType)
+
+End
+
+''============== NDC ======================
+Public Sub btnndcupdate_Click()
+
+  Dim Row As Integer
+  Dim res As Result
+  Dim resx As Result
+  Dim res1 As Result
+
+  Dim billed As Boolean
+  Dim txttitle As String
+  Dim $billno As String
+  Dim idLock As Boolean
+
+  Dim due As Float
+  Dim disc As Float
+  Dim tax As Float
+  Dim xdue As Float
+  Dim xdisc As Float
+  Dim xtax As Float
+  Dim recv As Float
+
+  Inc Application.Busy
+  idLock = RemoteLockTableForID(modHospitalReport.$lab1Con, "Invoice")
+  If idLock = True Then
+    modHospitalReport.$lab1Con.Begin
+    For Row = 0 To GridView1.Rows.Count - 1
+      If GridView1[Row, 1].Picture = Picture["icons/checked.png"] Then
+        If GridView1[Row, 3].Text = txtencid.Text Then
+          res1 = modHospitalReport.$lab1Con.Exec("select fldbillno,fldencounterval,fldbilltype,fldbankname from tblpatbilldetail where fldencounterval=&1 and fldtaxgroup=&2", Trim(txtencid.Text), GridView1[Row, 4].Text)
+          If res1.Available Then
+            res1.MoveFirst
+            LabInsertBlankBillClearance(modHospitalReport.$lab1Con, res1["fldencounterval"], "Cash", "HospitalClearance", "InvoiceClearance", res1["fldbillno"], GridView1[Row, 5].Text, GridView1[Row, 7].Text, GridView1[Row, 8].Text)
+            GridView1[Row, 1].Picture = Picture["icon:/small/lock"]
+          Endif
+        Endif
+      Endif
+    Next
+
+    billed = True
+    due = 0
+    disc = 0
+    tax = 0
+    res = modHospitalReport.$lab1Con.Exec("select fldid,flditemrate,flditemqty,fldtaxper,flddiscper From tblduebilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldbilltype=&4 and flditemtype=&5 and fldstatus=&6", Trim(txtencid.Text), False, True, "Cash", "InvoiceClearance", "Done")
+    If res.Available Then
+      For Each res
+        xdue = 0
+        xdisc = 0
+        xtax = 0
+
+        xdue = res!flditemrate * res!flditemqty
+        xdisc = xdue * res!flddiscper / 100
+        xtax = (xdue - xdisc) * res!fldtaxper / 100
+
+        due = due + xdue
+        disc = disc + xdisc
+        tax = tax + xtax
+      Next
+      recv = due + tax - disc
+
+      billed = False
+      If modHelpVariable.$VATBill = "Yes" Then
+        txttitle = "TAX INVOICE"
+      Else
+        txttitle = "INVOICE"
+      Endif
+      $billno = GetInvoiceClearanceValue(modHospitalReport.$lab1Con, "NDC")
+
+      If $billno Then
+        modBillings.InsertBillingDetail(modHospitalReport.$lab1Con, Trim(txtencid.Text), $billno, "Cash", 0, tax, disc, 0, recv, "", "HospitalClearance", "", "", GetPatStatusCode())
+        If modHelpVariable.$IRDLevel = "Yes" Then
+          modBillings.InsertBillLog(modHospitalReport.$lab1Con, Trim(txtencid.Text), $billno, due, tax, disc)
+          modHelpVariable.RecordIRDActivity(modHospitalReport.$lab1Con, txttitle, Me.Name, "INSERT", $billno)
+        Endif
+        For Each res
+          resx = modHospitalReport.$lab1Con.Edit("tblduebilling", "fldid=&1", res["fldid"])
+          resx["fldbillno"] = $billno
+          resx["fldprint"] = True
+          resx["fldstatus"] = "Cleared"
+          resx["xyz"] = False
+          resx.Update()
+        Next
+      Endif
+
+      billed = True
+    Endif
+    modHospitalReport.$lab1Con.Commit
+    RemoteReleaseLockTable(modHospitalReport.$lab1Con, "Invoice")
+  Else
+    Message.Warning("Couldn't get Lock", "OK")
+  Endif
+  Dec Application.Busy
+
+  LoadLabReceipts("NDC", GridView1)
+  txtndctotal.Value = modGridView.SumGridAmountt(GridView1, 8)
+  Message.Info("Clearance Invoice : " & $billno, "OK")
+
+Catch
+  modHospitalReport.$lab1Con.Rollback
+  Dec Application.Busy
+
+End
+
+''================= NLNP =====================
+Public Sub btnnlnpupdate_Click()
+
+  Dim Row As Integer
+  Dim res As Result
+  Dim resx As Result
+  Dim res1 As Result
+
+  Dim billed As Boolean
+  Dim txttitle As String
+  Dim $billno As String
+  Dim idLock As Boolean
+
+  Dim due As Float
+  Dim disc As Float
+  Dim tax As Float
+  Dim xdue As Float
+  Dim xdisc As Float
+  Dim xtax As Float
+  Dim recv As Float
+
+  Inc Application.Busy
+  idLock = RemoteLockTableForID(modHospitalReport.$lab2Con, "Invoice")
+  If idLock = True Then
+    modHospitalReport.$lab2Con.Begin
+    For Row = 0 To GridView2.Rows.Count - 1
+      If GridView2[Row, 1].Picture = Picture["icons/checked.png"] Then
+        If GridView2[Row, 3].Text = txtencid.Text Then
+          res1 = modHospitalReport.$lab2Con.Exec("select fldbillno,fldencounterval,fldbilltype,fldbankname from tblpatbilldetail where fldencounterval=&1 and fldtaxgroup=&2", Trim(txtencid.Text), GridView2[Row, 4].Text)
+          If res1.Available Then
+            res1.MoveFirst
+            LabInsertBlankBillClearance(modHospitalReport.$lab2Con, res1["fldencounterval"], "Cash", "HospitalClearance", "InvoiceClearance", res1["fldbillno"], GridView2[Row, 5].Text, GridView2[Row, 7].Text, GridView2[Row, 8].Text)
+            GridView2[Row, 1].Picture = Picture["icon:/small/lock"]
+          Endif
+        Endif
+      Endif
+    Next
+
+    billed = True
+    due = 0
+    disc = 0
+    tax = 0
+    res = modHospitalReport.$lab2Con.Exec("select fldid,flditemrate,flditemqty,fldtaxper,flddiscper From tblduebilling where fldencounterval=&1 and fldprint=&2 and fldsave=&3 and fldbilltype=&4 and flditemtype=&5 and fldstatus=&6", Trim(txtencid.Text), False, True, "Cash", "InvoiceClearance", "Done")
+    If res.Available Then
+      For Each res
+        xdue = 0
+        xdisc = 0
+        xtax = 0
+
+        xdue = res!flditemrate * res!flditemqty
+        xdisc = xdue * res!flddiscper / 100
+        xtax = (xdue - xdisc) * res!fldtaxper / 100
+
+        due = due + xdue
+        disc = disc + xdisc
+        tax = tax + xtax
+      Next
+      recv = due + tax - disc
+
+      billed = False
+      If modHelpVariable.$VATBill = "Yes" Then
+        txttitle = "TAX INVOICE"
+      Else
+        txttitle = "INVOICE"
+      Endif
+      $billno = GetInvoiceClearanceValue(modHospitalReport.$lab2Con, "NLNP")
+
+      If $billno Then
+        modBillings.InsertBillingDetail(modHospitalReport.$lab2Con, Trim(txtencid.Text), $billno, "Cash", 0, tax, disc, 0, recv, "", "HospitalClearance", "", "", GetPatStatusCode())
+        If modHelpVariable.$IRDLevel = "Yes" Then
+          modBillings.InsertBillLog(modHospitalReport.$lab2Con, Trim(txtencid.Text), $billno, due, tax, disc)
+          modHelpVariable.RecordIRDActivity(modHospitalReport.$lab2Con, txttitle, Me.Name, "INSERT", $billno)
+        Endif
+        For Each res
+          resx = modHospitalReport.$lab2Con.Edit("tblduebilling", "fldid=&1", res["fldid"])
+          resx["fldbillno"] = $billno
+          resx["fldprint"] = True
+          resx["fldstatus"] = "Cleared"
+          resx["xyz"] = False
+          resx.Update()
+        Next
+      Endif
+
+      billed = True
+    Endif
+    modHospitalReport.$lab2Con.Commit
+    RemoteReleaseLockTable(modHospitalReport.$lab2Con, "Invoice")
+  Else
+    Message.Warning("Couldn't get Lock", "OK")
+  Endif
+  Dec Application.Busy
+
+  LoadLabReceipts("NLNP", GridView2)
+  txtnlnptotal.Value = modGridView.SumGridAmountt(GridView2, 8)
+  Message.Info("Clearance Invoice : " & $billno, "OK")
+
+Catch
+  modHospitalReport.$lab2Con.Rollback
+  Dec Application.Busy
+
+End

@@ -1,0 +1,382 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+  cmbcomp.List = modBasic.$AllCompList
+  Select modHelpVariable.$LogInCategory
+    Case "Cashier", "Dispensar"
+      modAccount.PasInvoiceSetting(cmbfiscal, False)
+      txtuser.Text = modBasic.$lbluser
+      chkalluser.Enabled = False
+      txtuser.Enabled = False
+      LoadTableNames()
+      btnrefresh_Click()
+    Case Else
+      modAccount.PasInvoiceSetting(cmbfiscal, True)
+      LoadTableNames()
+  End Select
+
+  cmbcomp.Add("%")
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatbilling = "tblpatbilling"
+    $tblpatbilldetail = "tblpatbilldetail"
+    $tbltempbilldetail = "tbltempbilldetail"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        $tblpatbilling = res["fldpatbilling"]
+      Else
+        $tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatbilldetail"] Then
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+      If res["fldtempbilldetail"] Then
+        $tbltempbilldetail = res["fldtempbilldetail"]
+      Else
+        $tbltempbilldetail = "tbltempbilldetail"
+      Endif
+    Else
+      $tblpatbilling = "tblpatbilling"
+      $tblpatbilldetail = "tblpatbilldetail"
+      $tbltempbilldetail = "tbltempbilldetail"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+Public Sub dtnepfir_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtfir.Value))
+  If xx Then
+    dtfir.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub dtneplast_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtlast.Value))
+  If xx Then
+    dtlast.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  If txtuser.Text Then
+    lbluser.Text = modGeneral.GetUserFullName(Trim(txtuser.Text))
+    ShowCOllection()
+  Endif
+
+End
+
+Private Sub ShowCOllection()
+
+  $rData = modDatabase.$syConn.Exec("select fldid,fldfrominvoice,fldtoinvoice,fldfromreceipt,fldtoreceipt,fldbillamt,fldretinvoice,fldretamt,fldrecvamt from tblusercollection where fldcashier=&1", Trim(txtuser.Text))                                                       ''
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 120 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "Invoice1"
+    .Columns[2].Text = "Invoice2"
+    .Columns[3].Text = "Receipt1"
+    .Columns[4].Text = "Receipt2"
+    .Columns[5].Text = "TOTAL AMT"
+    .Columns[6].Text = "Returns"
+    .Columns[7].Text = "Ret AMT"
+    .Columns[8].Text = "Paid AMT"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  GridView1.Data.Text = $rData[$aMyFields[Column]]
+
+End
+
+Public Sub btnprint_Click()
+
+  Dim xPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    Inc Application.Busy
+    xPath = modReportBilling.ShowUserCollection(GridView1[GridView1.Row, 0].Text, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnbillshow_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+
+  res = modDatabase.$syConn.Exec("select fldbillno from " & $tbltempbilldetail & " where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value))
+  If res.Available Then
+    res.MoveFirst
+    txtfromrecpt.Text = res["fldbillno"]
+    res.MoveLast
+    txttorecpt.Text = res["fldbillno"]
+  Endif
+
+  res1 = modDatabase.$syConn.Exec("select fldbillno from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dtfir.value), modDate.EndSqlDate(dtlast.value))
+  If res1.Available Then
+    res1.MoveFirst
+    txtfrombill.Text = res1["fldbillno"]
+    res1.MoveLast
+    txttobill.Text = res1["fldbillno"]
+  Endif
+
+End
+
+Public Sub btncollcash_Click()
+
+  Dim xbillamt As Float
+  Dim xrecvamt As Float
+  Dim xqrpay1 As Float
+  Dim xqrpay2 As Float
+
+  xbillamt = 0
+  xrecvamt = 0
+  xqrpay1 = 0
+  xqrpay2 = 0
+  If txtuser.Text And If cmbcomp.Text Then
+    If txtfrombill.Text And If txttobill.Text Then
+      xbillamt = modNonMedical.GetInvoiceAmountBetweenBills(txtuser.Text, txtfrombill.Text, txttobill.Text, cmbcomp.Text, $tblpatbilldetail)
+      xqrpay1 = modNonMedical.GetQRInvoiceAmountBetweenBills(txtuser.Text, txtfrombill.Text, txttobill.Text, cmbcomp.Text, $tblpatbilldetail)
+    Endif
+    If txtfromrecpt.Text And If txttorecpt.Text Then
+      xrecvamt = modNonMedical.GetReceiptAmountBetweenBills(txtuser.Text, txtfromrecpt.Text, txttorecpt.Text, cmbcomp.Text, $tbltempbilldetail)
+      xqrpay2 = modNonMedical.GetQRReceiptAmountBetweenBills(txtuser.Text, txtfromrecpt.Text, txttorecpt.Text, cmbcomp.Text, $tbltempbilldetail)
+    Endif
+  Endif
+  txtbillamt.Value = xbillamt + xrecvamt
+  txtamtqrpay.Value = xqrpay1 + xqrpay2
+  txtamthand.Value = xbillamt + xrecvamt - (xqrpay1 + xqrpay2)
+
+End
+
+Private Function GetUserListRange(dt1 As Date, dt2 As Date) As String[]
+
+  Dim aList As String[]
+  Dim bList As String[]
+  Dim xList As String[]
+  Dim xUserList As String[]
+
+  xList = New String[]
+  aList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(lower(flduserid)) as col from " & $tbltempbilldetail & " where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2)))
+  bList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(lower(flduserid)) as col from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2", modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2)))
+  xList.Insert(aList)
+  xList.Insert(bList)
+  xUserList = modString.BinaryDistinctStringArray(xList)
+
+  Return xUserList
+
+End
+
+Public Sub btnitemwise_Click()
+
+  Dim xPath As String
+  Dim xUserList As String[]
+
+  If chkalluser.Value = True Or If txtuser.Text Then
+    Inc Application.Busy
+    If chkalluser.Value = True Then
+      xUserList = GetUserListRange(dtfir.Value, dtlast.Value)
+    Else
+      xUserList = [Trim(txtuser.Text)]
+    Endif
+    xPath = modCHTMLInvoice.GetSummaryInvoiceContentBetweenUser(modDatabase.$syConn, Trim(txtfrombill.Text), Trim(txttobill.Text), Trim(txtfromrecpt.Text), Trim(txttorecpt.Text), xUserList, cmbcomp.Text, $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btngroupwise_Click()
+
+  Dim xPath As String
+  Dim xUserList As String[]
+
+  If chkalluser.Value = True Or If txtuser.Text Then
+    Inc Application.Busy
+    If chkalluser.Value = True Then
+      xUserList = GetUserListRange(dtfir.Value, dtlast.Value)
+    Else
+      xUserList = [Trim(txtuser.Text)]
+    Endif
+    xPath = modCHTMLInvoice.GetSummaryInvoiceContentBetweenGroupUser(modDatabase.$syConn, Trim(txtfrombill.Text), Trim(txttobill.Text), Trim(txtfromrecpt.Text), Trim(txttorecpt.Text), xUserList, cmbcomp.Text, $tblpatbilling, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+Public Sub btnsummary_Click()
+
+  Dim xPath As String
+  Dim xUserList As String[]
+
+  If chkalluser.Value = True Or If txtuser.Text Then
+    Inc Application.Busy
+    If chkalluser.Value = True Then
+      xUserList = GetUserListRange(dtfir.Value, dtlast.Value)
+    Else
+      xUserList = [Trim(txtuser.Text)]
+    Endif
+    xPath = modCHTMLInvoice.SummaryReceiveBillingSIngleUser(modDatabase.$syConn, Trim(txtfrombill.Text), Trim(txttobill.Text), Trim(txtfromrecpt.Text), Trim(txttorecpt.Text), xUserList, cmbcomp.Text, $tblpatbilldetail, $tbltempbilldetail)
+    Dec Application.Busy
+    modControlSub.OpenHTMLPreview("", xPath, "ReportSize")
+  Endif
+
+End
+
+''--------------------------------------- SUMMARY -----------------------------
+Public Sub btnsummrefresh_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim xrecpt As Float
+  Dim xrecv As Float
+  Dim xpaid As Float
+  Dim xwait As Float
+  Dim xnoninv As Float
+
+  If txtuser.Text Then
+    res = modDatabase.$syConn.Exec("select SUM(fldreceivedamt+fldcurdeposit) as totrecv from " & $tbltempbilldetail & " where flduserid=&1", Trim(txtuser.Text))
+    If res.Available Then
+      If res!totrecv Then
+        xrecpt = res!totrecv
+      Else
+        xrecpt = 0
+      Endif
+    Else
+      xrecpt = 0
+    Endif
+
+    res1 = modDatabase.$syConn.Exec("select SUM(fldreceivedamt+fldcurdeposit) as totrecv from " & $tblpatbilldetail & " where flduserid=&1", Trim(txtuser.Text))
+    If res1.Available Then
+      If res1!totrecv Then
+        xrecv = res1!totrecv
+      Else
+        xrecv = 0
+      Endif
+    Else
+      xrecv = 0
+    Endif
+
+    res2 = modDatabase.$syConn.Exec("select SUM(fldrecvamt) as paidtot from tblusercollection where fldcashier=&1", Trim(txtuser.Text))
+    If res2.Available Then
+      If res2!paidtot Then
+        xpaid = res2!paidtot
+      Else
+        xpaid = 0
+      Endif
+    Else
+      xpaid = 0
+    Endif
+
+    xwait = (xrecpt + xrecv) - xpaid
+
+    res3 = modDatabase.$syConn.Exec("select SUM(fldditemamt) as noninvamt from " & $tblpatbilling & " where fldprint=&1 and fldsave=&2 and flduserid=&3", False, True, Trim(txtuser.Text))
+    If res3.Available Then
+      If res3!noninvamt Then
+        xnoninv = res3!noninvamt
+      Else
+        xnoninv = 0
+      Endif
+    Else
+      xnoninv = 0
+    Endif
+  Endif
+
+  txtsummrecv.Value = xrecv
+  txtsummpaid.Value = xpaid
+  txtsummpend.Value = xwait
+  txtnotinvoi.Value = xnoninv
+
+End
+
+Public Sub txtuser_KeyPress()
+
+  modGeneralMain.InputTextKeyOnly()
+
+End
+
+Public Sub txtfrombill_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End
+
+Public Sub txttobill_KeyPress()
+
+  modGeneralMain.InputUpCaseOnly()
+
+End

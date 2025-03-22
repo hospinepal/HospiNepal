@@ -1,0 +1,3041 @@
+' Gambas class file
+
+Private $ProgressBar1 As ProgressBar
+Private $decrypt As Boolean
+Private xGridData As Variant[]
+Private $HMISChapters As String[]
+Private $DHISVar As Variant[]
+Private $xPass As String
+Private $LoadZero As String
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeEmbedForms(Me, Panel1, "Vertical")
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  If MMain.$WebReport = "Multiple" Then
+    If modBasic.$HospCode Then
+      ' cmblocation.Text = "Hospital"
+      cmblocation.Text = modDataRepo.$RepositoryMode
+      cmbvalue.Text = modBasic.$HospCode
+      Panel8.Enabled = False
+    Else
+      cmblocation.List = ["Hospital", "Municipality", "Category", "District", "Province"]
+    Endif
+  Else
+    Panel8.Visible = False
+  Endif
+  btnhmisregist.Menu = "mnuhmisregist"
+
+  $HMISChapters = ["Hospital Summary Dataset", "Hospital Indoor Service", "Inpatient Morbidity", "Hospital Mortality", "Maternal And New-born Health", "New Born Care", "Non Communicable Disease", "New Outpatient Morbidity", "Common Emergency Diseases", "Laboratory Services", "Geriatric Services", "One-Stop Crisis Management Center", "Social Service Unit"]
+  modHMISRep.LoadHMISLists()
+  modHMISRep.GetHMISCollection()
+  cmbagegroup.List = ["HMIS", "Default"]
+  cmbagegroup.Text = "HMIS"
+  dtfir.Value = Now()
+  dtlast.Value = Now()
+  modHMISRep.LoadHMISTree(TreeView1)
+  $LoadZero = modSettings.ShowSettingFromFIle("HMISReporting/UploadZero")
+
+  If modBasic.$SuperUser = True Then
+    $decrypt = True
+  Else
+    $decrypt = False
+  Endif
+  dtfir_Click()
+  dtlast_Click()
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub cmblocation_Click()
+
+  cmbvalue.Clear()
+  If cmblocation.Text Then
+    cmbvalue.List = modDataRepo.GetRepoValueListType(cmblocation.Text)
+  Endif
+
+End
+
+Public Sub dtfir_Click()
+
+  txtnepfir.Text = modDate.ConvertToLocaldate(dtfir.Value)
+
+End
+
+Public Sub dtlast_Click()
+
+  txtneplast.Text = modDate.ConvertToLocaldate(dtlast.Value)
+
+End
+
+Public Sub txtnepfir_LostFocus()
+
+  dtfir.Value = modDate.ConvertToEnglishdate(txtnepfir.Text)
+
+End
+
+Public Sub txtneplast_LostFocus()
+
+  dtlast.Value = modDate.ConvertToEnglishdate(txtneplast.Text)
+
+End
+
+Public Sub btnexport_Click()
+
+  modCHTMLReport.ExportGridToHTML(GridView1, TreeView1.Current.Text, modReportVar.GetDateTimeReport(dtfir.Value, gb.MediumDate) & " To " & modReportVar.GetDateTimeReport(dtlast.Value, gb.MediumDate))
+
+End
+
+''================ Activity ==========
+Public Sub mnurecode_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim xPass As String
+
+  xPass = InputPassword("Provide Root Password", "Verification", "")
+  If modPassword.GetSuperVerification(modBasic.$lbluser, xPass) = True Then
+    res = modDatabase.$myConn.Exec("select fldid from tblpatfindings where fldtime>=&1 and fldtime<=&2 and (fldtype=&3 or fldtype=&4) and fldcodenew IS NULL", modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Provisional Diagnosis", "Final Diagnosis")
+    If res.Available Then
+      Inc Application.Busy
+      For Each res
+        res1 = modDatabase.$myConn.Edit("tblpatfindings", "fldid=&1", res["fldid"])
+        res1["fldcodenew"] = modPathology.GetNewCodeFromOld(res1["fldcodeid"])
+        res1.Update
+      Next
+      Dec Application.Busy
+      Message.Info("Conversion Completed", "OK")
+    Endif
+  Else
+    Message.Info("Incorrect Root Password", ("OK"))
+  Endif
+
+End
+
+''============== HMIS Reports =============
+Private Sub ShowSelectedTables(sCategory As String, sItem As String)
+
+  If sCategory = "Hospital Summary Dataset" Then
+    If sItem = "Hospital Services" Then
+      GetHospitalService()
+    Else If sItem = "Emergency Services" Then
+      GetEmergencyServices()
+    Else If sItem = "Diagnostic/Other Services" Then
+      GetRadiologyService()
+    Else If sItem = "Free Service for Impoverished Citizen" Then
+      GetFreeServiceImprovised()
+    Endif
+
+  Else If sCategory = "Hospital Indoor Service" Then
+    If sItem = "Inpatient Outcome" Then
+      ShowInpatientsOutcome()
+    Else If sItem = "Neonate Form" Then
+      GetGravidaReport()
+    Else If sItem = "Maternal Age" Then
+      FillMaternalAgeData()
+    Else If sItem = "Medico-Legal Cases" Then
+      GetMedicoLegalCases()
+    Else If sItem = "Type of Surgeries" Then
+      GetProcedureReportHMIS()
+    Else If sItem = "Death Information" Then
+      GetDeathReportHMIS()
+    Else If sItem = "Social Security Programme" Then
+      GetFreeServicesHMIS()
+    Else If sItem = "Free health service summary" Then
+      GetCostExemptionReport()
+    Endif
+
+  Else If sCategory = "Inpatient Morbidity" Then
+    GetAgeWiseMorbidity("InPatient", sItem)
+
+  Else If sCategory = "Hospital Mortality" Then
+    GetAgeWiseMorbidity("Mortality", sItem)
+
+  Else If sCategory = "Maternal And New-born Health" Then
+    If sItem = "ANC Services" Then
+      ANCVisitreportAge()
+    Else If sItem = "Delivery Service" Then
+      DeliverySPotAssist()
+    Else If sItem = "Delivery Type" Then
+      DeliveryTypeReport()
+    Else If sItem = "Delivery Outcome" Then
+      GetLiveDeliveryBabyQTY()
+    Else If sItem = "Stillbirth" Then
+      StillBirthsCount()
+    Else If sItem = "Incentive" Then
+      MaternalIncentiveCount()
+    Else If sItem = "Obstetric Complications" Then
+      ObsComplicaReport()
+    Else If sItem = "Blood Transfusion" Then
+      TransfusionCount()
+    Else If sItem = "Birth Weight" Then
+      BirthWeightreportCompli()
+    Else If sItem = "PNC Visit" Then
+      PNCCheckupCount()
+    Else If sItem = "Maternal Death" Then
+      MaternalDeathCount()
+    Else If sItem = "Neonatal Death" Then
+      NeonatalDeathCount()
+    Else If sItem = "Safe Abortion Service" Then
+    Endif
+
+  Else If sCategory = "Family Planning Programme" Then
+
+  Else If sCategory = "New Born Care" Then
+    If sItem = "Number of sick babies admitted at SNCU/NICU/KMCU" Then
+      GetSickBabiesAdmittedNICU()
+    Else If sItem = "Management & Treatment Outocmes at SNCU/NICU/KMCU" Then
+      GetTreatmentOutcomeNICU()
+    Else If sItem = "Number managed with KMC at SNCU/NICU/KMCU" Then
+      GetKMCManagedNICU()
+    Endif
+
+  Else If sCategory = "Non Communicable Disease" Then
+    If sItem = "Number of NCD cases on Treatment (OPD/Emergency)" Then
+      GetTreatmentOpdErNCD()
+    Else If sItem = "Number of NCD Cause-Specific Deaths" Then
+      GetNCDSpecificDeath()
+    Else If sItem = "Total number of new cancers cases managed" Then
+      GetNewCancerManageNCD()
+    Else If sItem = "Number of Injuries" Then
+      GetInjuryReportNCD()
+    Else If sItem = "Number of Injury Deaths" Then
+      GetInuryDeathReportNCD()
+    Else If sItem = "Number of Mental Health Cases on Treatment (OPD/Emergency)" Then
+      GetMentalTreatOpdErNCD()
+    Else If sItem = "Type of Mental Health Cases" Then
+      GetMentalHealthTypeNCD()
+    Else If sItem = "Control and Follow Up Cases for Hypertension and Diabetes" Then
+      GetHyperTDiabetesNCD()
+    Endif
+
+  Else If sCategory = "New Outpatient Morbidity" Then
+    GetNewOPDMorbidity(sItem)
+
+  Else If sCategory = "Common Emergency Diseases" Then
+    GetNewEmerMorbidity(sItem)
+
+  Else If sCategory = "Laboratory Services" Then
+    GetLaboratoryHMISReport(sItem)
+
+  Else If sCategory = "Geriatric Services" Then
+    If sItem = "Age Grouping" Then
+      GetGeriatricAgeGrouping()
+    Else If sItem = "Caste/Ethnicity" Then
+      GetGeriatricEthnicity()
+    Else If sItem = "HI Enrollment" Then
+      GetGeriatricHIEnrollment()
+    Else If sItem = "Types of services" Then
+      GetGeriatricServiceType()
+    Else If sItem = "Source of expenses" Then
+      GetGeriatricSourceExpense()
+    Else If sItem = "Hospital department" Then
+      GetGeriatricHospDepartment()
+    Else If sItem = "Disease" Then
+      GetGeriatricDiseaseReport()
+    Endif
+
+  Else If sCategory = "One-Stop Crisis Management Center" Then
+    If sItem = "Age Group and Sex" Then
+      GetOCMCAgeGroupingSex()
+    Else If sItem = "Disability" Then
+      GetOCMCDisability()
+    Else If sItem = "Number of reported case by service" Then
+      GetOCMCCaseByService()
+    Else If sItem = "Cause of violence" Then
+      GetOCMCCauseViolence()
+    Else If sItem = "Types of violence" Then
+      GetOCMCTypeViolence()
+    Else If sItem = "Number of new cases by Caste/Ethnicity" Then
+      GetOCMCNewCaseEthnicity()
+    Else If sItem = "Relationship of the perpetrator" Then
+      GetOCMCRelationPerpret()
+    Else If sItem = "Age and Sex of Perpetrator" Then
+      GetOCMCAgeSexPrepret()
+    Endif
+
+  Else If sCategory = "Social Service Unit" Then
+    If sItem = "Age Group and Sex" Then
+      GetSocialAgeGroupSex()
+    Else If sItem = "Caste and Ethinicity" Then
+      GetSocialEthnicity()
+    Else If sItem = "HI Enrollment" Then
+      GetSocialHIEnrollment()
+    Else If sItem = "Hospital Department" Then
+      GetSocialHospDepartment()
+    Else If sItem = "Target group" Then
+      GetSocialTargetGroup()
+    Endif
+
+  Else If sCategory = "Other Reports" Then
+    If sItem = "Bipanna Report" Then
+      GetBipannaStatistics()
+    Else If sItem = "Total Service Recepients" Then
+      GetHospServiceSelectedOnly("%")
+    Else If sItem = "New Service Recepients" Then
+      GetHospServiceSelectedOnly("NEW")
+    Else If sItem = "Service Recepients based on Ethnicity" Then
+      GetEthnicReport()
+    Endif
+
+  Endif
+
+  ' GetAgeWiseMorbidity("General")
+
+End
+
+Public Sub btnrefresh_Click()
+
+  If TreeView1.Current.Picture = Picture["icons/coll4.png"] Then
+    GridView1.Clear()
+    ShowSelectedTables(TreeView1.Current.ParentKey, TreeView1.Current.Text)
+
+    If modHMISTag.$APIMonth Then
+      $DHISVar = modHMISTag.SetTableCellTags(TreeView1.Current.ParentKey, TreeView1.Current.Text)
+      If $DHISVar And If $DHISVar.Count Then
+        btndhis.Enabled = True
+      Else
+        btndhis.Enabled = False
+      Endif
+    Endif
+  Endif
+
+End
+
+Private Function RemoveNullHMISVar(sVar As Variant[]) As Variant[]
+
+  Dim Row As Integer
+  Dim xVar As Variant[]
+
+  xVar = New Variant[]
+  For Row = 0 To sVar.Count - 1
+    If sVar[Row]["value"] And If CInt(sVar[Row]["value"]) > 0 Then
+      xVar.Add(sVar[Row])
+    Endif
+  Next
+
+  Return xVar
+
+End
+
+''================== API =====================
+Public Sub btndhis_Click()
+
+  Dim xdate As String
+  Dim xdaterange As Date[]
+  Dim xDataSet As String
+
+  Dim xVar As Variant[]
+  Dim aVar As Variant[]
+  Dim hForm As CDHISapi
+  Dim xstatus As String
+  Dim xmsg As String
+
+  If btndhis.Text = "Select Date" Then
+    xdate = InputMask("Select BS Date", "0000/00", "BS Date", "")
+    If xdate Then
+      xdaterange = modDate.GetBSDateRange(xdate)
+      If xdaterange Then
+        btndhis.Text = "Upload"
+        dtfir.Value = xdaterange[0]
+        dtlast.Value = xdaterange[1]
+        dtfir.Enabled = False
+        dtlast.Enabled = False
+        modHMISTag.$APIMonth = xdate
+        txtnepfir.Text = modDate.ConvertToLocaldate(dtfir.Value)
+        txtneplast.Text = modDate.ConvertToLocaldate(dtlast.Value)
+        txtnepfir.Enabled = False
+        txtneplast.Enabled = False
+        btndhis.Enabled = False
+        mnurecode.Enabled = True
+      Endif
+    Endif
+
+  Else If btndhis.Text = "Upload" Then
+    If Not $xPass Then
+      $xPass = InputPassword("Provide Root Password", "Verification", "")
+    Endif
+    If modPassword.GetSuperVerification(modBasic.$lbluser, $xPass) = True Then
+
+      If TreeView1.Current.ParentKey = "Inpatient Morbidity" Then
+        UploadInpatientDiagnosis("Inpatient Morbidity")
+      Else If TreeView1.Current.ParentKey = "Hospital Mortality" Then
+        UploadInpatientDiagnosis("Hospital Mortality")
+
+      Else If TreeView1.Current.Text = "Nutritional & Metabolic Disorder" And If TreeView1.Current.ParentKey = "New Outpatient Morbidity" Then
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD1")
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD2")
+      Else If TreeView1.Current.Text = "Mental Health related problems" And If TreeView1.Current.ParentKey = "New Outpatient Morbidity" Then
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD3")
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD4")
+      Else If TreeView1.Current.Text = "Orthopaedic Problems" And If TreeView1.Current.ParentKey = "New Outpatient Morbidity" Then
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD4")
+        UploadOutPatientMorbiditySelected(TreeView1.Current.Text, "OPD5")
+
+      Else
+        If TreeView1.Current.Text = "Obstetric Complications" And If TreeView1.Current.ParentKey = "Maternal And New-born Health" Then
+          aVar = modHMISTag.GetDHISJsonSecond($DHISVar, xGridData)
+        Else
+          aVar = modHMISTag.GetDHISJson($DHISVar, xGridData)
+        Endif
+        If $LoadZero = "Disable" Then
+          xVar = RemoveNullHMISVar(aVar)
+        Else
+          xVar = aVar
+        Endif
+
+        xDataSet = modHMISTag.GetHMISDataSetValue(TreeView1.Current.ParentKey, TreeView1.Current.Text)
+        If xDataSet Then
+          hForm = New CDHISapi(xVar, modHMISTag.$APIMonth, xDataSet)
+          xstatus = hForm.GetAPIOutput()
+          If xstatus Then
+            If xstatus = "SUCCESS" Then
+              Message.Info(xstatus, "OK")
+            Else
+              xmsg = MessageHtml("API Response", xstatus, ["OK"])
+            Endif
+          Endif
+        Endif
+      Endif
+
+    Else
+      Message.Info("Incorrect Root Password", ("OK"))
+    Endif
+  Endif
+
+End
+
+Private Sub UploadOutPatientMorbiditySelected(sHeading As String, xPage As String)
+
+  Dim codLst As String[]
+  Dim xDataSet As String
+  Dim xcoll As String[]
+  Dim xDHISVar As Variant[]
+
+  Dim xVar As Variant[]
+  Dim aVar As Variant[]
+  Dim hForm As CDHISapi
+  Dim xstatus As String
+  Dim xmsg As String
+
+  codLst = modHMISRep.GetOPDMorbidityCodes(sHeading, xPage)
+  If codLst.Count Then
+    xDHISVar = New Variant[]
+    For Each xcoll In $DHISVar
+      If codLst.Exist(xcoll[0]) = True Then
+        xDHISVar.Add(xcoll)
+      Endif
+    Next
+
+    aVar = modHMISTag.GetDHISJson(xDHISVar, xGridData)
+    If $LoadZero = "Disable" Then
+      xVar = RemoveNullHMISVar(aVar)
+    Else
+      xVar = aVar
+    Endif
+    xDataSet = modHMISTag.GetHMISDataSetValue("New Outpatient Morbidity", sHeading, xPage)
+    If xDataSet Then
+      hForm = New CDHISapi(xVar, modHMISTag.$APIMonth, xDataSet)
+      xstatus = hForm.GetAPIOutput()
+      If xstatus Then
+        If xstatus = "SUCCESS" Then
+          Message.Info(xstatus, "OK")
+        Else
+          xmsg = MessageHtml("API Response", xstatus, ["OK"])
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Private Sub UploadInpatientDiagnosis(sCategory As String)
+
+  Dim sColl As Collection
+  Dim xGrid As Variant[]
+
+  Dim xVar As Variant[]
+  Dim aVar As Variant[]
+  Dim hForm As CDHISapi
+  Dim xstatus As String
+  Dim xdiagno As String
+  Dim xDataSet As String
+  Dim xmsg As String
+  Dim xlstmsg As String
+
+  xDataSet = modHMISTag.GetHMISDataSetValue(sCategory, "")
+  Inc Application.Busy
+  For Each sColl In xGridData
+    xGrid = New Variant[]
+    xGrid.Add(sColl)
+    xdiagno = modString.GetValueFromCSV(sColl[0], modHelpVariable.$docsDirectory &/ "ICD11_DHIS2UIDs.csv", 1, 0, ";")
+    If xdiagno Then
+      aVar = modHMISTag.GetDHISJsonDiagno($DHISVar, xGrid)
+      If $LoadZero = "Disable" Then
+        xVar = RemoveNullHMISVar(aVar)
+      Else
+        xVar = aVar
+      Endif
+      hForm = New CDHISapi(xVar, modHMISTag.$APIMonth, xDataSet, xdiagno)
+      xstatus = hForm.GetAPIOutput()
+      If xstatus Then
+        If xstatus = "SUCCESS" Then
+          xmsg = ""
+        Else
+          xmsg = xmsg & xstatus & gb.NewLine
+        Endif
+      Endif
+    Endif
+  Next
+  Dec Application.Busy
+
+  If Trim(xmsg) Then
+    xlstmsg = MessageHtml("API Response", xmsg, ["OK"])
+  Else
+    Message.Info("SUCCESS", "OK")
+  Endif
+
+End
+
+''======================== SETTINGS ==========================
+Public Sub mnuapiraram_Click()
+
+  Dim hForm As FmAPISetting
+
+  hForm = New FmAPISetting("DHIS2")
+  hForm.ShowModal
+
+End
+
+Public Sub mnuobscompli_Click()
+
+  Dim xList As String[]
+  Dim xx As String
+  Dim xfinal As String[]
+  Dim hForm As FmSelectionList
+  Dim xstruct As String[]
+
+  xfinal = New String[]
+  xList = modHMISRep.GetHMISObsComplicationList()
+  For Each xx In xList
+    xfinal.Add(Split(xx, ";")[0])
+  Next
+  xstruct = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldhead) as col from tblstructexam"))
+  hForm = New FmSelectionList("ObsComplications", xfinal, xstruct)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnudelcomplication_Click()
+
+  Dim xList As String[] = ["Major Malformations", "Minor Malformations", "Other Malformations"]
+  Dim hForm As FmSelectionList
+  Dim xstruct As String[]
+
+  xstruct = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(flditem) as col from tbldeldeformity"))
+  hForm = New FmSelectionList("BirthDeformity", xList, xstruct)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnubabycondition_Click()
+
+  Dim xList As String[] = ["Normal", "Infection", "Asphyxia", "Hypothermia", "Jaundice"]
+  Dim hForm As FmSelectionList
+  Dim xstruct As String[]
+
+  xstruct = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(flditem) as col from tbldelcomplication"))
+  hForm = New FmSelectionList("BabyConditions", xList, xstruct)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnubipanasetting_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("SchemeTypes", ["Bipanna Nagarik", "Senior Citizens", "OCMC", "Social Service", "Health Insurance"], modNonMedical.FillDiscountCombo())
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuemergency_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("OutPatientDept", ["Emergency"], modGeneral.GetDepartmentsForOPDBoth())
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuindoor_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("InPatientDept", ["SNCU/NICU/KMCU"], modGeneral.GetDepartmentAllList("Patient Ward"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuipservices_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("IPServices", modHMISRep.$HMISIPServiceList, modGeneral.GetDepartmentAllList("Patient Ward"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuservicetype_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("OPDVisits", modHMISRep.$HMISConsultTypes, modGeneral.GetDepartmentsForOPDBoth())
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuancvisit_Click()
+
+  Dim hForm As FmSelectionList
+  Dim xList As String[]
+  Dim aDepLst As String[]
+
+  xList = New String[]
+  aDepLst = modGeneral.GetDepartmentsForOPDBoth()
+  If aDepLst And If aDepLst.Count Then
+    xList.Insert(aDepLst)
+  Endif
+  xList.Add("ANC Visit")
+  xList.Add("PNC Visit")
+  hForm = New FmSelectionList("ObstetricVisits", ["ANC", "PNC"], xList)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnudiagnostic_Click()
+
+  Dim hForm As FmSelectionList
+  Dim xList As String[]
+
+  xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select flditemname as col from tblservicecost"))
+  hForm = New FmSelectionList("DiagnosticServices", modHMISRep.$HMISDiagnosticList, xList)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnudeltype_Click()
+
+  Dim xlst As String[]
+  Dim xList As String[]
+  Dim hForm As FmSelectionList
+
+  xlst = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select flditem as col from tbldelivery"))
+  If xlst And If xlst.Count Then
+    xList = xlst
+  Else
+    xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(flddeltype) as col from tblconfinement"))
+  Endif
+  If xList Then
+    xList.Sort()
+  Endif
+  hForm = New FmSelectionList("DeliveryTypes", ["Spontaneous", "Vacuum", "Forceps", "Caeserian"], xList)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnulabour_Click()
+
+  Dim xlst As String[]
+  Dim xList As String[]
+  Dim hForm As FmSelectionList
+
+  xlst = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select flditem as col from tbldellabour"))
+  If xlst And If xlst.Count Then
+    xList = xlst
+  Else
+    xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldlabour) as col from tblconfinement"))
+  Endif
+  If xList Then
+    xList.Sort()
+  Endif
+  hForm = New FmSelectionList("LabourInduction", ["Spontaneous", "Augmentation", "Induced Labour"], xList)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnufreeservice_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("SocialSecurity", modHMISRep.$HMISSocialSecurity, modNonMedical.FillDiscountCombo())
+  hForm.ShowModal()
+
+End
+
+Public Sub mnusocial_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("SocialServiceUnit", modHMISRep.$HMISSocialUnitList, modNonMedical.FillDiscountCombo())
+  hForm.ShowModal()
+
+End
+
+' Public Sub mnulablist_Click()
+'
+'   Dim xlst As String[]
+'   Dim xList As String[]
+'   Dim hForm As FmSelectionList
+'
+'   xlst = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select fldtestid  as col from tbltest"))
+'   If xlst And If xlst.Count Then
+'     xList = xlst
+'   Else
+'     xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldtestid)  as col from tblpatlabtest"))
+'   Endif
+'   xList.Sort()
+'   hForm = New FmSelectionList("Laboratory", modHMISRep.$HMISLabCategory, xList)
+'   hForm.ShowModal()
+'
+' End
+
+Public Sub mnuculture_Click()
+
+  Dim xlst As String[]
+  Dim xList As String[]
+  Dim hForm As FmSelectionList
+
+  xlst = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select fldtestid  as col from tbltest"))
+  If xlst And If xlst.Count Then
+    xList = xlst
+  Else
+    xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldtestid)  as col from tblpatlabtest"))
+  Endif
+  If xList Then
+    xList.Sort()
+  Endif
+
+  hForm = New FmSelectionList("TestNames", ["CultureSensitivity"], xList)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuspecimen_Click()
+
+  Dim xList As String[]
+  Dim hForm As FmSelectionList
+
+  xList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldsampletype)  as col from tblpatlabtest"))
+  If xList Then
+    xList.Sort()
+  Endif
+
+  hForm = New FmSelectionList("Specimens", modHMISRep.$HMISCultureSpecimens, xList)
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuhematology_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("Hematology", modHMISRep.$HMISHematology, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuimmunology_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("Immunology", modHMISRep.$HMISImmunology, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnubiochemistry_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("Biochemistry", modHMISRep.$HMISBiochemistry, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnubacteriology_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("Bacteriology", modHMISRep.$HMISBactriology, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuvirology_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("Virology", modHMISRep.$HMISVirology, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuparasitology_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("Parasitology", modHMISRep.$HMISParasitology, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuhormone_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("Hormones", modHMISRep.$HMISHormones, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnudruganalysis_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("DrugAnalysis", modHMISRep.$HMISDrugAnalysis, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnucytology_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("HistoCytology", modHMISRep.$HMISCytology, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnuimmunohisto_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("ImmunoHistochemistry", modHMISRep.$HMISImmunoHisto, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+Public Sub mnumolecular_Click()
+
+  Dim hForm As FmSelectionList
+
+  hForm = New FmSelectionList("MolecularLab", modHMISRep.$HMISMolecular, modMedicine.FillLabTestCombo("%"))
+  hForm.ShowModal()
+
+End
+
+''------------------------- Data Load -------------------
+Private Sub LoadVariableToGrid(xFinal As Variant[], xGridView As GridView)
+
+  Dim xRowVal As Collection
+  Dim Row As Integer
+  Dim Column As Integer
+
+  xGridData = xFinal
+  For Row = 0 To xFinal.Count - 1
+    xRowVal = xFinal[Row]
+    For Column = 0 To xGridView.Columns.Count - 1
+      xGridView[Row, Column].Text = xRowVal[CStr(Column)]
+    Next
+  Next
+
+End
+
+''=========================== REGISTERS =====================================
+''HMIS-1.1 Master
+Public Sub mnuhmis11_Click()
+
+  Dim xPath As String
+  Dim ageList As String[]
+  Dim ethList As String[]
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = modHMISRep.GetMasterAgeHMISList()
+  Else
+    ageList = modMedReports.AgeGroupGeneralList()
+  Endif
+  ethList = ["1", "2", "3", "4", "5", "6"]
+
+  Inc Application.Busy
+  xPath = modHMISReport.HMISRegister11(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text, ageList, ethList, $decrypt)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+''HMIS-1.3 OPD
+Public Sub mnuhmis13_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHMISReport.HMISRegister13(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text, $decrypt)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+''HMIS-8.1 Admission
+Public Sub mnuhmis81_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHMISReport.HMISRegister81(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text, $decrypt)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+''HMIS-8.2 Discharge
+Public Sub mnuhmis82_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHMISReport.HMISRegister82(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text, $decrypt)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+''HMIS-8.3 Emergency SERVICE
+Public Sub mnuhmis83_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHMISReport.HMISRegister83(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text, $decrypt)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+''EWARS Report
+Public Sub mnuewarsreport_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHMISReport.EWARSRegister(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+''bipanna
+Public Sub mnuanusuchikha_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHMISReport.BipannaRegister(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+''HMIS-3.6 Maternal and Newborn SERVICE
+Public Sub mnuhmis36_Click()
+
+  Dim xPath As String
+
+  Inc Application.Busy
+  xPath = modHMISMat.HMISRegister36(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text, $decrypt)
+  modHMISRep.ClearHMISCollection()
+  Dec Application.Busy
+  modControlSub.DisplayReportExport(xPath)
+
+End
+
+Public Sub Button1_Click()
+
+  If modBasic.$RightPanelURL = "http://hmis.gov.np/hmis/dhis-web-commons/security/login.action" Then
+    modGeneralMain.$RightAdView.Url = "http://hmis.gov.np/hmis/dhis-web-dataentry/index.action"
+  Endif
+
+End
+
+''============================== ALL REPORTS ==========================
+Public Sub btnall_Click()
+
+  Dim chapList As String[]
+  Dim CForm As CHMISRepo
+
+  chapList = SelectListView(("Select Components"), $HMISChapters, False)
+  If chapList And If chapList.Count Then
+
+    CForm = New CHMISRepo(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+
+    Inc Application.Busy
+    $ProgressBar1 = New ProgressBar(Me)
+
+    If chapList.Exist("Hospital Summary Dataset") = True Then
+      CForm.SummaryOfServicesTotal()
+
+    Endif
+
+    If chapList.Exist("Hospital Indoor Service") = True Then
+      CForm.SummaryOfIndoorServicesTotal()
+    Endif
+
+    If chapList.Exist("Inpatient Morbidity") = True Then
+      CForm.InpatientMorbidity()
+    Endif
+
+    If chapList.Exist("Hospital Mortality") = True Then
+      CForm.HospitalMortality()
+    Endif
+
+    If chapList.Exist("Maternal And New-born Health") = True Then
+      CForm.SafeMotherhoodTotal()
+    Endif
+
+    If chapList.Exist("New Born Care") = True Then
+      CForm.NewBornCareTotal()
+    Endif
+
+    If chapList.Exist("Non Communicable Disease") = True Then
+      CForm.NonCommunicableDiseaseTotal()
+    Endif
+
+    If chapList.Exist("New Outpatient Morbidity") = True Then
+      CForm.NewOutMorbidityTotal()
+    Endif
+
+    If chapList.Exist("Common Emergency Diseases") = True Then
+      CForm.CommEmergencyDiseaseTotal()
+    Endif
+
+    If chapList.Exist("Laboratory Services") = True Then
+      CForm.LaboratoryServicesTotal()
+    Endif
+
+    If chapList.Exist("Geriatric Services") = True Then
+      CForm.GeriarticServicesTotal()
+    Endif
+
+    If chapList.Exist("One-Stop Crisis Management Center") = True Then
+      CForm.OneStopCrisisTotal()
+    Endif
+
+    If chapList.Exist("Social Service Unit") = True Then
+      CForm.SocialServicesTotal()
+    Endif
+    Dec Application.Busy
+    CForm.CompleteReport()
+
+  Endif
+
+End
+
+''============================Hospital Service======================
+Private Sub GetHospitalService()
+
+  Dim ageList As String[]
+  Dim xFinal As Variant[]
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = modHMISRep.GetMasterAgeHMISList()
+  Else
+    ageList = modMedReports.AgeGroupGeneralList()
+  Endif
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 5
+  GridView1.Rows.Count = ageList.Count + 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Age Group"
+    .Columns[1].Text = "New Female"
+    .Columns[2].Text = "New Male"
+    .Columns[3].Text = "Total Female"
+    .Columns[4].Text = "Total Male"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetHospitalService(ageList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetEmergencyServices()
+
+  Dim ageList As String[]
+
+  Dim xFinal As Variant[]
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = modHMISRep.GetMasterAgeHMISList()
+  Else
+    ageList = modMedReports.AgeGroupGeneralList()
+  Endif
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = ageList.Count + 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Age Group"
+    .Columns[1].Text = "Total Female"
+    .Columns[2].Text = "Total Male"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetEmergencyServices(ageList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetRadiologyService()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = modHMISRep.$HMISDiagnosticList.Count + 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Unit"
+    .Columns[2].Text = "Number"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetRadiologyService(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetFreeServiceImprovised()
+
+  Dim xFinal As Variant[]
+  Dim xFreeList As String[]
+
+  xFreeList = modHMISRep.$HMISFreeDisesList
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = xFreeList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Female"
+    .Columns[2].Text = "Male"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubFreeServiceForPoor(xFreeList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''========================Indoor services=========================
+
+Private Sub ShowInpatientsOutcome()
+
+  Dim ageList As String[]
+  Dim xFinal As Variant[]
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = modHMISRep.GetAgeGroupingHMIS()
+  Else
+    ageList = modMedReports.AgeGroupGeneralList()
+  Endif
+  GridView1.Clear()
+  GridView1.Columns.Count = 15
+  GridView1.Rows.Count = ageList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Age Group"
+
+    .Columns[1].Text = "Recovered/Cured" & gb.NewLine & "Female"
+    .Columns[2].Text = "Recovered/Cured" & gb.NewLine & "Male"
+
+    .Columns[3].Text = "Stable" & gb.NewLine & "Female"
+    .Columns[4].Text = "Stable" & gb.NewLine & "Male"
+
+    .Columns[5].Text = "Referred Out" & gb.NewLine & "Female"
+    .Columns[6].Text = "Referred Out" & gb.NewLine & "Male"
+
+    .Columns[7].Text = "DOPR/LAMA" & gb.NewLine & "Female"
+    .Columns[8].Text = "DOPR/LAMA" & gb.NewLine & "Male"
+
+    .Columns[9].Text = "Absconded" & gb.NewLine & "Female"
+    .Columns[10].Text = "Absconded" & gb.NewLine & "Male"
+
+    .Columns[11].Text = "Death<48 Hours" & gb.NewLine & "Female"
+    .Columns[12].Text = "Death<48 Hours" & gb.NewLine & "Male"
+
+    .Columns[13].Text = "Death>=48 Hours" & gb.NewLine & "Female"
+    .Columns[14].Text = "Death>=48 Hours" & gb.NewLine & "Male"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubShowInpatientsOutcome(ageList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetGravidaReport()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 5
+  GridView1.Rows.Count = 3
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Gravida"
+    .Columns[1].Text = "22-27 Week"
+    .Columns[2].Text = "28-36 Week"
+    .Columns[3].Text = "37-41 Week"
+    .Columns[4].Text = ">=42 Week"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetGravidaReport(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub FillMaternalAgeData()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 5
+  GridView1.Rows.Count = 3
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Mother Age"
+    .Columns[1].Text = "22-27 Week"
+    .Columns[2].Text = "28-36 Week"
+    .Columns[3].Text = "37-41 Week"
+    .Columns[4].Text = ">=42 Week"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubFillMaternalAgeData(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetMedicoLegalCases()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Female"
+    .Columns[1].Text = "Male"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetMedicoLegalCases(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetProcedureReportHMIS()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 8
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Surgery Type"
+    .Columns[1].Text = "Female"
+    .Columns[2].Text = "Male"
+    .Columns[3].Text = "Post-Op Infection"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetProcedureReportHMIS(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Public Sub GetDeathReportHMIS()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 6
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Category"
+    .Columns[1].Text = "Female"
+    .Columns[2].Text = "Male"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetDeathReportHMIS(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetFreeServicesHMIS()
+
+  Dim xFinal As Variant[]
+  Dim i As Integer
+
+  GridView1.Clear()
+  GridView1.Columns.Count = modHMISRep.$HMISSocialSecurity.Count + 1
+  GridView1.Rows.Count = 4
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    For i = 0 To modHMISRep.$HMISSocialSecurity.Count - 1
+      .Columns[i + 1].Width = 75 * modBasic.$AppWidthRatio
+    Next
+
+    .Columns[0].Text = "Program"
+    For i = 0 To modHMISRep.$HMISSocialSecurity.Count - 1
+      .Columns[i + 1].Text = modHMISRep.$HMISSocialSecurity[i]
+    Next
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetFreeServicesHMIS(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetCostExemptionReport()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Exemption"
+    .Columns[1].Text = "Patient Count"
+    .Columns[2].Text = "Total Exemption"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetCostExemptionReport(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetAgeWiseMorbidity(sType As String, sChapter As String)
+
+  Dim ageList As String[]
+  Dim xage As String
+  Dim digList As String[]
+  Dim itmList As String[]
+  Dim i As Integer
+  Dim j As Integer
+  Dim strItem As String[]
+  Dim stit As String[]
+
+  Dim xFinal As Variant[]
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = modHMISRep.GetAgeSexGroupingHMIS()
+  Else
+    ageList = modMedReports.AgeGroupGenderList()
+  Endif
+  strItem = modControlSub.GetDirectFillresult(modDatabase.$icdConn.Exec("select fldicdcode from tblicddisease where fldicdchpter=&1", sChapter))
+  For j = 0 To strItem.Count - 1
+    strItem[j] = "'" & strItem[j] & "'"
+  Next
+  If sType = "InPatient" Then
+    digList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldcodenew) as col from tblpatfindings where fldcodenew in(" & strItem.Join(",") & ") and fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldencounterval in(select fldencounterval from tblencounter where flddod IS NOT NULL)" & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text), modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Final Diagnosis", True))
+  Else If sType = "Mortality" Then
+    digList = modControlSub.GetDirectFillresult(modDatabase.$syConn.Exec("select distinct(fldcodenew) as col from tblpatfindings where fldcodenew in(" & strItem.Join(",") & ") and fldtime>=&1 and fldtime<=&2 and fldtype=&3 and fldsave=&4 and fldencounterval in(select fldencounterval from tblencounter where fldadmission=&5)" & modDataRepo.GetWhereStringRepo(cmblocation.Text, cmbvalue.Text), modDate.StartSqlDate(dtfir.Value), modDate.EndSqlDate(dtlast.Value), "Final Diagnosis", True, "Death"))
+  Endif
+  itmList = modHMISRep.ConvertDiagnosisToHMIS(digList)
+
+  GridView1.Clear()
+  GridView1.Columns.Count = ageList.Count + 2
+  GridView1.Rows.Count = itmList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Code"
+    .Columns[1].Text = "Disease"
+    i = 2
+    For Each xage In ageList
+      stit = Split(xage, ":")
+      .Columns[i].Text = stit[0] & gb.NewLine & stit[1]
+      .Columns[i].Width = 75 * modBasic.$AppWidthRatio
+      i = i + 1
+    Next
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetAgeWiseMorbidity(sType, ageList, itmList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''====================== Safe Motherhood =================
+Private Sub ANCVisitreportAge()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 4
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "ANC Services"
+    .Columns[1].Text = "< 20Yrs"
+    .Columns[2].Text = ">= 20Yrs"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubANCVisitreportAge(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub DeliverySPotAssist()
+
+  Dim xFinal As Variant[]
+  Dim spotList As String[] = ["SBA trained ANM", "Skilled Health Professional", "Other Health Professional", "Home Attendant"]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = spotList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Delivery Service"
+    .Columns[1].Text = "< 20Yrs"
+    .Columns[2].Text = ">= 20Yrs"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubDeliverySPotAssist(spotList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub DeliveryTypeReport()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 3
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Delivery Type"
+    .Columns[1].Text = "Cephalic"
+    .Columns[2].Text = "Shoulder"
+    .Columns[3].Text = "Breech"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubDeliveryTypeReport(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetLiveDeliveryBabyQTY()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 3
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Delivery Outcome"
+    .Columns[1].Text = "Single Baby"
+    .Columns[2].Text = "Double Baby"
+    .Columns[3].Text = "Multiple Baby"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetLiveDeliveryBabyQTY(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub BirthWeightreportCompli()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 7
+  GridView1.Rows.Count = 3
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Birth Weight"
+    .Columns[1].Text = "Total"
+    .Columns[2].Text = "Asphyxia"
+    .Columns[3].Text = "Major Malformations"
+    .Columns[4].Text = "Minor Malformations"
+    .Columns[5].Text = "Other Malformations"
+    .Columns[6].Text = "Infections"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubBirthWeightreportCompli(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub StillBirthsCount()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Stillbirth"
+    .Columns[1].Text = "Number"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubStillBirthsCount(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub TransfusionCount()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Hemorrhage"
+    .Columns[1].Text = "APH"
+    .Columns[2].Text = "IPH"
+    .Columns[3].Text = "PPH"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubTransfusionCount(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub PNCCheckupCount()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 5
+  GridView1.Rows.Count = 4
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "PNC Visit"
+    .Columns[1].Text = "Mother (Hosp Delivery)"
+    .Columns[2].Text = "Baby (Hosp Delivery)"
+    .Columns[3].Text = "Mother (Home Delivery)"
+    .Columns[4].Text = "Baby (Home Delivery)"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubPNCCheckreportAge(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub ObsComplicaReport()
+
+  Dim xFinal As Variant[]
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubObstetricComplications(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  If xFinal.Count Then
+
+    GridView1.Clear()
+    GridView1.Rows.Count = xFinal.Count
+    GridView1.Columns.Count = 5
+    With GridView1
+      .Rows.Height = modBasic.$AppGridRowHeight
+      .Columns[0].Width = 350 * modBasic.$AppWidthRatio
+      .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+
+      .Columns[0].Text = "Disease"
+      .Columns[1].Text = "ICD-11"
+      .Columns[2].Text = "Cases"
+      .Columns[3].Text = "Referred Out"
+      .Columns[4].Text = "Death"
+    End With
+
+  Endif
+
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub MaternalDeathCount()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Place of Death"
+    .Columns[1].Text = "Antepartum"
+    .Columns[2].Text = "Intrapartum"
+    .Columns[3].Text = "Postpartum"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubMaternalDeathCount(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub NeonatalDeathCount()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Place of Death"
+    .Columns[1].Text = "0-7 days"
+    .Columns[2].Text = "8-28 days"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubNeonatalDeathCount(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub MaternalIncentiveCount()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Incentive"
+    .Columns[1].Text = "Eligible"
+    .Columns[2].Text = "Received"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubMaternalIncentiveCount(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''===================== Newborn care =====================
+Private Sub GetSickBabiesAdmittedNICU()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 11
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Number of Babies"
+    .Columns[1].Text = "Male"
+    .Columns[2].Text = "Female"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetSickBabiesAdmittedNICU(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetTreatmentOutcomeNICU()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 9
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Improved"
+    .Columns[1].Text = "Referred"
+    .Columns[2].Text = "LAMA/Absconded"
+    .Columns[3].Text = "Death"
+    .Columns[4].Text = "Package A"
+    .Columns[5].Text = "Package B"
+    .Columns[6].Text = "Package A+B"
+    .Columns[7].Text = "Package A+B+C"
+    .Columns[8].Text = "Total days of stay"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetKMCManagedNICU()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = 4
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "KMC To"
+    .Columns[1].Text = "Number"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''===================== Non communicable Disease =============
+Private Sub GetTreatmentOpdErNCD()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.GetNonCommDiseases()
+  GridView1.Clear()
+  GridView1.Rows.Count = xList.Count
+  GridView1.Columns.Count = 10
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Number of NCD Cases"
+    .Columns[1].Text = "New"
+    .Columns[2].Text = "Follow up"
+    .Columns[3].Text = "Male"
+    .Columns[4].Text = "Female"
+    .Columns[5].Text = "<20 yrs"
+    .Columns[6].Text = "20-29 yrs"
+    .Columns[7].Text = "30-69 yrs"
+    .Columns[8].Text = ">=70 yrs"
+    .Columns[9].Text = "Referred"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetTreatmentNCDDetail("Non Communicable Groups", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetNCDSpecificDeath()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.GetNCDCauseDaeath()
+  GridView1.Clear()
+  GridView1.Rows.Count = xList.Count
+  GridView1.Columns.Count = 7
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Types of NCD"
+    .Columns[1].Text = "Male"
+    .Columns[2].Text = "Female"
+    .Columns[3].Text = "<20 yrs"
+    .Columns[4].Text = "20-29 yrs"
+    .Columns[5].Text = "30-69 yrs"
+    .Columns[6].Text = ">=70 yrs"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetTreatmentNCDDeath("NCD Death Groups", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetNewCancerManageNCD()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.GetCancerGroups()
+  GridView1.Clear()
+  GridView1.Rows.Count = xList.Count
+  GridView1.Columns.Count = 7
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Types of Cancer"
+    .Columns[1].Text = "Male"
+    .Columns[2].Text = "Female"
+    .Columns[3].Text = "<20 yrs"
+    .Columns[4].Text = "20-29 yrs"
+    .Columns[5].Text = "30-69 yrs"
+    .Columns[6].Text = ">=70 yrs"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetTreatmentNCDShort("Cancer Groups", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetInjuryReportNCD()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.GetInjuriesList()
+  GridView1.Clear()
+  GridView1.Rows.Count = xList.Count
+  GridView1.Columns.Count = 10
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Types of Injury"
+    .Columns[1].Text = "New"
+    .Columns[2].Text = "Follow up"
+    .Columns[3].Text = "Male"
+    .Columns[4].Text = "Female"
+    .Columns[5].Text = "<20 yrs"
+    .Columns[6].Text = "20-29 yrs"
+    .Columns[7].Text = "30-69 yrs"
+    .Columns[8].Text = ">=70 yrs"
+    .Columns[9].Text = "Referred"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetTreatmentNCDDetail("Injury Groups", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetInuryDeathReportNCD()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.GetInjuriesList()
+  GridView1.Clear()
+  GridView1.Rows.Count = xList.Count
+  GridView1.Columns.Count = 7
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Types of Injury"
+    .Columns[1].Text = "Male"
+    .Columns[2].Text = "Female"
+    .Columns[3].Text = "<20 yrs"
+    .Columns[4].Text = "20-29 yrs"
+    .Columns[5].Text = "30-69 yrs"
+    .Columns[6].Text = ">=70 yrs"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetTreatmentNCDDeath("Injury Groups", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetMentalTreatOpdErNCD()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.GetMentalDiseases()
+  GridView1.Clear()
+  GridView1.Rows.Count = xList.Count
+  GridView1.Columns.Count = 10
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Number of Mental Health"
+    .Columns[1].Text = "New"
+    .Columns[2].Text = "Follow up"
+    .Columns[3].Text = "Male"
+    .Columns[4].Text = "Female"
+    .Columns[5].Text = "<20 yrs"
+    .Columns[6].Text = "20-29 yrs"
+    .Columns[7].Text = "30-69 yrs"
+    .Columns[8].Text = ">=70 yrs"
+    .Columns[9].Text = "Referred"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetTreatmentNCDDetail("Mental Groups", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetMentalHealthTypeNCD()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 3
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Type of Cases"
+    .Columns[1].Text = "New"
+    .Columns[2].Text = "Followup"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetHyperTDiabetesNCD()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Type of Cases"
+    .Columns[1].Text = "Hypertension"
+    .Columns[2].Text = "Diabeted"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''===================== NEW OutPatient Morbidity ====================
+Private Sub GetNewOPDMorbidity(sType As String)
+
+  Dim xFinal As Variant[]
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetNewOPDMorbidity(sType, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  If xFinal.Count Then
+
+    GridView1.Clear()
+    GridView1.Rows.Count = xFinal.Count
+    If sType = "Obstetrics Complications" Then
+      GridView1.Columns.Count = 3
+      With GridView1
+        .Rows.Height = modBasic.$AppGridRowHeight
+        .Columns[0].Width = 350 * modBasic.$AppWidthRatio
+        .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+        .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+
+        .Columns[0].Text = "Disease"
+        .Columns[1].Text = "Code"
+        .Columns[2].Text = "Number"
+      End With
+
+    Else
+      GridView1.Columns.Count = 4
+      With GridView1
+        .Rows.Height = modBasic.$AppGridRowHeight
+        .Columns[0].Width = 100 * modBasic.$AppWidthRatio
+        .Columns[1].Width = 350 * modBasic.$AppWidthRatio
+        .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+        .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+
+        .Columns[0].Text = "Code"
+        .Columns[1].Text = "Disease"
+        .Columns[2].Text = "Female"
+        .Columns[3].Text = "Male"
+      End With
+    Endif
+
+  Endif
+
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''===================== NEW Emergency Morbidity =====================
+Private Sub GetNewEmerMorbidity(sType As String)
+
+  Dim xFinal As Variant[]
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetNewERMorbidity(sType, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  If xFinal.Count Then
+
+    GridView1.Clear()
+    GridView1.Rows.Count = xFinal.Count
+    GridView1.Columns.Count = 4
+    With GridView1
+      .Rows.Height = modBasic.$AppGridRowHeight
+      .Columns[0].Width = 100 * modBasic.$AppWidthRatio
+      .Columns[1].Width = 350 * modBasic.$AppWidthRatio
+      .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+
+      .Columns[0].Text = "Code"
+      .Columns[1].Text = "Disease"
+      .Columns[2].Text = "Female"
+      .Columns[3].Text = "Male"
+    End With
+
+  Endif
+
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''========================= Laboratory ===========================
+Private Sub GetLaboratoryHMISReport(sDepartment As String)
+
+  Dim sList As String[]
+
+  Dim xFinal As Variant[]
+
+  sList = modHMISRep.GetHMISLabItemList(sDepartment)
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  If TreeView1.Current.Text = "BACTERIOLOGY" Then
+    GridView1.Rows.Count = sList.Count + modHMISRep.$HMISCultureSpecimens.Count
+  Else
+    GridView1.Rows.Count = sList.Count
+  Endif
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Test Name"
+    .Columns[1].Text = "Abnormal"
+    .Columns[2].Text = "Total"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetLaboratoryHMISReport(sDepartment, sList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''====================== Geriatric ===========================
+Private Sub GetGeriatricAgeGrouping()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 13
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "No of Visits"
+    .Columns[1].Text = "60-69 (F)"
+    .Columns[2].Text = "60-69 (S)"
+    .Columns[3].Text = "60-69 (SM)"
+    .Columns[4].Text = "70-79 (F)"
+    .Columns[5].Text = "70-79 (M)"
+    .Columns[6].Text = "70-79 (SM)"
+    .Columns[7].Text = "80-84 (F)"
+    .Columns[8].Text = "80-84 (M)"
+    .Columns[9].Text = "80-84 (SM)"
+    .Columns[10].Text = ">=85 (F)"
+    .Columns[11].Text = ">=85 (M)"
+    .Columns[12].Text = ">=85 (SM)"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetGeriatricAgeGrouping(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetGeriatricEthnicity()
+
+  Dim xFinal As Variant[]
+  Dim aList As String[]
+
+  aList = ["1", "2", "3", "4", "5", "6"]
+  GridView1.Clear()
+  GridView1.Columns.Count = 7
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "No of Visits"
+    .Columns[1].Text = "Dalit"
+    .Columns[2].Text = "Janjati"
+    .Columns[3].Text = "Madhesi"
+    .Columns[4].Text = "Muslim"
+    .Columns[5].Text = "Brahmin/Chhetri"
+    .Columns[6].Text = "Others"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetGeriatricEthnicity(aList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetGeriatricHIEnrollment()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "No of Visits"
+    .Columns[1].Text = "Enrolled"
+    .Columns[2].Text = "Not Enrolled"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetGeriatricServiceType()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.$HMISGeriatricServiceType
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = xList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Type of Service"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetGeriatricSourceExpense()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.$HMISGeriatricExpenseSource
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = xList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Source of Expense"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetGeriatricHospDepartment()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = 3
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Hospital department"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetGeriatricHospDepartmen(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetGeriatricDiseaseReport()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+  Dim Column As Integer
+
+  xList = modHMISRep.GetGeriatricDiseases()
+  GridView1.Clear()
+  GridView1.Columns.Count = xList.Count + 1
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[0].Text = "Disease"
+
+    For Column = 0 To xList.Count - 1
+      .Columns[Column + 1].Width = 100 * modBasic.$AppWidthRatio
+      .Columns[Column + 1].Text = xList[Column]
+    Next
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''====================== OCMC ===========================
+Private Sub GetOCMCAgeGroupingSex()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 19
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[15].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[16].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[17].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[18].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "No of Visits"
+    .Columns[1].Text = "<10 (F)"
+    .Columns[2].Text = "<10 (S)"
+    .Columns[3].Text = "<10 (SM)"
+    .Columns[4].Text = "10-14 (F)"
+    .Columns[5].Text = "10-14 (M)"
+    .Columns[6].Text = "10-14 (SM)"
+    .Columns[7].Text = "15-18 (F)"
+    .Columns[8].Text = "15-18 (M)"
+    .Columns[9].Text = "15-18 (SM)"
+    .Columns[10].Text = "19-49 (F)"
+    .Columns[11].Text = "19-49 (M)"
+    .Columns[12].Text = "19-49 (SM)"
+    .Columns[13].Text = "50-59 (F)"
+    .Columns[14].Text = "50-59 (M)"
+    .Columns[15].Text = "50-59 (SM)"
+    .Columns[16].Text = ">=60 (F)"
+    .Columns[17].Text = ">=60 (M)"
+    .Columns[18].Text = ">=60 (SM)"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCAgeGroupingSex(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetOCMCDisability()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.$HMISDisabilityOCMC
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = xList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Disability"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCNewVariable("Disability", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetOCMCCaseByService()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.$HMISServiceOCMC
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = xList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Number of reported case by service"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCNewVariable("Service", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetOCMCCauseViolence()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.$HMISViolCauseOCMC
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = xList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Cause of violence"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCNewVariable("Cause of violence", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetOCMCTypeViolence()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = modHMISRep.$HMISViolTypeOCMC
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = xList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Types of violence"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCNewVariable("Types of violence", dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetOCMCNewCaseEthnicity()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+
+  xList = ["1", "2", "3", "4", "5", "6"]
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = xList.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Ethnicity"
+    .Columns[1].Text = "New Visit"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCNewCaseEthnicity(xList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetOCMCRelationPerpret()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 2
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Relationship"
+    .Columns[1].Text = "Number"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCPerpType(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetOCMCAgeSexPrepret()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 25
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[15].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[16].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[17].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[18].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[19].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[20].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[21].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[22].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[23].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[24].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Number"
+    .Columns[1].Text = "<10 (F)"
+    .Columns[2].Text = "<10 (S)"
+    .Columns[3].Text = "<10 (SM)"
+    .Columns[4].Text = "<10 (T)"
+    .Columns[5].Text = "10-14 (F)"
+    .Columns[6].Text = "10-14 (M)"
+    .Columns[7].Text = "10-14 (SM)"
+    .Columns[8].Text = "10-14 (T)"
+    .Columns[9].Text = "15-18 (F)"
+    .Columns[10].Text = "15-18 (M)"
+    .Columns[11].Text = "15-18 (SM)"
+    .Columns[12].Text = "15-18 (T)"
+    .Columns[13].Text = "19-49 (F)"
+    .Columns[14].Text = "19-49 (M)"
+    .Columns[15].Text = "19-49 (SM)"
+    .Columns[16].Text = "19-49 (T)"
+    .Columns[17].Text = "50-59 (F)"
+    .Columns[18].Text = "50-59 (M)"
+    .Columns[19].Text = "50-59 (SM)"
+    .Columns[20].Text = "50-59 (T)"
+    .Columns[21].Text = ">=60 (F)"
+    .Columns[22].Text = ">=60 (M)"
+    .Columns[23].Text = ">=60 (SM)"
+    .Columns[24].Text = ">=60 (T)"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetOCMCPerpAgeSex(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''====================== SSU ===========================
+Private Sub GetSocialAgeGroupSex()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 19
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[12].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[13].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[14].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[15].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[16].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[17].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[18].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "No of Visits"
+    .Columns[1].Text = "<10 (F)"
+    .Columns[2].Text = "<10 (S)"
+    .Columns[3].Text = "<10 (SM)"
+    .Columns[4].Text = "10-14 (F)"
+    .Columns[5].Text = "10-14 (M)"
+    .Columns[6].Text = "10-14 (SM)"
+    .Columns[7].Text = "15-18 (F)"
+    .Columns[8].Text = "15-18 (M)"
+    .Columns[9].Text = "15-18 (SM)"
+    .Columns[10].Text = "19-49 (F)"
+    .Columns[11].Text = "19-49 (M)"
+    .Columns[12].Text = "19-49 (SM)"
+    .Columns[13].Text = "50-59 (F)"
+    .Columns[14].Text = "50-59 (M)"
+    .Columns[15].Text = "50-59 (SM)"
+    .Columns[16].Text = ">=60 (F)"
+    .Columns[17].Text = ">=60 (M)"
+    .Columns[18].Text = ">=60 (SM)"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetSocialAgeGroupSex(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetSocialEthnicity()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+  Dim Column As Integer
+  Dim aList As String[]
+
+  xList = ["Dalit", "Janajati", "Madhesi", "Muslim", "Brahmin/Chettri", "Other"]
+  aList = ["1", "2", "3", "4", "5", "6"]
+  GridView1.Clear()
+  GridView1.Columns.Count = xList.Count + 1
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[0].Text = "New Visits"
+    For Column = 0 To xList.Count - 1
+      .Columns[Column + 1].Width = 100 * modBasic.$AppWidthRatio
+      .Columns[Column + 1].Text = xList[Column]
+    Next
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetSocialEthnicity(aList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetSocialHIEnrollment()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 3
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "New Visits"
+    .Columns[1].Text = "Enrolled"
+    .Columns[2].Text = "Not Enrolled"
+  End With
+
+  Inc Application.Busy
+  ' xFinal =
+  ' LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetSocialHospDepartment()
+
+  Dim xFinal As Variant[]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = 4
+  GridView1.Rows.Count = 1
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 100 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "New Visits"
+    .Columns[1].Text = "Indoor"
+    .Columns[2].Text = "Outdoor"
+    .Columns[3].Text = "Emergency"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetSocialHospDepartment(dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetSocialTargetGroup()
+
+  Dim xFinal As Variant[]
+  Dim xList As String[]
+  Dim Column As Integer
+
+  xList = modHMISRep.$HMISSocialUnitList
+  GridView1.Clear()
+  GridView1.Columns.Count = xList.Count + 1
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[0].Text = "Target group"
+    For Column = 0 To xList.Count - 1
+      .Columns[Column + 1].Width = 100 * modBasic.$AppWidthRatio
+      .Columns[Column + 1].Text = xList[Column]
+    Next
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetSocialTargetGroup(xList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+''==================== Other Reports ================
+Private Sub GetBipannaStatistics()
+
+  Dim xFreeList As String[]
+  Dim xFinal As Variant[]
+  Dim i As Integer
+
+  Inc Application.Busy
+  xFreeList = ["Heart Disease", "Kidney Disease", "Parkinsons Disease", "Alzheimers Disease", "Head Injuries", "Spinal Injuries"]
+  xFinal = modHMISReport.SubGetBipannaStatistics(xFreeList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  Dec Application.Busy
+
+  GridView1.Clear()
+  GridView1.Columns.Count = xFreeList.Count + 2
+  GridView1.Rows.Count = xFinal.Count
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Text = "District"
+    .Columns[0].Width = 125 * modBasic.$AppWidthRatio
+    For i = 1 To xFreeList.Count
+      .Columns[i].Text = xFreeList[i - 1]
+      .Columns[i].Width = 75 * modBasic.$AppWidthRatio
+    Next
+    .Columns[xFreeList.Count + 1].Text = "Total"
+    .Columns[xFreeList.Count + 1].Width = 75 * modBasic.$AppWidthRatio
+  End With
+
+  LoadVariableToGrid(xFinal, GridView1)
+
+End
+
+Private Sub GetHospServiceSelectedOnly(sType As String)
+
+  Dim ageList As String[]
+  Dim i As Integer
+  Dim arx As String[]
+
+  Dim xFinal As Variant[]
+
+  If cmbagegroup.Text = "HMIS" Then
+    ageList = modHMISRep.GetMasterAgeHMISList()
+  Else
+    ageList = modMedReports.AgeGroupGeneralList()
+  Endif
+
+  GridView1.Clear()
+  GridView1.Columns.Count = ageList.Count + 2
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[0].Text = "Gender"
+    For i = 0 To ageList.Count - 1
+      arx = Split(ageList[i], ";")
+      .Columns[i + 1].Width = 75 * modBasic.$AppWidthRatio
+      .Columns[i + 1].Text = arx[0]
+    Next
+    .Columns[ageList.Count + 1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[ageList.Count + 1].Text = "Total"
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetHospServiceSelectedOnly(sType, ageList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End
+
+Private Sub GetEthnicReport()
+
+  Dim ethList As String[]
+  Dim i As Integer
+
+  Dim xFinal As Variant[]
+
+  ethList = ["1", "2", "3", "4", "5", "6"]
+
+  GridView1.Clear()
+  GridView1.Columns.Count = ethList.Count + 2
+  GridView1.Rows.Count = 2
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Text = "Gender"
+    .Columns[0].Width = 75 * modBasic.$AppWidthRatio
+    For i = 0 To ethList.Count - 1
+      .Columns[i + 1].Text = modMisc.GetEthnicCodeString(ethList[i])
+      .Columns[i + 1].Width = 75 * modBasic.$AppWidthRatio
+    Next
+    .Columns[ethList.Count + 1].Text = "Total"
+    .Columns[ethList.Count + 1].Width = 75 * modBasic.$AppWidthRatio
+  End With
+
+  Inc Application.Busy
+  xFinal = modHMISReport.SubGetEthnicReport(ethList, dtfir.Value, dtlast.Value, cmblocation.Text, cmbvalue.Text)
+  LoadVariableToGrid(xFinal, GridView1)
+  Dec Application.Busy
+
+End

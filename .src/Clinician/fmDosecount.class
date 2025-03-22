@@ -1,0 +1,260 @@
+' Gambas class file
+
+Private $encid As String
+Private $sTatus As String
+
+Public Sub _new(encid As String)
+
+  $encid = encid
+
+End
+
+Public Sub Form_Open()
+
+  Dim hForm As FmQuantiEntry
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  hForm = New FmQuantiEntry(txtdose, pnlquanti)
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  txtgender.Text = modPatient.GetPatientSex($encid)
+  $sTatus = modPatient.CurrentAdmissionStatus($encid)
+  FillMedicineList()
+  ListBox1.SetFocus
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else If Key.Code = Key.Up Then
+    ListBox1.SetFocus
+  Else If Key.Code = Key.Down Then
+    ListBox1.SetFocus
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub ListBox1_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    ListBox1_Click()
+  Endif
+
+End
+
+Private Sub FillMedicineList()
+
+  Dim sql As String
+  Dim res As Result
+
+  sql = "select fldid,flditem from tblpatdosing where fldencounterval=&1 and fldsave_order=&2 and fldstarttime<=&3 and fldendtime>=&4 and fldroute<>&5 and flditemtype=&6 and fldcurval=&7"                    ''
+  res = modDatabase.$myConn.Exec(sql, $encid, True, Now(), DateAdd(Now(), gb.Hour, -3), "fluid", "Medicines", "Continue")
+  ListBox1.Clear
+  If res.Available Then
+    For Each res
+      ListBox1.Add(CStr(res!fldid), res!flditem, Picture["icons/coll4.png"])
+    Next
+  Endif
+
+End
+
+Public Sub ListBox1_Click()
+
+  Dim res As Result
+
+  txtdose.Value = 0
+  txtdose.Tag = ""
+  txtid.Value = CLong(ListBox1.Current.Key)
+  lblmedicine.Text = ListBox1.Current.Text
+  If txtid.Value Then
+    res = modDatabase.$myConn.Exec("select fldroute,flditem,flddose,fldfreq,flddays,fldstatus from tblpatdosing where fldid=&1 and flditem=&2", txtid.Value, lblmedicine.Text)
+    lblregimen.Text = res["fldroute"] & Space(2) & res["flddose"] & Space(1) & modMedConstant.GetMedicineDoseUnit(res["flditem"]) & " X " & res["fldfreq"] & " X " & res["flddays"] & " day(s)"
+    lblregimen.Tag = res["fldfreq"]
+    lblunit.Text = modPharmLabel.GetDosageFormForLabel(lblmedicine.Text, "Inpatient")
+    FillGridView(txtid.Value, lblmedicine.Text)
+    btnsave.Enabled = True
+    If modBasic.$TabletModeEnable = "Yes" Then
+      pnlquanti.Visible = True
+    Else
+      pnlquanti.Visible = False
+    Endif
+    txtdose.Value = Round(res["flddose"] / modMedConstant.GetDrugInitialStrength(lblmedicine.Text), -2)
+    txtdose.SetFocus
+  Endif
+
+End
+
+Private Sub FillGridView(dosno As Long, sItem As String)
+
+  Dim Column As Integer
+  Dim fld As ResultField
+  Dim res As Result
+  Dim xdrug As String
+
+  res = modDatabase.$syConn.Exec("select fldid,fldtime,fldid,fldvalue,fldunit,fldid,fldvalue from tblnurdosing where fldencounterval=&1 and flddoseno=&2", $encid, dosno)
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+  xdrug = modMedConstant.GetDrugFromStockID(sItem)
+
+  With GridView1
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[0].Width = 1
+    .Columns[1].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 225 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Particulars"
+    .Columns[3].Text = "QTY"
+    .Columns[4].Text = "Unit"
+    .Columns[6].Text = "Dose"
+  End With
+
+  For Each res
+    Column = 0
+    For Each fld In res.Fields
+      modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+      If Column = 1 Then
+        GridView1[res.Index, Column].Text = modPatient.GetDayTimeFromAdmission($encid, res[fld.Name])
+      Else If Column = 2 Then
+        GridView1[res.Index, Column].Text = xdrug
+      Else If Column = 5 Then
+        GridView1[res.Index, Column].Picture = Picture[GetPictureDosing(res[fld.Name])]
+      Else If Column = 6 Then
+        GridView1[res.Index, Column].Text = res[fld.Name] * modMedConstant.GetDrugInitialStrength(sItem)
+      Else
+        GridView1[res.Index, Column].Text = res[fld.Name]
+      Endif
+      GridView1.Rows[res.Index].Height = Max(GridView1.Rows[res.Index].Height, GridView1[res.Index, Column].Font.RichTextHeight(GridView1[res.Index, Column].Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+      GridView1[res.Index, Column].WordWrap = True
+
+      Column = Column + 1
+    Next
+  Next
+
+  txtcounttoday.Value = modPharmacy.TotalDoseCount(dosno, Now())
+  txtdosetoday.Value = modPharmacy.TotalDoseAmount(dosno, Now())
+
+  txtcountsum.Value = modPharmacy.TotalDoseCount(dosno)
+  txtdosesum.Value = modPharmacy.TotalDoseAmount(dosno)
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res As Result
+
+  If txtid.Value And If txtdose.Value Then
+    modPharmSub.InsertNurDosing(txtid.Value, $encid, txtdose.Value, lblunit.Text, "")
+    FillGridView(txtid.Value, lblmedicine.Text)
+    If lblregimen.Tag = "stat" Then
+      res = modDatabase.$myConn.Edit("tblpatdosing", "fldid=&1", txtid.Value)
+      res["fldcurval"] = "Completed"
+      res.Update
+    Endif
+    btnsave.Enabled = False
+    pnlquanti.Visible = False
+    txtdose.Value = 0
+    txtdose.Tag = ""
+  Endif
+
+End
+
+Public Sub btnsave_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnsave_Click()
+    ListBox1.SetFocus
+  Endif
+
+End
+
+Public Sub btnexpo_Click()
+
+  If lblmedicine.Text Then
+    modCHTMLReport.ExportGridToHTML(GridView1, lblmedicine.Text, "Dosing Report",, $encid)
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  Dim res As Result
+  Dim xval As Float
+
+  If GridView1.Column = 3 Then
+    xval = InputValue(GridView1[GridView1.Row, 2].Text, ("Change Value"), GridView1[GridView1.Row, 3].Text)
+    If xval Then
+      res = modDatabase.$myConn.Edit("tblnurdosing", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+      If modGeneral.AllowClinicalEdit(res["flduserid"]) = True Then
+        res["fldvalue"] = xval
+        res["xyz"] = False
+        res["flduserid"] = modBasic.$lbluser
+        res.Update
+        FillGridView(txtid.Value, lblmedicine.Text)
+      Else
+        Message.Warning("Authorization with " & res["flduserid"], ("OK"))
+      Endif
+    Endif
+  Else If GridView1.Column = 5 Then
+    res = modDatabase.$myConn.Edit("tblnurdosing", "fldid=&1", GridView1[GridView1.Row, 0].Text)
+    If GridView1[GridView1.Row, 5].Picture = Picture["icon:/small/play"] Then
+      res["fldfromtime"] = Now()
+      res["xyz"] = False
+      res.Update
+      GridView1[GridView1.Row, 5].Picture = Picture["icon:/small/stop"]
+    Else If GridView1[GridView1.Row, 5].Picture = Picture["icon:/small/stop"] Then
+      res["fldtotime"] = Now()
+      res["xyz"] = False
+      res.Update
+      GridView1[GridView1.Row, 5].Picture = Picture["icon:/small/lock"]
+    Endif
+  Endif
+
+End
+
+Private Function GetPictureDosing(dosid As Long) As String
+
+  Dim res As Result
+  Dim xx As String
+  Dim xrout As String
+
+  res = modDatabase.$myConn.Exec("select flddoseno,fldfromtime,fldtotime from tblnurdosing where fldid=&1", dosid)
+  If res.Available Then
+    xrout = modPharmacy.GetRouteFromDosing(res!flddoseno)
+    If xrout = "injection" Or If xrout = "fluid" Or If xrout = "CIV" Or If xrout = "IIV" Then
+      If Not res!fldfromtime Then
+        xx = "icon:/small/play"
+      Else If res!fldfromtime And If Not res!fldtotime Then
+        xx = "icon:/small/stop"
+      Else If res!fldfromtime And If res!fldtotime Then
+        xx = "icon:/small/lock"
+      Endif
+    Else
+      xx = "icon:/small/lock"
+    Endif
+  Endif
+  Return xx
+
+End
+
+Public Sub txtdose_KeyRelease()
+
+  If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+    btnsave_Click()
+  Endif
+
+End
+
+Public Sub txtdose_GotFocus()
+
+  txtdose.SelectAll
+
+End

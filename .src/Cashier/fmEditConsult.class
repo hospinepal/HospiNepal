@@ -1,0 +1,175 @@
+' Gambas class file
+
+Private $id As Variant[]
+Private $sTable As String
+Private $RegLock As Integer
+
+Public Sub _new(sid As Variant[], sTable As String)
+
+  $id = sid
+  $sTable = sTable
+  cmbdept.List = modGeneral.GetDepartForConsultOnly()
+  cmbbillmode.List = modBasic.$BillBillingMode
+  cmbstatus.List = ["Planned", "Cancelled", "Done"]
+  dtconsultdate.Value = Now()
+  dtconsultime.Value = Now()
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Else
+    modGeneralmain.GoToNextControlTab()
+  Endif
+
+End
+
+Public Sub Form_Open()
+
+  Dim xx As String
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  xx = modGlobalSetting.ShowSettingFromDB("ConsultationList/Lock")
+  If xx Then
+    $RegLock = CInt(xx)
+  Else
+    $RegLock = 1
+  Endif
+  ShowConsultGrid()
+  cmbbillmode.SetFocus
+
+End
+
+Private Sub ShowConsultGrid()
+
+  Dim res As Result
+
+  If $id.Count = 1 Then
+    If $sTable = "tblconsult" Then
+      res = modDatabase.$myConn.Exec("select fldconsultname,fldconsulttime,fldnotice,flduserid,fldstatus,fldbillingmode from tblconsult where fldid=&1", $id[0])                                                          ''
+      If res.Available Then
+        cmbbillmode.Text = res["fldbillingmode"]
+        cmbdept.Text = res["fldconsultname"]
+        btnconsult.Tag = res["flduserid"]
+        btnconsult.Text = modGeneral.GetUserFullName(res["flduserid"])
+        dtconsultdate.Value = res["fldconsulttime"]
+        dtconsultime.Value = res["fldconsulttime"]
+        cmbstatus.Text = res["fldstatus"]
+        TextArea1.Text = res["fldnotice"]
+      Endif
+
+    Else If $sTable = "tblpatientbook" Then
+      res = modDatabase.$myConn.Exec("select fldadmitlocat,fldconsultdate,fldcomment,flduserid,fldstate,fldbillingmode from tblpatientbook where fldbookingval=&1", $id[0])
+      If res.Available Then
+        cmbbillmode.Text = res["fldbillingmode"]
+        cmbdept.Text = res["fldadmitlocat"]
+        btnconsult.Tag = res["flduserid"]
+        btnconsult.Text = modGeneral.GetUserFullName(res["flduserid"])
+        dtconsultdate.Value = res["fldconsultdate"]
+        dtconsultime.Value = res["fldconsultdate"]
+        cmbstatus.Text = res["fldstate"]
+        TextArea1.Text = res["fldcomment"]
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub btnconsult_Click()
+
+  Dim xList As Variant[]
+  Dim xMedUser As String[]
+
+  If modBasic.$LockConsultant = "LockByQuota" Then
+    xList = modConsult.GetUserPostingList(cmbdept.Text, dtconsultdate.Value, cmbbillmode.Text)
+  Else
+    xList = modBasic.$OPConsulUserList
+  Endif
+  xMedUser = MedicalSelectedValue(("Select Consultant"), xList)
+  If xMedUser And If xMedUser.Count Then
+    btnconsult.Tag = xMedUser[0]
+    btnconsult.Text = xMedUser[1]
+  Else
+    btnconsult.Tag = ""
+    btnconsult.Text = ""
+  Endif
+
+End
+
+Public Sub dtnepcal_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtconsultdate.Value))
+  If xx Then
+    dtconsultdate.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnedit_Click()
+
+  Dim res As Result
+  Dim res1 As Result
+  Dim res3 As Result
+  Dim sDate As Date
+  Dim i As Integer
+
+  sDate = Date(Year(dtconsultdate.Value), Month(dtconsultdate.Value), Day(dtconsultdate.Value), Hour(dtconsultime.Value), Minute(dtconsultime.Value), Second(dtconsultime.Value))                                                                   ''
+  If $sTable = "tblconsult" Then
+    For i = 0 To $id.Count - 1
+      res = modDatabase.$myConn.Edit("tblconsult", "fldid=&1 and fldstatus=&2", $id[i], "Planned")
+      If res.Available Then
+        If $RegLock >= DateDiff(res!fldconsulttime, Now(), gb.Day) Then
+          res1 = modDatabase.$myConn.Exec("select count(fldid) from tblconsult where fldencounterval=&1", res["fldencounterval"])
+          If res1.Count < 2 Then
+            res3 = modDatabase.$myConn.Edit("tblencounter", "fldencounterval=&1", res["fldencounterval"])
+            res3["fldadmitlocat"] = cmbdept.Text
+            res3.Update
+          Endif
+          res["fldbillingmode"] = cmbbillmode.Text
+          res["fldconsultname"] = cmbdept.Text
+          res["flduserid"] = btnconsult.Tag
+          res["fldconsulttime"] = sDate
+          res["fldstatus"] = cmbstatus.Text
+          res["fldnotice"] = TextArea1.Text
+          res["fldorduserid"] = modBasic.$lbluser
+          res["fldtime"] = Now()
+          res["xyz"] = False
+          res.Update
+        Endif
+      Endif
+    Next
+    Balloon.Info(("Information updated"), btnedit)
+    Balloon.Delay = modBasic.$BalloonDelay
+
+  Else If $sTable = "tblpatientbook" Then
+    For i = 0 To $id.Count - 1
+      res = modDatabase.$myConn.Edit("tblpatientbook", "fldbookingval=&1 and fldstate=&2", $id[i], "Planned")
+      If res.Available Then
+        res["fldbillingmode"] = cmbbillmode.Text
+        res["fldadmitlocat"] = cmbdept.Text
+        res["flduserid"] = btnconsult.Tag
+        res["fldconsultdate"] = sDate
+        res["fldstate"] = cmbstatus.Text
+        res["fldcomment"] = TextArea1.Text
+        res["xyz"] = False
+        res.Update
+      Endif
+    Next
+    Balloon.Info(("Information updated"), btnedit)
+    Balloon.Delay = modBasic.$BalloonDelay
+  Endif
+
+End
+
+Public Sub btnconsult_Change()
+
+  If btnconsult.Text = "" Then
+    btnconsult.Tag = ""
+  Endif
+
+End

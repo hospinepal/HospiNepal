@@ -1,0 +1,290 @@
+' Gambas class file
+
+Private $encid As String
+Private $sPackage As String
+Private $sBillMode As String
+
+Private $rData1 As Result
+
+Public Sub _new(encid As String, sPackage As String)
+
+  $encid = encid
+  $sPackage = sPackage
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False", False)
+  Me.Icon = Picture[modGeneralMain.$strLogo]
+  cmbtype.List = ["Test", "Service", "Procedure", "Equipment", "Radio", "Others"]
+
+  txtencid.Text = $encid
+  txtpatientname.Text = modPatient.GetPatientNameByEnc($encid)
+  If txtpatientname.Text Then
+    txtgender.Text = modPatient.GetPatientAgeString($encid, Now()) & "/" & Left(modPatient.GetPatientSex($encid), 1)
+  Endif
+
+  If $sPackage Then
+    $sBillMode = modNonMedical.GetDiscBindBillMode($sPackage)
+    GridView2.Enabled = True
+    ShowOldEntry()
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  modGeneralmain.GoToNextControlTab()
+
+End
+
+Public Sub cmbtype_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbtype)
+  modFillContainer.RestrictComboToContent(cmbtype)
+
+End
+
+Public Sub cmbtype_Click()
+
+  cmbitem.Clear
+  cmbitem.Text = ""
+
+End
+
+Public Sub cmbitem_GotFocus()
+
+  Dim res As Result
+  Dim xdata As String[]
+  Dim xcode As String
+
+  If Not cmbtype.Text Then
+    cmbtype.SetFocus
+
+  Else If cmbtype.Text Then
+    If Not cmbitem.Text Then
+
+      xdata = New String[]
+      If cmbtype.Text = "All" Then
+        res = modDatabase.$myConn.Exec("select flditemname,fldcode,flditemcost,flditemunit from tblservicecost where (fldgroup=&1 or fldgroup=&3) and fldstatus=&2 ORDER BY flditemname ASC", $sBillMode, "Active", "%")                                                           ''
+      Else
+        res = modDatabase.$myConn.Exec("select flditemname,fldcode,flditemcost,flditemunit from tblservicecost where flditemtype=&1 and (fldgroup=&2 or fldgroup=&4) and fldstatus=&3 ORDER BY flditemname ASC", modNonMedical.GetBillItemCategoryFromCombo(cmbtype.Text), $sBillMode, "Active", "%")                                                           ''
+      Endif
+      If res.Available Then
+        For Each res
+          If res["fldcode"] Then
+            xcode = res["fldcode"]
+          Else
+            xcode = ""
+          Endif
+          If res["flditemunit"] Then
+            xdata.Add(res["flditemname"] & "|" & xcode & "|" & CStr(modNonMedical.GetCurrConvertAmount(res["flditemcost"], res["flditemunit"])))
+          Else
+            xdata.Add(res["flditemname"] & "|" & xcode & "|" & CStr(res["flditemcost"]))
+          Endif
+        Next
+        cmbitem.Text = CashGridList(xdata, Panel4, GridView2.Height)
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Private Sub ExecuteOldQuery()
+
+  Dim sql As String
+  Dim cashtot As Float
+  Dim cashpay As Float
+
+  Dim crdttot As Float
+  Dim crdtpay As Float
+
+  cashtot = 0
+  cashpay = 0
+
+  crdttot = 0
+  crdtpay = 0
+
+  sql = "select fldid,fldid,fldtime,flditemtype,flditemno,flditemname,flditemrate,flditemqty,flddiscper,fldtaxper,fldditemamt,fldpayto,fldrefer,fldtaxamt,flddiscamt,fldbillingmode,fldsample,fldbilltype,flddisctype,fldacledger,fldretqty,flduserid,fldcashincredit from tblpatbilling where fldencounterval=&1 and flddisctype=&2 and fldsave=&3 and fldprint=&4 and flditemqty>&5"
+  $rData1 = modDatabase.$myConn.Exec(sql, $encid, $sPackage, True, False, 0)
+
+  For Each $rData1
+    If $rData1["fldbilltype"] = "Cash" Then
+      cashtot = cashtot + $rData1["fldditemamt"]
+      cashpay = cashpay + $rData1["fldditemamt"]
+
+    Else If $rData1["fldbilltype"] = "Credit" Then
+      crdttot = crdttot + $rData1["fldditemamt"]
+      If $rData1["fldcashincredit"] Then
+        crdtpay = crdtpay + ($rData1["fldcashincredit"] / 100) * $rData1["fldditemamt"]
+      Endif
+
+    Endif
+  Next
+
+  txtnetotalsavecash.Value = cashtot
+  txtpaysavecash.Value = cashpay
+
+  txtnetotalsavecredit.Value = crdttot
+  txtpaysavecredit.Value = crdtpay
+  txtpayleftcredit.Value = crdttot - crdtpay
+
+  txttotsaved.Value = Round(cashpay + crdtpay, -2)
+
+End
+
+Private Sub ShowOldEntry()
+
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  ExecuteOldQuery()
+  GridView2.Clear
+  GridView2.Columns.Count = $rData1.Fields.Count
+  GridView2.Rows.Count = $rData1.Count
+
+  For Each $rData1
+    Column = 0
+    For Each fld In $rData1.Fields
+      modGeneralMain.GridExplicitDecoration(GridView2, $rData1.Index, Column)
+      If $rData1["fldretqty"] > 0 Then
+        GridView2[$rData1.Index, Column].Foreground = Color.Red
+      Endif
+      If Column = 1 Then
+        GridView2[$rData1.Index, Column].Picture = Picture["icons/unchecked.png"]
+        GridView2[$rData1.Index, Column].Text = ""
+      Else If Column = 2 Then
+        GridView2[$rData1.Index, Column].Text = modReportVar.GetDateTimeReport($rData1["fldtime"], gb.GeneralDate)
+      Else If Column = 11 Then
+        GridView2[$rData1.Index, Column].Text = modGeneral.GetUserFullName($rData1[fld.Name])
+      Else If Column = 12 Then
+        GridView2[$rData1.Index, Column].Text = modGeneral.GetUserFullName($rData1[fld.Name])
+      Else
+        GridView2[$rData1.Index, Column].Text = $rData1[fld.Name]
+      Endif
+      Column = Column + 1
+    Next
+  Next
+  GridView2.Row = 0
+
+  With GridView2
+    .Rows.Height = modBasic.$AppGridRowHeight
+    .Columns[2].Text = "DateTime"
+    .Columns[5].Text = "Particulars"
+    .Columns[6].Text = "Rate"
+    .Columns[7].Text = "QTY"
+    .Columns[8].Text = "Disc%"
+    .Columns[9].Text = "Tax%"
+    .Columns[10].Text = "Total"
+    .Columns[17].Text = "Mode"
+    .Columns[18].Text = "Package"
+    .Columns[19].Text = "Account"
+    .Columns[21].Text = "UserID"
+    .Columns[22].Text = "Cash%"
+
+    .Columns[0].Width = 1
+    .Columns[1].Width = 25 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 1
+    .Columns[4].Width = 1
+    .Columns[5].Width = 300 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[8].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[9].Width = 50 * modBasic.$AppWidthRatio
+    .Columns[10].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[11].Width = 1
+    .Columns[12].Width = 1
+    .Columns[13].Width = 1
+    .Columns[14].Width = 1
+    .Columns[15].Width = 1
+    .Columns[16].Width = 1
+    .Columns[17].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[18].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[19].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[20].Width = 1
+    .Columns[21].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[22].Width = 75 * modBasic.$AppWidthRatio
+  End With
+
+End
+
+Public Sub GridView2_Click()
+
+  modGridView.CheckUncheckGridNoDB(GridView2, 1)
+
+End
+
+Public Sub btnshow2_Click()
+
+  Dim Row As Integer
+  Dim resx As Result
+  Dim res As Result
+  Dim res1 As Result
+  Dim xGo As Integer
+  Dim xqty As Float
+
+  xGo = 0
+  If cmbtype.Text And If cmbitem.Text Then
+    res1 = modDatabase.$myConn.Exec("select fldbillingmode,fldacledger,fldreference,fldbilltype from tbldiscount where fldtype=&1", modBasic.$HICancelPack)
+    If res1.Available Then
+      Inc Application.Busy
+      modDatabase.$myConn.Begin
+
+      For Row = 0 To GridView2.Rows.Count - 1
+        If GridView2[Row, 1].Picture = Picture["icons/checked.png"] Then
+
+          res = modDatabase.$myConn.Edit("tblpatbilling", "fldid=&1", GridView2[Row, 0].Text)
+          res["flddisctype"] = modBasic.$HICancelPack
+          If res1["fldbilltype"] Then
+            res["fldbilltype"] = res1["fldbilltype"]
+          Endif
+          If res1["fldbillingmode"] Then
+            res["fldbillingmode"] = res1["fldbillingmode"]
+          Endif
+          If res1["fldacledger"] Then
+            res["fldacledger"] = res1["fldacledger"]
+          Endif
+          res["fldtaxper"] = 0
+          res["fldtaxamt"] = 0
+          res["flddiscper"] = 100
+          res["flddiscamt"] = res["flditemrate"] * res["flditemqty"]
+          res["fldditemamt"] = 0
+
+          res["fldreason"] = cmbitem.Text
+          res["fldsample"] = "Grouped"
+          res["fldprint"] = True
+          res["fldstatus"] = "Cleared"
+          res["xyz"] = False
+          res.Update
+          xGo = xGo + 1
+
+        Endif
+      Next
+
+      If xGo > 0 Then
+        resx = modDatabase.$myConn.Exec("select fldmode,fldbillingmode,fldacledger,fldbilltype,fldreference,fldlimit from tbldiscount where fldtype=&1", $sPackage)
+        If resx.Available Then
+          xqty = modNonMedical.GetPatientItemAllSalesPackage($encid, cmbitem.Text, $sPackage)
+          If Not xqty Then
+            modBillings.ServiceBillBlankLedgerPack($encid, resx["fldbilltype"], resx["fldbillingmode"], $sPackage, resx["fldacledger"], cmbtype.Text, cmbitem.Text, 1, "Done", 0, True, False, "", "", "GROUP")
+          Endif
+        Endif
+      Endif
+
+      modDatabase.$myConn.Commit
+      Dec Application.Busy
+      ShowOldEntry()
+    Else
+      Message.Warning("Backup Scheme not specified", ("OK"))
+    Endif
+  Endif
+
+Catch
+  modDatabase.$myConn.Rollback
+  Dec Application.Busy
+  modHelpVariable.CreateErrorReport()
+
+End

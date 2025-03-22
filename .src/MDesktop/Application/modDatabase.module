@@ -1,0 +1,592 @@
+' Gambas module file
+
+Public $myConn As Connection
+Public $syConn As Connection
+Public $calConn As Connection
+Public $icdConn As Connection
+
+Public $medConn As Connection
+Public $labConn As Connection
+Public $repoConn As Connection
+Public $pharmConn As Connection
+
+''MySQL Autocommit mode enabled. Check if otherwise
+Public Sub CloseDatabase()
+
+  Try $calConn.Close()
+  Try modBasic.DebugString("Closing connection to " & $calConn.Name)
+  Try $icdConn.Close()
+  Try modBasic.DebugString("Closing connection to " & $icdConn.Name)
+  Try modAdvertise.$advCon.Close
+  Try modBasic.DebugString("Closing connection to " & modAdvertise.$advCon.Name)
+
+  Try $myConn.Close()
+  Try modBasic.DebugString("Closing connection to master database")
+  Try $syConn.Close()
+  Try modBasic.DebugString("Closing connection to slave database")
+
+  Try $medConn.Close()
+  Try $repoConn.Close()
+  Try modWeb.$webMedConn.Close()
+  Try modWeb.$webLogCon.Close()
+  Try modInterface.$machineCon.Close()
+  Try modBasic.DebugString("Closing connection to external databases")
+
+End
+
+Public Function GetRepositoryTables($con As Connection) As String[]
+
+  Dim tabList As String[]
+  Dim aList As String[]
+  Dim bList As String[]
+
+  Dim doTables As String[]
+  Dim sTable As String
+
+  aList = modDBApp.DBRegularTablesSelField($con, ["xyz"])
+  bList = modDBApp.DBRegularTablesSelField($con, ["fldxyz"])
+  tabList = New String[]
+  tabList.Insert(aList)
+  tabList.Insert(bList)
+  tabList.Add("tblmacaccess")
+  tabList.Add("tblpacsupload")
+
+  doTables = New String[]
+  For Each sTable In tabList
+    If modDBApp.GetFIeldsinTable(sTable, True, $con).Exist("fldhospcode") = False Then
+      doTables.Add(sTable)
+    Endif
+  Next
+
+  Return doTables
+
+End
+
+Public Sub AlterTableHAIParam($con As Connection, sAction As String)
+
+  Dim tabLst As String[]
+  Dim sTable As String
+  Dim res As Result
+
+  If sAction = "Add" Then
+    tabLst = modHIReport.$HAITransTables
+    For Each sTable In tabLst
+      Try res = $con.Exec(Subst("ALTER TABLE &1 ADD COLUMN dhis BOOLEAN NULL", sTable))
+    Next
+
+  Else If sAction = "Drop" Then
+    tabLst = modDBApp.DBRegularTablesSelField(modDatabase.$myConn, ["dhis"])
+    For Each sTable In tabLst
+      Try res = $con.Exec(Subst("ALTER TABLE &1 DROP dhis", sTable))
+    Next
+
+  Endif
+
+End
+
+Public Sub AlterAutoIDToYearly($con As Connection)
+
+  Dim res1 As Result
+  Dim res1x As Result
+  Dim res3 As Result
+  Dim res4 As Result
+
+  Try res1 = $con.Exec(Subst("ALTER TABLE &1 ADD fldid INT NULL", "tblautoid"))
+  Try res1x = $con.Exec(Subst("ALTER TABLE &1 ADD fldfiscal VARCHAR( 50 ) NULL", "tblautoid"))
+
+  Try res3 = $con.Exec(Subst("ALTER TABLE &1 DROP PRIMARY KEY", "tblautoid"))
+  Try res4 = $con.Exec(Subst("ALTER TABLE &1 MODIFY fldid INTEGER NOT NULL AUTO_INCREMENT, ADD PRIMARY KEY ( fldid )", "tblautoid"))
+
+End
+
+' Public Sub SetNewIndexRepository($con As Connection, sTable As String)
+'
+'   Dim res As Result
+'   Dim xIntVal As String
+'
+'   If MMain.$WebEntry = True Then
+'     res = $con.Edit(Subst("select fldid from &1 where fldrepoid IS NULL", sTable))
+'     If res.Available Then
+'       For Each res
+'         xIntVal = modString.GetDateString(Now())
+'         res["fldid"] = CLong(xIntVal & res.Index)
+'         res["fldrepoid"] = modApplication.GetMD5SumString(xIntVal & res.Index & ":" & Session.Id)
+'         res.Update
+'       Next
+'     Endif
+'   Endif
+'
+' End
+
+Public Sub AlterTableRepository($con As Connection, sTables As String[])
+
+  Dim hTable As Table
+  Dim hTable1 As Table
+  Dim res As Result
+  Dim rex As Result
+  Dim rez As Result
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim bb As String
+  Dim ref As Field
+
+  For Each hTable In $con.Tables
+    If sTables.Exist(hTable.Name) Then
+      If hTable.Name = "tblpatsubs" Then
+      Else
+
+        If hTable.Fields.Exist("fldhospcode") = False Then
+          Print "Alter Table " & hTable.Name
+          If $con.Type = "sqlite3" Then
+            Try rex = $con.Exec(Subst("ALTER TABLE &1 ADD COLUMN fldrepodate DATETIME NULL", hTable.Name))
+            Try rez = $con.Exec(Subst("ALTER TABLE &1 ADD COLUMN fldrepomac VARCHAR( 150 ) NULL", hTable.Name))
+            Try res = $con.Exec(Subst("ALTER TABLE &1 ADD COLUMN fldhospcode VARCHAR( 50 ) NULL", hTable.Name))
+          Else
+            Try rex = $con.Exec(Subst("ALTER TABLE &1 ADD fldrepodate DATETIME NULL", hTable.Name))
+            Try rez = $con.Exec(Subst("ALTER TABLE &1 ADD fldrepomac VARCHAR( 150 ) NULL", hTable.Name))
+            Try res = $con.Exec(Subst("ALTER TABLE &1 ADD fldhospcode VARCHAR( 50 ) NULL", hTable.Name))
+          Endif
+
+          bb = hTable.PrimaryKey[0]
+          If bb = "fldid" Or If bb = "fldstockno" Then
+            If $con.Type = "sqlite3" Then
+              If Not $con.Tables.Exist(hTable.Name & "_new") Then
+                hTable1 = $con.Tables.Add(hTable.Name & "_new")
+                For Each ref In hTable.Fields
+                  If ref.Type = db.Serial Then
+                    hTable1.Fields.Add(ref.Name, db.Long)
+                  Else
+                    hTable1.Fields.Add(ref.Name, ref.Type, ref.Length)
+                  Endif
+                Next
+                hTable1.Fields.Add("fldrepoid", db.String, 250)
+                hTable1.PrimaryKey = ["fldrepoid"]
+                Try hTable1.Update
+              Endif
+              Try res1 = $con.Exec(Subst("DROP TABLE &1", hTable.Name))
+              Try res2 = $con.Exec(Subst("ALTER TABLE &1 RENAME TO &2", hTable.Name & "_new", hTable.Name))
+            Else
+              If bb = "fldid" Then
+                Try res1 = $con.Exec(Subst("ALTER TABLE &1 CHANGE fldid fldid BIGINT( 20 ) NULL", hTable.Name))
+              Else If bb = "fldstockno" Then
+                Try res1 = $con.Exec(Subst("ALTER TABLE &1 CHANGE fldstockno fldstockno BIGINT( 20 ) NULL", hTable.Name))
+              Endif
+              Try res2 = $con.Exec(Subst("ALTER TABLE &1 DROP PRIMARY KEY", hTable.Name))
+              Try res3 = $con.Exec(Subst("ALTER TABLE &1 ADD fldrepoid VARCHAR( 250 ) NOT NULL, ADD PRIMARY KEY ( fldrepoid )", hTable.Name))
+            Endif
+          Endif
+        Endif
+
+      Endif
+    Endif
+  Next
+
+End
+
+Public Sub MySQLSpecificCollation($con As Connection)
+
+  Dim acol As String
+  Dim astx As String[]
+  Dim hTable As Table
+
+  If $con.Type = "mysql" Then
+    acol = modHelpVariable.$SysCollation
+    If acol Then
+      astx = Split(acol, "_")
+      For Each hTable In $con.Tables
+        modDBApp.ChangeTableCOllation($con, astx[0], acol, hTable.Name)
+      Next
+    Endif
+
+    modDBApp.ChangeSingleCOlumnCOllation($con, "tbllabel", "fldopinfo", "VARCHAR( 255 )", "utf8mb4", "utf8mb4_unicode_ci")
+    modDBApp.ChangeSingleCOlumnCOllation($con, "tbllocallabel", "fldlocaldire", "VARCHAR( 255 )", "utf8mb4", "utf8mb4_unicode_ci")
+  Endif
+
+End
+
+Public Sub CreateIRDTriggerLockEvent(sConn As Connection)
+
+  Try sConn.MySQL.Trigger.Add("tblpatbilldetail_LockUpdate", "tblpatbilldetail", "BEFORE", "UPDATE", "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Custom Error'")
+  Try sConn.MySQL.Trigger.Add("tblpatbilldetail_LockDelete", "tblpatbilldetail", "BEFORE", "DELETE", "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Custom Error'")
+
+End
+
+Public Sub CreateIRDTriggerBilling(sConn As Connection)
+
+  Dim tblst As String[] = ["tbldiscount", "tblsettings", "tblservicecost", "tbltempbilldetail"]
+  Dim xtable As String
+
+  For Each xtable In tblst
+    Try modDBApp.CreateTrigger(sConn, xtable & "_" & "UPDATE", xtable, "BEFORE", "UPDATE")
+    Try modDBApp.CreateTrigger(sConn, xtable & "_" & "DELETE", xtable, "BEFORE", "DELETE")
+  Next
+
+End
+
+'NOTE: ------------------------------------ BACKUP ---------------------------------------
+Private Function GetSelectedBackup(sType As String, DBHost As String, DBName As String, DBUser As String, DBPass As String, sTable As String) As String
+
+  Dim sPath As String
+  Dim idLock As Boolean
+
+  idLock = modBillLock.LockTableForID("Backup")
+  If idLock = True Then
+    sPath = modDBApp.GetDBBackupFile(sType, DBHost, DBName, DBUser, DBPass, sTable)
+    modBillLock.ReleaseLockTable("Backup")
+  Else
+    Message.Warning(("Backup Process Locked"), ("OK"))
+  Endif
+
+  Return sPath
+
+Catch
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Backup")
+  Endif
+
+End
+
+Public Function GetBackUpSelTable(sTable As String) As String
+
+  Dim sType As String
+  Dim sPath As String
+  Dim DBHost As String
+  Dim DBName As String
+  Dim DBUser As String
+  Dim DBPass As String
+
+  sType = $syConn.Type
+  DBHost = $syConn.Host
+  DBName = $syConn.Name
+  DBUser = $syConn.User
+  DBPass = $syConn.Password
+  sPath = GetSelectedBackup(sType, DBHost, DBName, DBUser, DBPass, sTable)
+
+  Return sPath
+
+End
+
+Public Function GetBackupRemoteTable(sTable As String) As String
+
+  Dim sType As String
+  Dim sPath As String
+  Dim DBHost As String
+  Dim DBName As String
+  Dim DBUser As String
+  Dim DBPass As String
+
+  sType = "mysql"
+  DBHost = modWeb.$webMedHost
+  DBName = modWeb.$webMedDB
+  DBUser = modWeb.$webMedUser
+  DBPass = modWeb.$webMedPass
+  sPath = GetSelectedBackup(sType, DBHost, DBName, DBUser, DBPass, sTable)
+
+  Return sPath
+
+End
+
+Public Sub BackUpCurrentDB(sFolder As String)
+
+  Dim sType As String
+  Dim DBHost As String
+  Dim DBName As String
+  Dim DBUser As String
+  Dim DBPass As String
+
+  Dim sTargFile As String
+  Dim xcomprs As String
+  Dim xPass As String
+  Dim sTable As String
+  Dim xx As String
+  Dim xenable As String
+  Dim idLock As Boolean
+
+  If Not sFolder Then Return
+  sType = $syConn.Type
+  DBHost = $syConn.Host
+  DBName = $syConn.Name
+  DBUser = $syConn.User
+  DBPass = $syConn.Password
+
+  Inc Application.Busy
+  xenable = modGlobalSetting.ShowSettingFromDB("LocalBackup/Enable")
+  If xenable = "Yes" Then
+    xcomprs = modGlobalSetting.ShowSettingFromDB("LocalBackup/Compression")
+    xPass = modGlobalSetting.ShowSettingFromDB("LocalBackup/Password")
+    sTable = modGlobalSetting.GetDBTableList("LocalBackup/TableList").Join(" ")
+    idLock = modBillLock.LockTableForID("Backup")
+    If idLock = True Then
+
+      If sType = "mysql" Then
+        If System.Exist("mysqldump") = True Then
+
+          If xcomprs = "Enabled" Then
+            If xPass Then
+              If System.Exist("7z") = True Then
+                sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql.7z"
+                xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | 7z a -mx=1 -mhe=on -p" & xPass & " -si " & sTargFile                    ''
+                modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+                Shell xx Wait
+              Else
+                modApplSub.InstallSelectedApplication(["p7zip-full"])
+              Endif
+            Else   ''if no password
+              If System.Exist("gzip") = True Then
+                sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql.gz"
+                xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | gzip > " & sTargFile                    ''
+                modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+                Shell xx Wait
+              Else If System.Exist("7z") = True Then
+                sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql.7z"
+                xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | 7z a -mx=1 -si " & sTargFile                    ''
+                modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+                Shell xx Wait
+              Else
+                modApplSub.InstallSelectedApplication(["gzip"])
+              Endif
+            Endif  ''password
+          Else ''if no compression
+            sTargFile = sFolder &/ DBName & "_backup-" & modString.GetDateString(Now()) & ".sql"
+            xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " > " & sTargFile
+            modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+            Shell xx Wait
+          Endif  ''compression
+
+        Else
+          modApplSub.InstallSelectedApplication(["mariadb-client"])
+        Endif
+
+      Else If sType = "postgresql" Then
+        xx = "PGPASSWORD=" & Quote(DBPass) & " pg_dump -h " & DBHost & " -U " & DBUser & " -F p -b -v -f " & sFolder &/ DBName & "_backup-`date +%Y%m%d-%H`.sql" & Space(1) & DBName                      '''
+        modBasic.DebugString("Execute " & Replace(xx, DBPass, "***"))
+        Shell xx Wait
+
+      Else If sType = "sqlite3" Then
+        Copy DBHost &/ DBName To sFolder &/ DBName & "_backup-`date +%Y%m%d-%H`"
+        Wait
+
+      Endif
+
+      modBillLock.ReleaseLockTable("Backup")
+    Endif
+  Endif
+  Dec Application.Busy
+
+Catch
+  Dec Application.Busy
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Backup")
+  Endif
+
+End
+
+Private Function GetBackUpMultiTable(sTable As String, sCompress As Boolean) As String
+
+  Dim xx As String
+  Dim sPath As String
+
+  Dim sType As String
+  Dim DBHost As String
+  Dim DBName As String
+  Dim DBUser As String
+  Dim DBPass As String
+  Dim idLock As Boolean
+
+  sType = $syConn.Type
+  DBHost = $syConn.Host
+  DBName = $syConn.Name
+  DBUser = $syConn.User
+  DBPass = $syConn.Password
+
+  idLock = modBillLock.LockTableForID("Backup")
+  If idLock = True Then
+    If sType = "mysql" Then
+      If System.Exist("mysqldump") = True Then
+        If sCompress = True Then
+          If System.Exist("gzip") = True Then
+            sPath = Temp() & ".sql.gz"
+            xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " | gzip > " & sPath
+          Else
+            modApplSub.InstallSelectedApplication(["gzip"])
+          Endif
+        Else
+          sPath = Temp() & ".sql"
+          xx = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & sTable & " > " & sPath
+        Endif
+        Shell xx Wait
+      Else
+        modApplSub.InstallSelectedApplication(["mariadb-client"])
+      Endif
+
+    Else If sType = "postgresql" Then
+    Else If sType = "sqlite3" Then
+    Endif
+    modBillLock.ReleaseLockTable("Backup")
+  Endif
+  Return sPath
+
+Catch
+  If idLock = True Then
+    modBillLock.ReleaseLockTable("Backup")
+  Endif
+
+End
+
+Public Function SendBackupToFTP() As String
+
+  Dim sHost As String
+  Dim sFolder As String
+  Dim sUser As String
+  Dim sPass As String
+  Dim comprs As String
+  Dim xenable As String
+
+  Dim sDump As String
+  Dim sTable As String
+  Dim sTargFile As String
+  Dim xCompress As Boolean
+  Dim xmsg As String
+
+  xenable = modGlobalSetting.ShowSettingFromDB("FTPBackup/Enable")
+  If xenable = "Yes" Then
+
+    sHost = modGlobalSetting.ShowSettingFromDB("FTPBackup/Host")
+    sFolder = modGlobalSetting.ShowSettingFromDB("FTPBackup/Folder")
+    sUser = modGlobalSetting.ShowSettingFromDB("FTPBackup/User")
+    sPass = modPassword.DecryptSimple(modGlobalSetting.ShowSettingFromDB("FTPBackup/Password"))
+    comprs = modGlobalSetting.ShowSettingFromDB("FTPBackup/Compression")
+
+    If comprs = "Enabled" Then
+      xCompress = True
+      sTargFile = modString.GetDateString(Now()) & ".sql.gz"
+    Else
+      xCompress = False
+      sTargFile = modString.GetDateString(Now()) & ".sql"
+    Endif
+    sTable = modGlobalSetting.GetDBTableList("FTPBackup/TableList").Join(" ")
+    sDump = GetBackUpMultiTable(sTable, xCompress)
+
+    If sDump Then
+      xmsg = modDevAll.SendFileToFTP(sHost, sFolder, sUser, sPass, sTargFile, sDump)
+      Wait
+    Else
+      xmsg = "No Dump file generated"
+    Endif
+
+    Return xmsg
+
+  Endif
+
+End
+
+Public Function GetLocalDBDump(DBHost As String, DBName As String, DBUser As String, DBPass As String) As String
+
+  Dim TableList As String[]
+  Dim aTabList As String[]
+  Dim xTable As String
+  Dim xFolder As String
+  Dim xcmd As String
+
+  xFolder = "/tmp" &/ Application.Name &/ modString.GetNowString()
+  Mkdir xFolder
+  TableList = modDBApp.FillDBTables(modDatabase.$myConn, False)
+  aTabList = GridListView("Select Tables", TableList)
+  If aTabList And If aTabList.Count Then
+    If Exist(xFolder) Then
+      For Each xTable In aTabList
+        xcmd = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & xTable & " > " & xFolder &/ xTable & ".sql"
+        modBasic.DebugString("Execute " & Replace(xcmd, DBPass, "***"))
+        Shell xcmd Wait
+      Next
+    Endif
+  Endif
+
+  Return xFolder
+
+End
+
+''----------------Repository tables --------------
+Public Function GetRepositoryDump(DBHost As String, DBName As String, DBUser As String, DBPass As String, sHosp As String) As String
+
+  Dim TableList As String[]
+  Dim aTabList As String[]
+  Dim xTable As String
+  Dim xFolder As String
+  Dim xcmd As String
+
+  xFolder = "/tmp" &/ Application.Name &/ modString.GetNowString()
+  Mkdir xFolder
+  TableList = modDBApp.DBRegularTablesSelField(modDatabase.$myConn, ["fldhospcode"])
+  aTabList = GridListView("Select Tables", TableList)
+  If aTabList And If aTabList.Count Then
+    If Exist(xFolder) Then
+      For Each xTable In aTabList
+        If sHosp Then
+          xcmd = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & xTable & " --where=" & Quote(db.Subst("fldhospcode=&1", sHosp)) & " > " & xFolder &/ xTable & ".sql"
+        Else
+          xcmd = "mysqldump --quick --single-transaction --complete-insert --skip-extended-insert --skip-triggers" & " -B " & DBName & " --host " & DBHost & " -u " & DBUser & " -p" & DBPass & " --tables " & xTable & " > " & xFolder &/ xTable & ".sql"
+        Endif
+        modBasic.DebugString("Execute " & Replace(xcmd, DBPass, "***"))
+        Shell xcmd Wait
+      Next
+    Endif
+  Endif
+
+  Return xFolder
+
+End
+
+Public Sub GetImportRepoDumpTable(sCon As Connection, sTable As String)
+
+  Dim fldList As String[]
+  Dim res As Result
+  Dim res1 As Result
+  Dim sql As String
+  Dim sql1 As String
+
+  fldList = modDBApp.GetFIeldsinTable(sTable, True, sCon)
+  If fldList.Exist("fldrepodate") And If fldList.Exist("fldrepomac") And If fldList.Exist("fldhospcode") Then
+    sql = Subst("ALTER TABLE &1 DROP COLUMN &2, DROP COLUMN &3, DROP COLUMN &4", sTable, "fldrepodate", "fldrepomac", "fldhospcode")
+    res = sCon.Exec(sql)
+  Endif
+  If fldList.Exist("fldrepoid") Then
+    sql = Subst("ALTER TABLE &1 DROP COLUMN &2", sTable, "fldrepoid")
+    res = sCon.Exec(sql)
+
+    If sTable = "tblstafflist" Then
+      sql1 = Subst("ALTER TABLE &1 ADD PRIMARY KEY(fldptcode)", sTable)
+    Else If sTable = "tblsociallist" Then
+      sql1 = Subst("ALTER TABLE &1 ADD PRIMARY KEY(fldptcode)", sTable)
+    Else If sTable = "tbldepartmentbed" Then
+      sql1 = Subst("ALTER TABLE &1 ADD PRIMARY KEY(fldbed)", sTable)
+    Else If sTable = "tblservicecost" Then
+      sql1 = Subst("ALTER TABLE &1 ADD PRIMARY KEY(flditemname)", sTable)
+    Else If sTable = "tblentry" Then
+      sql1 = Subst("ALTER TABLE &1 ADD PRIMARY KEY(fldstockno)", sTable)
+    Else
+      sql1 = Subst("ALTER TABLE &1 ADD PRIMARY KEY(fldid)", sTable)
+    Endif
+    res1 = sCon.Exec(sql1)
+  Endif
+
+End
+
+Public Function UpdateTableDrugInformation($con As Connection, sTable As String)
+
+  Dim res1 As Result
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res4 As Result
+  Dim res5 As Result
+  Dim res6 As Result
+
+  Try res1 = $con.Exec(Subst("ALTER TABLE &1 ADD flduserid VARCHAR( 25 ) NULL", sTable))
+  Try res2 = $con.Exec(Subst("ALTER TABLE &1 ADD fldtime DATETIME NULL", sTable))
+  Try res3 = $con.Exec(Subst("ALTER TABLE &1 ADD fldcomp VARCHAR( 50 ) NULL", sTable))
+  Try res4 = $con.Exec(Subst("ALTER TABLE &1 ADD fldverifyid VARCHAR ( 25 ) NULL", sTable))
+  Try res5 = $con.Exec(Subst("ALTER TABLE &1 ADD fldverifytime DATETIME NULL", sTable))
+  Try res6 = $con.Exec(Subst("ALTER TABLE &1 ADD fldnote VARCHAR( 250 ) NULL", sTable))
+
+End

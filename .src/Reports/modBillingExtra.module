@@ -1,0 +1,1305 @@
+' Gambas module file
+
+Private Function GetExtraSQLQuery(sPatient As String) As String
+
+  Dim aStr As String
+
+  If sPatient = "Social Service" Then
+    aStr = db.Subst(" and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblsociallist where fldstatus=&1))", "Active")
+  Else If sPatient = "Employee" Then
+    aStr = db.Subst(" and fldencounterval in(select fldencounterval from tblencounter where fldpatientval in(select fldpatientval from tblstafflist where fldstatus=&1))", "Active")
+  Else
+    aStr = ""
+  Endif
+
+  Return aStr
+
+End
+
+''---------------- Asked by Finance --------------------------
+Public Function CreditSalesWithDetailDue(sCateg As String, sFormat As String, $con As Connection, sType As String, bill1 As Variant, bill2 As Variant, sTable As String, xLedger As String, sPatient As String, sLocaType As String, sLocation As String, Optional sHosp As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim RepoPath As String
+  Dim bilid1 As Variant
+  Dim bilid2 As Variant
+  Dim xfld As String
+  Dim res3 As Result
+  Dim res4 As Result
+  Dim asx As New String[0]
+  Dim xparam As String
+  Dim dueclr As Float
+  Dim dueinv As String
+  Dim PackList As String[]
+  Dim xpack As String
+  Dim aList As String[]
+
+  Dim xnet As Float
+  Dim xtax As Float
+  Dim xdisc As Float
+  Dim xitem As Float
+  Dim xdueval As Float
+  Dim xcrdt As Float
+  Dim xcash As Float
+
+  Dim unet As Float
+  Dim utax As Float
+  Dim udsc As Float
+  Dim uitem As Float
+  Dim udueval As Float
+  Dim ucrdt As Float
+  Dim ucash As Float
+  Dim RepoStr As String
+  Dim i As Integer
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  If sFormat = "Date" Then
+    bilid1 = modDate.StartSqlDate(bill1)
+    bilid2 = modDate.EndSqlDate(bill2)
+    xfld = "fldtime"
+    xparam = modReportVar.GetDateTimeReport(bill1, gb.GeneralDate) & " TO " & modReportVar.GetDateTimeReport(bill2, gb.GeneralDate)
+  Else
+    If sCateg = "Invoice" Then
+      bilid1 = modNonMedical.GetBillIDFromBillNo(bill1, sTable)
+      bilid2 = modNonMedical.GetBillIDFromBillNo(bill2, sTable)
+    Else If sCateg = "Receipt" Then
+      bilid1 = modNonMedical.GetBillIDFromReceipt(bill1, sTable)
+      bilid2 = modNonMedical.GetBillIDFromReceipt(bill2, sTable)
+    Endif
+    xfld = "fldid"
+    xparam = bill1 & " TO " & bill2
+  Endif
+
+  If bilid1 And If bilid2 Then
+    $BillingReport = New CReportHTML([("SNO"), ("ENCID"), ("STATE"), ("DOA"), ("DOD"), ("NAME"), ("PATCODE"), ("INVOICE"), ("INV-DATE"), ("INV-TIME"), ("GROSS"), ("DISC"), ("SUBTOTAL"), ("TAX"), ("NETTOTAL"), ("CREDIT"), ("CASH"), ("USER"), ("DUE CLEARED"), ("CLEARANCE NO"), ("DUE AMT")], "", "")
+    If sHosp Then
+      $BillingReport.UserData.Add("CREDIT SALES : " & sPatient & " : " & sHosp, "PARAM1")
+    Else
+      $BillingReport.UserData.Add("CREDIT SALES : " & sPatient, "PARAM1")
+    Endif
+    $BillingReport.UserData.Add(xparam, "PARAM2")
+
+    unet = 0
+    utax = 0
+    udsc = 0
+    uitem = 0
+    ucrdt = 0
+    ucash = 0
+    udueval = 0
+
+    aList = modControlSub.GetDirectFillresult($con.Exec(Subst("select distinct(fldbankname) as col from &1", sTable) & " where " & xfld & ">=&1 and " & xfld & "<=&2 and fldbilltype=&3 and fldbankname like &4" & GetExtraSQLQuery(sPatient) & RepoStr, bilid1, bilid2, sType, xLedger))
+    PackList = aList ''GridListView(("Select Account"), aList)
+    If PackList Then
+      ''with Account
+      For Each xpack In PackList
+        $BillingReport.AddSection(xpack, True)
+        i = 1
+
+        xnet = 0
+        xtax = 0
+        xdisc = 0
+        xitem = 0
+        xcrdt = 0
+        xcash = 0
+        xdueval = 0
+        res3 = $con.Exec(Subst("select fldtime,fldencounterval,fldbilltype,fldbillno,flditemamt,flddiscountamt,fldtaxamt,(flditemamt+fldtaxamt-flddiscountamt) as nettot,(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as xcredit,fldreceivedamt as xcash,fldbankname,flduserid,fldprevdeposit from &1", sTable) & " where " & xfld & ">=&1 and " & xfld & "<=&2 and fldbankname like &3 and fldbilltype=&4" & GetExtraSQLQuery(sPatient) & RepoStr, bilid1, bilid2, xpack, sType)
+        If res3.Available Then
+          For Each res3
+            dueclr = 0
+            If res3["flditemamt"] Then
+              xitem = xitem + res3["flditemamt"]
+            Endif
+            If res3["flddiscountamt"] Then
+              xdisc = xdisc + res3["flddiscountamt"]
+            Endif
+            If res3["fldtaxamt"] Then
+              xtax = xtax + res3["fldtaxamt"]
+            Endif
+            If res3["nettot"] Then
+              xnet = xnet + res3["nettot"]
+            Endif
+            If res3["xcredit"] Then
+              xcrdt = xcrdt + res3["xcredit"]
+            Endif
+            If res3["xcash"] Then
+              xcash = xcash + res3["xcash"]
+            Endif
+            dueclr = modNonMedical.GetDueClearedAmount(res3["fldbillno"], $con)
+            dueinv = modNonMedical.GetDueClearanceInvoice(res3["fldbillno"], $con)
+            xdueval = xdueval + dueclr
+            With asx
+              .Add(CStr(i))
+              .Add(res3["fldencounterval"])
+              If res3["fldprevdeposit"] Then
+                If res3["fldprevdeposit"] = 1 Then
+                  .Add("OP")
+                Else If res3["fldprevdeposit"] > 1 Then
+                  .Add("IP")
+                Endif
+              Else
+                .Add("-")
+              Endif
+              .Add(modReportVar.GetDateTimeReport(modPatient.GetAdmissionDate(res3["fldencounterval"]), gb.MediumDate))
+              .Add(modReportVar.GetDateTimeReport(modPatient.GetDischargeDate(res3["fldencounterval"]), gb.MediumDate))
+              .Add(modPatient.GetPatientNameByEnc(res3["fldencounterval"], $con))
+              .Add(modPatient.GetPatientExtCOdebyEnc(res3["fldencounterval"], $con))
+              .Add(res3["fldbillno"])
+              .Add(modReportVar.GetDateTimeReport(res3["fldtime"], gb.MediumDate))
+              .Add(modReportVar.GetDateTimeReport(res3["fldtime"], gb.MediumTime))
+              .Add(modReportVar.GetLocaleNumberFormat(res3["flditemamt"], gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(res3["flddiscountamt"], gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(res3["flditemamt"] - res3["flddiscountamt"], gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(res3["fldtaxamt"], gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(res3["nettot"], gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(res3["xcredit"], gb.Currency))
+              .Add(modReportVar.GetLocaleNumberFormat(res3["xcash"], gb.Currency))
+              .Add(res3["flduserid"])
+              .Add(modReportVar.GetLocaleNumberFormat(dueclr, gb.Currency))
+              .Add(dueinv)
+              .Add("")
+            End With
+            $BillingReport.Add(asx)
+            asx.Clear()
+          Next
+        Endif
+
+        unet = unet + xnet
+        utax = utax + xtax
+        uitem = uitem + xitem
+        udsc = udsc + xdisc
+        ucrdt = ucrdt + xcrdt
+        ucash = ucash + xcash
+        udueval = udueval + xdueval
+        With asx
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("TOTAL")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(xitem, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xdisc, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xitem - xdisc, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xnet, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xcrdt, gb.Currency))
+          .Add(modReportVar.GetLocaleNumberFormat(xcash, gb.Currency))
+          .Add("")
+          .Add(modReportVar.GetLocaleNumberFormat(xdueval, gb.Currency))
+          .Add("")
+          .Add("")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+        With asx
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+          .Add("")
+        End With
+        $BillingReport.Add(asx)
+        asx.Clear()
+      Next
+    Endif
+
+    ''for non accounts
+    If xLedger = "%" Then
+
+      xnet = 0
+      xtax = 0
+      xdisc = 0
+      xitem = 0
+      xcrdt = 0
+      xcash = 0
+      xdueval = 0
+      res4 = $con.Exec(Subst("select fldbillno,flditemamt,flddiscountamt,fldtaxamt,(flditemamt+fldtaxamt-flddiscountamt) as nettot,(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as xcredit,fldreceivedamt as xcash from &1", sTable) & " where " & xfld & ">=&1 and " & xfld & "<=&2 and fldbankname IS NULL and fldbilltype=&3" & GetExtraSQLQuery(sPatient) & RepoStr, bilid1, bilid2, sType)
+      If res4.Available Then
+        For Each res4
+          dueclr = 0
+          If res4["flditemamt"] Then
+            xitem = xitem + res4["flditemamt"]
+          Endif
+          If res4["flddiscountamt"] Then
+            xdisc = xdisc + res4["flddiscountamt"]
+          Endif
+          If res4["fldtaxamt"] Then
+            xtax = xtax + res4["fldtaxamt"]
+          Endif
+          If res4["nettot"] Then
+            xnet = xnet + res4["nettot"]
+          Endif
+          If res4["xcredit"] Then
+            xcrdt = xcrdt + res4["xcredit"]
+          Endif
+          If res4["xcash"] Then
+            xcash = xcash + res4["xcash"]
+          Endif
+          dueclr = modNonMedical.GetDueClearedAmount(res4["fldbillno"], $con)
+          xdueval = xdueval + dueclr
+        Next
+        If Not xitem And If Not xnet Then
+        Else
+          unet = unet + xnet
+          utax = utax + xtax
+          uitem = uitem + xitem
+          udsc = udsc + xdisc
+          ucrdt = ucrdt + xcrdt
+          ucash = ucash + xcash
+          udueval = udueval + xdueval
+
+          $BillingReport.AddChapter("Not Specified")
+          With asx
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("TOTAL")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add(modReportVar.GetLocaleNumberFormat(xitem, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xdisc, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xitem - xdisc, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xnet, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xcrdt, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xcash, gb.Currency))
+            .Add("")
+            .Add(modReportVar.GetLocaleNumberFormat(xdueval, gb.Currency))
+            .Add("")
+            .Add("")
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          With asx
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+      Endif
+    Endif
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("GRAND TOTAL")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(uitem, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(udsc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(uitem - udsc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(utax, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(unet, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(ucrdt, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(ucash, gb.Currency))
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(udueval, gb.Currency))
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    RepoPath = $BillingReport.NewHTMLPath()
+  Endif
+  Return RepoPath
+
+End
+
+Public Function CreditSalesDueCelared(sCateg As String, sFormat As String, $con As Connection, bill1 As Variant, bill2 As Variant, sTable As String, xLedger As String, sLocaType As String, sLocation As String, Optional sHosp As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim RepoPath As String
+  Dim bilid1 As Variant
+  Dim bilid2 As Variant
+  Dim xfld As String
+  Dim res As Result
+  Dim res3 As Result
+  Dim res1 As Result
+
+  Dim asx As New String[0]
+  Dim xparam As String
+
+  Dim xnet As Float
+  Dim xdisc As Float
+  Dim xdiscper As Float
+  Dim xdueval As Float
+
+  Dim unet As Float
+  Dim udsc As Float
+  Dim udueval As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  If sFormat = "Date" Then
+    bilid1 = modDate.StartSqlDate(bill1)
+    bilid2 = modDate.EndSqlDate(bill2)
+    xfld = "fldtime"
+    xparam = modReportVar.GetDateTimeReport(bill1, gb.GeneralDate) & " TO " & modReportVar.GetDateTimeReport(bill2, gb.GeneralDate)
+  Else
+    If sCateg = "Invoice" Then
+      bilid1 = modNonMedical.GetBillIDFromBillNo(bill1, sTable)
+      bilid2 = modNonMedical.GetBillIDFromBillNo(bill2, sTable)
+    Else If sCateg = "Receipt" Then
+      bilid1 = modNonMedical.GetBillIDFromReceipt(bill1, sTable)
+      bilid2 = modNonMedical.GetBillIDFromReceipt(bill2, sTable)
+    Endif
+    xfld = "fldid"
+    xparam = bill1 & " TO " & bill2
+  Endif
+
+  If bilid1 And If bilid2 Then
+    $BillingReport = New CReportHTML([("DATE"), ("CLEARANCE NO"), ("ENCID"), ("NAME"), ("DISC%"), ("DISCAMT"), ("DUE RECEIVED"), ("USER"), ("ORIGINAL"), ("ACCOUNT"), ("STATE"), ("INV-DATE"), ("INV-TIME"), ("INV-TOTAL"), ("INV-USER")], "", "")
+    If sHosp Then
+      $BillingReport.UserData.Add("CREDIT" & " CLEARANCE REPORT : " & sHosp, "PARAM1")
+    Else
+      $BillingReport.UserData.Add("CREDIT" & " CLEARANCE REPORT", "PARAM1")
+    Endif
+    $BillingReport.UserData.Add(xparam, "PARAM2")
+
+    udsc = 0
+    udueval = 0
+    unet = 0
+    res = $con.Exec(Subst("select fldencounterval,fldbillno,fldtime,fldbillitem,flditemrate,flditemqty,flddiscper,fldditemamt,fldbillno,flditemtype,flduserid from tblduebilling where fldbillitem in(select fldbillno from &1", sTable) & " where fldbankname like &1) and fldprint=&2 and " & xfld & ">=&3 and " & xfld & "<=&4" & RepoStr, xLedger, True, bilid1, bilid2)
+    If res.Available Then
+      For Each res
+        res3 = $con.Exec(Subst("select fldtime,fldencounterval,fldbilltype,fldbillno,flditemamt,flddiscountamt,fldtaxamt,(flditemamt+fldtaxamt-flddiscountamt-fldreceivedamt) as nettot,fldbankname,flduserid,fldprevdeposit from &1", sTable) & " where fldbillno=&1" & RepoStr, res["fldbillitem"])
+        xdiscper = 0
+        xdisc = 0
+        xdueval = 0
+        xnet = 0
+        If res3.Available Then
+          If res["flddiscper"] Then
+            xdiscper = res["flddiscper"]
+            xdisc = res["flditemrate"] * res["flditemqty"] * (res["flddiscper"] / 100)
+          Endif
+
+          If res["flditemtype"] = "InvoiceClearance" Then
+            res1 = $con.Exec("select fldreceivedamt from " & sTable & " where fldbillno=&1" & RepoStr, res["fldbillno"])
+          Else If res["flditemtype"] = "ReceiptClearance" Then
+            res1 = $con.Exec("select fldreceivedamt from " & sTable & " where fldbillno=&1" & RepoStr, res["fldbillno"])
+          Endif
+          If res1.Available And If res1.Count = 1 Then
+            xdueval = res1["fldreceivedamt"]
+          Else
+            If res["fldditemamt"] Then
+              xdueval = res["fldditemamt"]
+            Endif
+          Endif
+
+          If res3["nettot"] Then
+            xnet = res3["nettot"]
+          Endif
+
+          udsc = udsc + xdisc
+          udueval = udueval + xdueval
+          unet = unet + xnet
+          With asx
+            .Add(modReportVar.GetDateTimeReport(res["fldtime"], gb.MediumDate))
+            .Add(res["fldbillno"])
+            .Add(res["fldencounterval"])
+            .Add(modPatient.GetPatientNameByEnc(res["fldencounterval"], $con))
+            If xdiscper Then
+              .Add(modReportVar.GetLocaleNumberFormat(xdiscper, -2))
+            Else
+              .Add("")
+            Endif
+            .Add(modReportVar.GetLocaleNumberFormat(xdisc, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xdueval, gb.Currency))
+            .Add(res["flduserid"])
+            ''original
+            .Add(res3["fldbillno"])
+            .Add(res3["fldbankname"])
+            If res3["fldprevdeposit"] Then
+              If res3["fldprevdeposit"] = 1 Then
+                .Add("OP")
+              Else If res3["fldprevdeposit"] > 1 Then
+                .Add("IP")
+              Endif
+            Else
+              .Add("-")
+            Endif
+            .Add(modReportVar.GetDateTimeReport(res3["fldtime"], gb.MediumDate))
+            .Add(modReportVar.GetDateTimeReport(res3["fldtime"], gb.MediumTime))
+            .Add(modReportVar.GetLocaleNumberFormat(xnet, gb.Currency))
+            .Add(res3["flduserid"])
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Endif
+
+      Next
+    Endif
+
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("TOTAL")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(udsc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(udueval, gb.Currency))
+      .Add("")
+      ''original
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(unet, gb.Currency))
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+  RepoPath = $BillingReport.NewHTMLPath()
+
+  Return RepoPath
+
+End
+
+Public Function TaxDiscReportFinance(sCateg As String, sFormat As String, $con As Connection, sType As String, bill1 As Variant, bill2 As Variant, sTable As String, sAccount As String, sLocaType As String, sLocation As String, Optional sHosp As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim RepoPath As String
+  Dim bilid1 As Variant
+  Dim bilid2 As Variant
+  Dim xfld As String
+  Dim xmode As String
+  Dim sModeList As String[] = ["Credit", "Cash"]
+  Dim PackList As String[]
+  Dim xpack As String
+  Dim aList As String[]
+
+  Dim res3 As Result
+  Dim asx As New String[0]
+  Dim xparam As String
+
+  Dim flddetail As String
+  Dim fldgroup As String
+
+  Dim xnet As Float
+  Dim xtax As Float
+  Dim xdisc As Float
+  Dim xitem As Float
+
+  Dim unet As Float
+  Dim utax As Float
+  Dim udsc As Float
+  Dim uitem As Float
+
+  Dim totnet As Float
+  Dim tottax As Float
+  Dim totdsc As Float
+  Dim totitem As Float
+  Dim RepoStr As String
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  If sType = "Discount" Then
+    flddetail = "flddiscountamt"
+    fldgroup = "flddiscountgroup"
+  Else If sType = "Tax" Then
+    flddetail = "fldtaxamt"
+    fldgroup = "fldtaxgroup"
+  Endif
+
+  If sFormat = "Date" Then
+    bilid1 = modDate.StartSqlDate(bill1)
+    bilid2 = modDate.EndSqlDate(bill2)
+    xfld = "fldtime"
+    xparam = modReportVar.GetDateTimeReport(bill1, gb.GeneralDate) & " TO " & modReportVar.GetDateTimeReport(bill2, gb.GeneralDate)
+  Else
+    If sCateg = "Invoice" Then
+      bilid1 = modNonMedical.GetBillIDFromBillNo(bill1, sTable)
+      bilid2 = modNonMedical.GetBillIDFromBillNo(bill2, sTable)
+    Else If sCateg = "Receipt" Then
+      bilid1 = modNonMedical.GetBillIDFromReceipt(bill1, sTable)
+      bilid2 = modNonMedical.GetBillIDFromReceipt(bill2, sTable)
+    Endif
+    xfld = "fldid"
+    xparam = bill1 & " TO " & bill2
+  Endif
+
+  If bilid1 And If bilid2 Then
+    $BillingReport = New CReportHTML([("ENCID"), ("STATE"), ("DOA"), ("DOD"), ("NAME"), ("INVOICE"), ("INV-DATE"), ("INV-TIME"), ("GROSS"), ("DISC"), ("SUBTOTAL"), ("TAX"), ("NETTOTAL"), ("USER"), ("DISTRICT"), ("ADDRESS"), ("CONTACT"), ("REFERENCE")], "", "")
+    If sHosp Then
+      $BillingReport.UserData.Add(sType & " REPORT : " & sHosp, "PARAM1")
+    Else
+      $BillingReport.UserData.Add(sType & " REPORT", "PARAM1")
+    Endif
+    $BillingReport.UserData.Add(xparam, "PARAM2")
+
+    totnet = 0
+    tottax = 0
+    totdsc = 0
+    totitem = 0
+    ''each mode cash/credit
+    For Each xmode In sModeList
+      $BillingReport.AddSection(" * * * * * * * * " & xmode & " * * * * * * * * ", True)
+
+      unet = 0
+      utax = 0
+      udsc = 0
+      uitem = 0
+      If sAccount = "%" Then
+        aList = modControlSub.GetDirectFillresult($con.Exec(Subst("select distinct(fldbankname) as col from &1", sTable) & " where " & xfld & ">=&1 and " & xfld & "<=&2 and fldbilltype=&3 and fldbankname like &4 and " & flddetail & "<>&5" & RepoStr, bilid1, bilid2, xmode, "%", 0))
+      Else
+        aList = [sAccount]
+      Endif
+      PackList = aList  ''GridListView(("Select Account"), aList)
+      If PackList Then
+        ''each account
+        For Each xpack In PackList
+          $BillingReport.AddChapter(xpack)
+
+          res3 = $con.Exec(Subst("select fldtime,fldencounterval,fldbilltype,fldbillno,flditemamt,flddiscountamt,fldtaxamt,(flditemamt+fldtaxamt-flddiscountamt) as nettot,fldreceivedamt,fldbankname,fldchequeno,flduserid,fldprevdeposit from &1", sTable) & " where " & xfld & ">=&1 and " & xfld & "<=&2 and fldbankname like &3 and fldbilltype=&4 and " & flddetail & "<>&5" & RepoStr, bilid1, bilid2, xpack, xmode, 0)
+          xnet = 0
+          xtax = 0
+          xdisc = 0
+          xitem = 0
+          If res3.Available Then
+            For Each res3
+              If res3["flditemamt"] Then
+                xitem = xitem + res3["flditemamt"]
+              Endif
+              If res3["flddiscountamt"] Then
+                xdisc = xdisc + res3["flddiscountamt"]
+              Endif
+              If res3["fldtaxamt"] Then
+                xtax = xtax + res3["fldtaxamt"]
+              Endif
+              If res3["nettot"] Then
+                xnet = xnet + res3["nettot"]
+              Endif
+              With asx
+                .Add(res3["fldencounterval"])
+                If res3["fldprevdeposit"] Then
+                  If res3["fldprevdeposit"] = 1 Then
+                    .Add("OP")
+                  Else If res3["fldprevdeposit"] > 1 Then
+                    .Add("IP")
+                  Endif
+                Else
+                  .Add("-")
+                Endif
+                .Add(modReportVar.GetDateTimeReport(modPatient.GetAdmissionDate(res3["fldencounterval"]), gb.MediumDate))
+                .Add(modReportVar.GetDateTimeReport(modPatient.GetDischargeDate(res3["fldencounterval"]), gb.MediumDate))
+                .Add(modPatient.GetPatientNameByEnc(res3["fldencounterval"], $con))
+                .Add(res3["fldbillno"])
+                .Add(modReportVar.GetDateTimeReport(res3["fldtime"], gb.MediumDate))
+                .Add(modReportVar.GetDateTimeReport(res3["fldtime"], gb.MediumTime))
+                .Add(modReportVar.GetLocaleNumberFormat(res3["flditemamt"], gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(res3["flddiscountamt"], gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(res3["flditemamt"] - res3["flddiscountamt"], gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(res3["fldtaxamt"], gb.Currency))
+                .Add(modReportVar.GetLocaleNumberFormat(res3["nettot"], gb.Currency))
+                .Add(res3["flduserid"])
+                .Add(modPatient.GetPatDistrictByEnc(res3["fldencounterval"], $con))
+                .Add(modPatient.GetPatFirAddressByEnc(res3["fldencounterval"], $con))
+                .Add(modPatient.GetPatientContactByEnc(res3["fldencounterval"], $con))
+                If res3["fldchequeno"] Then
+                  .Add(res3["fldchequeno"])
+                Else
+                  .Add("-")
+                Endif
+              End With
+              $BillingReport.Add(asx)
+              asx.Clear()
+            Next
+          Endif
+
+          unet = unet + xnet
+          utax = utax + xtax
+          uitem = uitem + xitem
+          udsc = udsc + xdisc
+          ''sum of type/account
+          With asx
+            .Add("TOTAL")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add(xpack)
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add(modReportVar.GetLocaleNumberFormat(xitem, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xdisc, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xitem - xdisc, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+            .Add(modReportVar.GetLocaleNumberFormat(xnet, gb.Currency))
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+          With asx
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+            .Add("")
+          End With
+          $BillingReport.Add(asx)
+          asx.Clear()
+        Next
+      Endif
+
+      totitem = totitem + uitem
+      totdsc = totdsc + udsc
+      tottax = tottax + utax
+      totnet = totnet + unet
+      ''sum of account
+      With asx
+        .Add("TOTAL")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add(xmode)
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add(modReportVar.GetLocaleNumberFormat(uitem, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(udsc, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(uitem - udsc, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(utax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(unet, gb.Currency))
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+      With asx
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+        .Add("")
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Next
+
+    ''sum of type
+    With asx
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("GRAND TOTAL")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add(modReportVar.GetLocaleNumberFormat(totitem, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(totdsc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(totitem - totdsc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(tottax, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(totnet, gb.Currency))
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+      .Add("")
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+
+    RepoPath = $BillingReport.NewHTMLPath()
+  Endif
+  Return RepoPath
+
+End
+
+''================= Cash/Credit report ===============
+Public Function ServiceInvoiceSummaryCashCredit(sCateg As String, $con As Connection, dt1 As Date, dt2 As Date, sTable As String, sLocaType As String, sLocation As String, Optional sTblBill As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim lst As String[]
+  Dim crdt As Float
+  Dim cash As Float
+  Dim dsc As Float
+  Dim tax As Float
+  Dim tot As Float
+  Dim xx As String
+  Dim res2 As Result
+  Dim res3 As Result
+  Dim res4 As Result
+
+  Dim xcrdt As Float
+  Dim xcash As Float
+  Dim subt As Float
+  Dim xtax As Float
+  Dim xdsc As Float
+
+  Dim xextra As Float
+  Dim xduecl As Float
+  Dim crdisc As Float
+  Dim csdisc As Float
+  Dim RepoStr As String
+  Dim xbilling As String
+  Dim xround As Float
+
+  If sTblBill Then
+    xbilling = sTblBill
+  Else
+    xbilling = "tblpatbilling"
+  Endif
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  $BillingReport = New CReportHTML([("PARTICULARS"), ("CREDIT"), ("CASH"), ("DISCOUNT"), ("TAX"), ("TOTAL")], "", "")
+  $BillingReport.UserData.Add("GROUP SUMMARY REPORT", "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  crdt = 0
+  cash = 0
+  dsc = 0
+  tax = 0
+  tot = 0
+  lst = modNonMedical.GetGroupNameAccount()
+  For Each xx In lst
+    res2 = $con.Exec("select SUM(flditemrate*flditemqty) as itemtot from " & xbilling & " where flditemname in(select flditemname from tblreportgroup where fldgroup=&1) and fldbillno in(select fldbillno from " & sTable & " where fldtime>=&2 and fldtime<=&3) and fldsave=&4 and fldbilltype=&5" & RepoStr, xx, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True, "Credit")
+    res3 = $con.Exec("select SUM(flditemrate*flditemqty) as itemtot from " & xbilling & " where flditemname in(select flditemname from tblreportgroup where fldgroup=&1) and fldbillno in(select fldbillno from " & sTable & " where fldtime>=&2 and fldtime<=&3) and fldsave=&4 and fldbilltype=&5" & RepoStr, xx, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True, "Cash")
+    res4 = $con.Exec("select SUM(flddiscamt) as dsc,SUM(fldtaxamt) as tax,SUM(fldditemamt) as tot from " & xbilling & " where flditemname in(select flditemname from tblreportgroup where fldgroup=&1) and fldbillno in(select fldbillno from " & sTable & " where fldtime>=&2 and fldtime<=&3) and fldsave=&4" & RepoStr, xx, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True)
+
+    xcrdt = 0
+    xcash = 0
+    xtax = 0
+    xdsc = 0
+    subt = 0
+    If res2.Available Then
+      If res2["itemtot"] Then
+        xcrdt = res2["itemtot"]
+      Endif
+    Endif
+    If res3.Available Then
+      If res3["itemtot"] Then
+        xcash = res3["itemtot"]
+      Endif
+    Endif
+    If res4.Available = True Then
+      If res4["dsc"] Then
+        xdsc = res4["dsc"]
+      Endif
+      If res4["tax"] Then
+        xtax = res4["tax"]
+      Endif
+      If res4["tot"] Then
+        subt = res4["tot"]
+      Endif
+    Endif
+
+    If Not xcrdt And If Not xcash Then
+    Else
+      crdt = crdt + xcrdt
+      cash = cash + xcash
+      dsc = dsc + xdsc
+      tax = tax + xtax
+      tot = tot + subt
+      With asx
+        .Add(xx)
+        .Add(modReportVar.GetLocaleNumberFormat(xcrdt, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xcash, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xdsc, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+        .Add(modReportVar.GetLocaleNumberFormat(subt, gb.Currency))
+      End With
+      $BillingReport.Add(asx)
+      asx.Clear()
+    Endif
+  Next
+
+  ''not grouped
+  res2 = $con.Exec("select SUM(flditemrate*flditemqty) as itemtot from " & xbilling & " where flditemname not in(select flditemname from tblreportgroup) and fldbillno in(select fldbillno from " & sTable & " where fldtime>=&1 and fldtime<=&2) and fldsave=&3 and fldbilltype=&4" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True, "Credit")
+  res3 = $con.Exec("select SUM(flditemrate*flditemqty) as itemtot from " & xbilling & " where flditemname not in(select flditemname from tblreportgroup) and fldbillno in(select fldbillno from " & sTable & " where fldtime>=&1 and fldtime<=&2) and fldsave=&3 and fldbilltype=&4" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True, "Cash")
+  res4 = $con.Exec("select SUM(flddiscamt) as dsc,SUM(fldtaxamt) as tax,SUM(fldditemamt) as tot from " & xbilling & " where flditemname not in(select flditemname from tblreportgroup) and fldbillno in(select fldbillno from " & sTable & " where fldtime>=&1 and fldtime<=&2) and fldsave=&3" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2), True)
+
+  xcrdt = 0
+  xcash = 0
+  xtax = 0
+  xdsc = 0
+  subt = 0
+  If res2.Available Then
+    If res2["itemtot"] Then
+      xcrdt = res2["itemtot"]
+    Endif
+  Endif
+  If res3.Available Then
+    If res3["itemtot"] Then
+      xcash = res3["itemtot"]
+    Endif
+  Endif
+  If res4.Available = True Then
+    If res4["dsc"] Then
+      xdsc = res4["dsc"]
+    Endif
+    If res4["tax"] Then
+      xtax = res4["tax"]
+    Endif
+    If res4["tot"] Then
+      subt = res4["tot"]
+    Endif
+  Endif
+
+  If Not xcrdt And If Not xcash Then
+  Else
+    crdt = crdt + xcrdt
+    cash = cash + xcash
+    dsc = dsc + xdsc
+    tax = tax + xtax
+    tot = tot + subt
+    With asx
+      .Add("Not Grouped")
+      .Add(modReportVar.GetLocaleNumberFormat(xcrdt, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xcash, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xdsc, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xtax, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(subt, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+  Endif
+
+  ''total
+  With asx
+    .Add(modString.HTMLBlankSpace(5) & "SUB TOTAL")
+    .Add(modReportVar.GetLocaleNumberFormat(crdt, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(cash, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(dsc, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(tax, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(tot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  If sCateg = "Invoice" Then
+    xduecl = modFinance.GetInvoiceClearanceRange($con, dt1, dt2, "%", "%", sLocaType, sLocation, sTable)
+  Else If sCateg = "Receipt" Then
+    xduecl = modFinance.GetReceiptClearanceRange($con, dt1, dt2, "%", "%", sLocaType, sLocation, sTable)
+  Endif
+  With asx
+    .Add(modString.HTMLBlankSpace(5) & "DUE CLEARANCES")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(xduecl, gb.Currency))
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  If sCateg = "Invoice" Then
+    xextra = modFinance.GetInvoiceCreditCash($con, dt1, dt2, "%", "%", sLocaType, sLocation, sTable)
+  Else If sCateg = "Receipt" Then
+    xextra = modFinance.GetReceiptCreditCash($con, dt1, dt2, "%", "%", sLocaType, sLocation, sTable)
+  Endif
+  With asx
+    .Add(modString.HTMLBlankSpace(5) & "CASH FROM CREDIT BILLS")
+    .Add(modReportVar.GetLocaleNumberFormat(0 - xextra, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(xextra, gb.Currency))
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  If sCateg = "Invoice" Then
+    crdisc = modFinance.GetTotalDiscountRange($con, dt1, dt2, "Credit", sLocaType, sLocation, sTable)
+    csdisc = modFinance.GetTotalDiscountRange($con, dt1, dt2, "Cash", sLocaType, sLocation, sTable)
+  Else If sCateg = "Receipt" Then
+    crdisc = modFinance.GetTotalRecepDiscountRange($con, dt1, dt2, "Credit", sLocaType, sLocation, sTable)
+    csdisc = modFinance.GetTotalRecepDiscountRange($con, dt1, dt2, "Cash", sLocaType, sLocation, sTable)
+  Endif
+  With asx
+    .Add(modString.HTMLBlankSpace(5) & "TOTAL DISCOUNT")
+    .Add(modReportVar.GetLocaleNumberFormat(crdisc, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(csdisc, gb.Currency))
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  If sCateg = "Invoice" Then
+    xround = modFinance.GetInvoiceCashRound($con, dt1, dt2, "%", "%", sLocaType, sLocation, sTable)
+  Else
+    xround = 0
+  Endif
+  With asx
+    .Add(modString.HTMLBlankSpace(5) & "CASH ROUNDING")
+    .Add("")
+    .Add(modReportVar.GetLocaleNumberFormat(xround, gb.Currency))
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  With asx
+    .Add(modString.HTMLBlankSpace(5) & "GRAND TOTAL")
+    .Add(modReportVar.GetLocaleNumberFormat(crdt - xextra - crdisc, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(cash + xextra + xduecl - csdisc + xround, gb.Currency))
+    .Add("")
+    .Add("")
+    .Add("")
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Sub GetUserCollectionDateSummary($con As Connection, dt1 As Date, dt2 As Date, sLocaType As String, sLocation As String, $tblpatbilldetail As String, $tbltempbilldetail As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+
+  Dim xtable As String
+  Dim dtlst As Date[]
+  Dim xdate As Date
+  Dim res As Result
+  Dim usrLst As String[]
+  Dim usrLstNew As String[]
+  Dim xuser As String
+  Dim colmLst As String[]
+  Dim RepoStr As String
+  Dim i As Integer
+
+  Dim rowtot As Float
+  Dim celltot As Float
+  Dim xalltot As Float
+  Dim res1 As Result
+  Dim res2 As Result
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  usrLst = New String[]
+  For Each xtable In [$tblpatbilldetail, $tbltempbilldetail]
+    res = $con.Exec("select distinct(flduserid) as flduserid from " & xtable & " where fldtime>=&1 and fldtime<=&2" & RepoStr, modDate.StartSqlDate(dt1), modDate.EndSqlDate(dt2))
+    If res.Available Then
+      usrLst.Insert(modControlSub.GetDirectFillresult(res))
+    Endif
+  Next
+  usrLstNew = modString.GetDistinctStringArray(usrLst)
+  dtlst = modDate.GetDateArrayBetween(dt1, dt2)
+
+  colmLst = New String[]
+  colmLst.Add("SNo")
+  colmLst.Add("Date")
+  colmLst.Insert(usrLstNew)
+  colmLst.Add("Total")
+  $BillingReport = New CReportHTML(colmLst, "", "")
+  $BillingReport.UserData.Add("USER COLLECTION SUMMARY", "PARAM1")
+  $BillingReport.UserData.Add("DATE: " & modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate), "PARAM2")
+
+  i = 1
+  xalltot = 0
+  For Each xdate In dtlst
+    With asx
+      .Add(CStr(i))
+      .Add(modReportVar.GetDateTimeReport(xdate, gb.MediumDate))
+
+      rowtot = 0
+      For Each xuser In usrLstNew
+        celltot = 0
+        res1 = $con.Exec("select SUM(fldreceivedamt+fldcurdeposit) as xtot from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2 and flduserid=&3" & RepoStr, modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate), xuser)
+        If res1.Available And If res1["xtot"] Then
+          rowtot = rowtot + res1["xtot"]
+          celltot = celltot + res1["xtot"]
+        Endif
+        res2 = $con.Exec("select SUM(fldreceivedamt+fldcurdeposit) as xtot from " & $tbltempbilldetail & " where fldtime>=&1 and fldtime<=&2 and flduserid=&3" & RepoStr, modDate.StartSqlDate(xdate), modDate.EndSqlDate(xdate), xuser)
+        If res2.Available And If res2["xtot"] Then
+          rowtot = rowtot + res2["xtot"]
+          celltot = celltot + res2["xtot"]
+        Endif
+        .Add(modReportVar.GetLocaleNumberFormat(celltot, gb.Currency))
+      Next
+      xalltot = xalltot + rowtot
+
+      .Add(modReportVar.GetLocaleNumberFormat(rowtot, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    i = i + 1
+  Next
+
+  With asx
+    .Add(CStr(i))
+    .Add("GRAND TOTAL")
+    For Each xuser In usrLstNew
+      .Add("")
+    Next
+    .Add(modReportVar.GetLocaleNumberFormat(xalltot, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End
+
+Public Function ShowUserCollectionStatusDetail($con As Connection, dtfir As Date, dtlast As Date, sLocaType As String, sLocation As String, $tblpatbilldetail As String, $tbltempbilldetail As String) As String
+
+  Dim $BillingReport As CReportHTML
+  Dim asx As New String[0]
+  Dim i As Integer
+  Dim res As Result
+  Dim res1 As Result
+  Dim res1x As Result
+  Dim res2 As Result
+  Dim res2x As Result
+
+  Dim xtable As String
+  Dim usrLst As String[]
+  Dim xUserList As String[]
+  Dim xuser As String
+  Dim RepoStr As String
+
+  Dim xopdhandA As Float
+  Dim xopdcardA As Float
+  Dim xopdtotalA As Float
+  Dim xopdhandB As Float
+  Dim xopdcardB As Float
+  Dim xopdtotalB As Float
+  Dim yipdhandA As Float
+  Dim yipdcardA As Float
+  Dim yipdtotalA As Float
+  Dim yipdhandB As Float
+  Dim yipdcardB As Float
+  Dim yipdtotalB As Float
+  Dim grdtotal As Float
+
+  Dim popdhandA As Float
+  Dim popdcardA As Float
+  Dim popdtotalA As Float
+  Dim popdhandB As Float
+  Dim popdcardB As Float
+  Dim popdtotalB As Float
+  Dim qipdhandA As Float
+  Dim qipdcardA As Float
+  Dim qipdtotalA As Float
+  Dim qipdhandB As Float
+  Dim qipdcardB As Float
+  Dim qipdtotalB As Float
+  Dim pqalltotal As Float
+
+  $BillingReport = New CReportHTML([("SNO"), ("USER"), ("HAND-CASH<br>INVOICE<br>OPD"), ("CARD-CASH<br>INVOICE<br>OPD"), ("HAND-CASH<br>RECEIPT<br>OPD"), ("CARD-CASH<br>RECEIPT<br>OPD"), ("TOTAL CASH<br>OPD"), ("HAND-CASH<br>INVOICE<br>IPD"), ("CARD-CASH<br>INVOICE<br>IPD"), ("HAND-CASH<br>RECEIPT<br>IPD"), ("CARD-CASH<br>RECEIPT<br>IPD"), ("TOTAL CASH<br>IPD"), ("GRAND TOTAL")], "", "")
+  $BillingReport.UserData.Add("CASH COLLECTION REPORT", "PARAM1")
+  $BillingReport.UserData.Add("Date: " & modReportVar.GetDateTimeReport(dtfir, gb.MediumDate) & " TO " & modReportVar.GetDateTimeReport(dtlast, gb.MediumDate), "PARAM2")
+
+  RepoStr = modDataRepo.GetWhereStringRepo(sLocaType, sLocation)
+  usrLst = New String[]
+  For Each xtable In [$tblpatbilldetail, $tbltempbilldetail]
+    res = $con.Exec("select distinct(flduserid) as flduserid from " & xtable & " where fldtime>=&1 and fldtime<=&2" & RepoStr, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast))
+    If res.Available Then
+      usrLst.Insert(modControlSub.GetDirectFillresult(res))
+    Endif
+  Next
+  xUserList = modString.GetDistinctStringArray(usrLst)
+
+  popdhandA = 0
+  popdcardA = 0
+  popdtotalA = 0
+  popdhandB = 0
+  popdcardB = 0
+  popdtotalB = 0
+  qipdhandA = 0
+  qipdcardA = 0
+  qipdtotalA = 0
+  qipdhandB = 0
+  qipdcardB = 0
+  qipdtotalB = 0
+  pqalltotal = 0
+  i = 1
+  For Each xuser In xUserList
+    xopdhandA = 0
+    xopdcardA = 0
+    xopdtotalA = 0
+    xopdhandB = 0
+    xopdcardB = 0
+    xopdtotalB = 0
+    yipdhandA = 0
+    yipdcardA = 0
+    yipdtotalA = 0
+    yipdhandB = 0
+    yipdcardB = 0
+    yipdtotalB = 0
+    grdtotal = 0
+
+    ''for opd
+    res1 = $con.Exec("select fldbillno,(fldreceivedamt+fldcurdeposit) as xtot from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2 and flduserid=&3 and fldprevdeposit=&4" & RepoStr, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), xuser, 1)
+    If res1.Available Then
+      For Each res1
+        xopdtotalA = xopdtotalA + res1["xtot"]
+        xopdcardA = xopdcardA + modNonMedical.GetQRPaymentAmtBill(res1["fldbillno"])
+      Next
+    Endif
+    xopdhandA = xopdtotalA - xopdcardA
+
+    res1x = $con.Exec("select fldbillno,(fldreceivedamt+fldcurdeposit) as xtot from " & $tbltempbilldetail & " where fldtime>=&1 and fldtime<=&2 and flduserid=&3 and fldprevdeposit=&4" & RepoStr, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), xuser, 1)
+    If res1x.Available Then
+      For Each res1x
+        xopdtotalB = xopdtotalB + res1x["xtot"]
+        xopdcardB = xopdcardB + modNonMedical.GetQRPaymentAmtBill(res1x["fldbillno"])
+      Next
+    Endif
+    xopdhandB = xopdtotalB - xopdcardB
+
+    ''for ipd
+    res2 = $con.Exec("select fldbillno,(fldreceivedamt+fldcurdeposit) as xtot from " & $tblpatbilldetail & " where fldtime>=&1 and fldtime<=&2 and flduserid=&3 and fldprevdeposit>&4" & RepoStr, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), xuser, 1)
+    If res2.Available Then
+      For Each res2
+        yipdtotalA = yipdtotalA + res2["xtot"]
+        yipdcardA = yipdcardA + modNonMedical.GetQRPaymentAmtBill(res2["fldbillno"])
+      Next
+    Endif
+    yipdhandA = yipdtotalA - yipdcardA
+
+    res2x = $con.Exec("select fldbillno,(fldreceivedamt+fldcurdeposit) as xtot from " & $tbltempbilldetail & " where fldtime>=&1 and fldtime<=&2 and flduserid=&3 and fldprevdeposit>&4" & RepoStr, modDate.StartSqlDate(dtfir), modDate.EndSqlDate(dtlast), xuser, 1)
+    If res2x.Available Then
+      For Each res2x
+        yipdtotalB = yipdtotalB + res2x["xtot"]
+        yipdcardB = yipdcardB + modNonMedical.GetQRPaymentAmtBill(res2x["fldbillno"])
+      Next
+    Endif
+    yipdhandB = yipdtotalB - yipdcardB
+
+    grdtotal = (xopdtotalA + xopdtotalB) + (yipdtotalA + yipdtotalB)
+
+    popdhandA = popdhandA + xopdhandA
+    popdcardA = popdcardA + xopdcardA
+    popdtotalA = popdtotalA + xopdtotalA
+    popdhandB = popdhandB + xopdhandB
+    popdcardB = popdcardB + xopdcardB
+    popdtotalB = popdtotalB + xopdtotalA
+
+    qipdhandA = qipdhandA + yipdhandA
+    qipdcardA = qipdcardA + yipdcardA
+    qipdtotalA = qipdtotalA + yipdtotalA
+    qipdhandB = qipdhandB + yipdhandB
+    qipdcardB = qipdcardB + yipdcardB
+    qipdtotalB = qipdtotalB + yipdtotalB
+
+    pqalltotal = pqalltotal + grdtotal
+    With asx
+      .Add(CStr(i))
+      .Add(xuser & "[" & modGeneral.GetUserFullName(xuser) & "]")
+      .Add(modReportVar.GetLocaleNumberFormat(xopdhandA, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xopdcardA, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xopdhandB, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(xopdcardB, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat((xopdtotalA + xopdtotalB), gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(yipdhandA, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(yipdcardA, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(yipdhandB, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(yipdcardB, gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat((yipdtotalA + yipdtotalB), gb.Currency))
+      .Add(modReportVar.GetLocaleNumberFormat(grdtotal, gb.Currency))
+    End With
+    $BillingReport.Add(asx)
+    asx.Clear()
+    i = i + 1
+  Next
+
+  With asx
+    .Add("")
+    .Add("<b>GRAND TOTAL</b>")
+    .Add(modReportVar.GetLocaleNumberFormat(popdhandA, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(popdcardA, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(popdhandB, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(popdcardB, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(popdtotalA + popdtotalB, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(qipdhandA, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(qipdcardA, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(qipdhandB, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(qipdcardB, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(qipdtotalA + qipdtotalB, gb.Currency))
+    .Add(modReportVar.GetLocaleNumberFormat(pqalltotal, gb.Currency))
+  End With
+  $BillingReport.Add(asx)
+  asx.Clear()
+
+  Return $BillingReport.NewHTMLPath()
+
+End

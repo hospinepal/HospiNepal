@@ -1,0 +1,853 @@
+' Gambas module file
+
+Public Sub FindPatientEnroll(encid As String, xclass As String)
+
+  Dim res As Result
+  Dim xentity As String
+  Dim bsienroll As String
+  Dim utienroll As String
+
+  res = modDatabase.$myConn.Exec("select fldentity,fldenrollbsi,fldenrolluti from tblhaicasereports where fldencounterval=&1", encid)
+  If res.Available And If res["fldentity"] Then
+    xentity = res["fldentity"]
+  Else
+    xentity = GetPatientEntity(encid)
+  Endif
+
+  If xentity Then
+    If res.Available And If res["fldenrollbsi"] Then
+      bsienroll = res["fldenrollbsi"]
+    Else
+      bsienroll = GetEnrollmentID("BSI", encid, xentity)
+    Endif
+    If bsienroll Then
+      UploadHAIInfection("BSI", encid, xentity, bsienroll)
+      UploadHAIDevice("BSI", encid, xentity, bsienroll)
+      UploadHAILabsGrowth("BSI", encid, xentity, bsienroll)
+      UploadHAILabsNoGrowth("BSI", encid, xentity, bsienroll)
+      UploadHAISensitivity("BSI", encid, xentity, bsienroll)
+      UploadHAIOutcome("BSI", encid, xentity, bsienroll, xclass)
+    Endif
+
+    If res.Available And If res["fldenrolluti"] Then
+      utienroll = res["fldenrolluti"]
+    Else
+      utienroll = GetEnrollmentID("UTI", encid, xentity)
+    Endif
+    If utienroll Then
+      UploadHAIInfection("UTI", encid, xentity, utienroll)
+      UploadHAIDevice("UTI", encid, xentity, utienroll)
+      UploadHAILabsGrowth("UTI", encid, xentity, utienroll)
+      UploadHAILabsNoGrowth("UTI", encid, xentity, utienroll)
+      UploadHAISensitivity("UTI", encid, xentity, utienroll)
+      UploadHAIOutcome("UTI", encid, xentity, utienroll, xclass)
+    Endif
+
+  Endif
+
+End
+
+Public Sub AutoUploadHAICRF(sWard As String, xdebug As Boolean)
+
+  Dim sql As String
+  Dim res As Result
+  Dim xclass As String
+
+  If xdebug = True Then
+    modBasic.$DebugMode = True
+    modBasic.$DebugDB = True
+    modBasic.$DebugAPI = True
+  Endif
+  sql = "select fldencounterval from tblencounter where flddoa<=&1 and flddod IS NULL and fldcurrlocat in(select fldbed from tbldepartmentbed where flddept=&2) and fldencounterval in(select fldencounterval from tblpatevents where fldtype=&3 and fldfirsttime<=&4)"                       ''
+  res = modDatabase.$myConn.Exec(sql, modDate.EndSqlDate(Now()), sWard, "Devices", DateAdd(Now(), gb.Hour, -48))
+  If res.Available Then
+    For Each res
+      xclass = GetHAIClassification(res["fldencounterval"])
+      If xclass Then
+        FindPatientEnroll(res["fldencounterval"], xclass)
+      Endif
+    Next
+  Endif
+
+  If modDatabase.$myConn.Opened = True Then
+    Try modDatabase.$myConn.Close()
+  Endif
+
+End
+
+Private Function GetHAIClassification(encid As String) As String
+
+  Dim xstatus As String
+  Dim xexam As String[]
+  Dim xpatho As String[]
+  Dim xnoGrow As String[]
+
+  xexam = modHAI.GetInfectionValues(encid, modHIReport.$DepartmentName)
+  If xexam And If xexam.Count Then
+    xpatho = modHAI.GetCulturePathogenList(encid)
+    If xpatho And If xpatho.Count Then
+      xstatus = "Confirmed"
+    Else
+      xnoGrow = modHAI.GetCultureNoGrowthList(encid)
+      If xnoGrow And If xnoGrow.Count Then
+        xstatus = "Probable"
+      Else
+        xstatus = "Suspected"
+      Endif
+    Endif
+  Endif
+
+  Return xstatus
+
+End
+
+''-------------------- Procedures -----------------------------------
+Private Function GetPatientEntity(encid As String) As String
+
+  Dim aColl As Collection
+  Dim xVar As Variant[]
+  Dim xcoll As Collection
+  Dim res1 As Result
+  Dim xbirthwt As Variant
+  Dim xfirward As String
+  Dim curward As String
+
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+
+  Dim msgCol As Collection
+  Dim xrefno As String
+  Dim res2 As Result
+
+  res1 = modDatabase.$myConn.Exec("select tblpatientinfo.fldpatientval as fldpatientval,tblpatientinfo.fldptsex as fldptsex,tblpatientinfo.fldptbirday as fldptbirday,tblencounter.flddoa as flddoa,tblencounter.fldcurrlocat as fldcurrlocat,tblencounter.fldreferto as fldreferto from tblpatientinfo inner join tblencounter on tblpatientinfo.fldpatientval=tblencounter.fldpatientval  where tblencounter.fldencounterval=&1", encid)
+  If res1.Available Then
+    xfirward = modPatient.GetPatientFirstWard(encid)
+    curward = modPatient.GetPatientWardName(encid)
+
+    xVar = New Variant[]
+    aColl = New Collection
+    aColl.Add("Patient ID", "_comment")
+    aColl.Add(modHAITags.GetCRFPatientHash("Patient ID"), "attribute")
+    aColl.Add(res1["fldpatientval"], "value")
+    xVar.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Gender", "_comment")
+    aColl.Add(modHAITags.GetCRFPatientHash("Gender"), "attribute")
+    aColl.Add(res1["fldptsex"], "value")
+    xVar.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Date of Birth", "_comment")
+    aColl.Add(modHAITags.GetCRFPatientHash("Date of Birth"), "attribute")
+    aColl.Add(Format(res1["fldptbirday"], "yyyy-mm-dd"), "value")
+    xVar.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Encounter", "_comment")
+    aColl.Add(modHAITags.GetCRFPatientHash("Encounter"), "attribute")
+    aColl.Add(encid, "value")
+    xVar.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Date of Admission", "_comment")
+    aColl.Add(modHAITags.GetCRFPatientHash("Date of Admission"), "attribute")
+    aColl.Add(Format(res1["flddoa"], "yyyy-mm-dd"), "value")
+    xVar.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Ward of Admission", "_comment")
+    aColl.Add(modHAITags.GetCRFPatientHash("Ward of Admission"), "attribute")
+    aColl.Add(modGeneral.GetDepartCaption(xfirward), "value")
+    xVar.Add(aColl)
+
+    aColl = New Collection
+    aColl.Add("Current Ward", "_comment")
+    aColl.Add(modHAITags.GetCRFPatientHash("Current Ward"), "attribute")
+    aColl.Add(modGeneral.GetDepartCaption(curward), "value")
+    xVar.Add(aColl)
+
+    xbirthwt = modPatient.GetBirthValue("flddelwt", encid)
+    If xbirthwt Then
+      aColl = New Collection
+      aColl.Add("Gestational Age", "_comment")
+      aColl.Add(modHAITags.GetCRFPatientHash("Gestational Age"), "attribute")
+      aColl.Add(modPatient.GetObsFieldBabyEnc("fldgestation", encid), "value")
+      xVar.Add(aColl)
+
+      aColl = New Collection
+      aColl.Add("Birth Weight", "_comment")
+      aColl.Add(modHAITags.GetCRFPatientHash("Birth Weight"), "attribute")
+      aColl.Add(xbirthwt, "value")
+      xVar.Add(aColl)
+    Endif
+
+    xcoll = New Collection
+    xcoll.Add("YBtkZ9E7Dkz", "trackedEntityType")
+    xcoll.Add(xVar, "attributes")
+    hCApi = New CFindPatient(xcoll, "trackedEntityInstances/")
+    xmsg = hCApi.GetAPIOutput()
+    If xmsg = "SUCCESS" Then
+      msgCol = JSON.Decode(hCApi.GetAPIResult())
+      If msgCol Then
+        xrefno = msgCol["response"]["importSummaries"][0]["reference"]
+        If xrefno Then
+          res2 = modDatabase.$myConn.Create("tblhaicasereports")
+          res2["fldencounterval"] = encid
+          res2["fldentity"] = xrefno
+          res2.Update
+
+          Return xrefno
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Private Function GetEnrollmentID(sType As String, encid As String, xentity As String) As String
+
+  Dim res1 As Result
+  Dim aColl As Collection
+  Dim xdate As String
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+
+  Dim msgCol As Collection
+  Dim res2 As Result
+  Dim xenrolid As String
+
+  If sType = "UTI" Then
+    res1 = modDatabase.$myConn.Exec("select fldfirsttime,fldsecondtime from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where fldcategory=&3)", encid, "Devices", "Urinary Catheter")
+  Else If sType = "BSI" Then
+    res1 = modDatabase.$myConn.Exec("select fldfirsttime,fldsecondtime from tblpatevents where fldencounterval=&1 and fldtype=&2 and flditem in(select flditem from tblevents where (fldcategory=&3 or fldcategory=&4))", encid, "Devices", "Peripheral Line Catheter", "Central Line Catheter")
+  Endif
+  If res1.Available Then
+    xdate = Format(Now(), "yyyy-mm-ddThh:nn:ss")
+    If xentity Then
+      aColl = New Collection
+      aColl.Add(modHAITags.GetHashValue(sType, "program"), "program")
+      aColl.Add("YBtkZ9E7Dkz", "trackedEntityType")
+      aColl.Add(xentity, "trackedEntityInstance")
+      aColl.Add(xdate, "enrolledAt")
+      aColl.Add(xdate, "occurredAt")
+      aColl.Add(xdate, "enrollmentDate")
+      aColl.Add(xdate, "incidentDate")
+
+      hCApi = New CFindPatient(aColl, "enrollments/")
+      xmsg = hCApi.GetAPIOutput()
+      If xmsg = "SUCCESS" Then
+        msgCol = JSON.Decode(hCApi.GetAPIResult())
+        If msgCol Then
+          xenrolid = msgCol["response"]["importSummaries"][0]["reference"]
+          res2 = modDatabase.$myConn.Edit("tblhaicasereports", "fldencounterval=&1", encid)
+          If sType = "UTI" Then
+            res2["fldenrolluti"] = xenrolid
+          Else If sType = "BSI" Then
+            res2["fldenrollbsi"] = xenrolid
+          Endif
+          res2.Update
+
+          Return xenrolid
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Private Sub UploadHAIInfection(sType As String, encid As String, xentity As String, xenroll As String)
+
+  Dim rex As Result
+  Dim res As Result
+
+  Dim aColl As Collection
+  Dim xVar As Variant[]
+  Dim xColl As Collection
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+  Dim res1 As Result
+
+  rex = modDatabase.$myConn.Exec("select fldexamid from tbldeptexam where flddept=&1", "Hospital Acquired Infection")
+  If rex.Available Then
+    For Each rex
+      res = modDatabase.$myConn.Exec("select fldid,fldhead,fldrepquali,fldrepquanti,dhis from tblpatientexam where fldencounterval=&1 and fldinput=&2 and fldhead=&3 and fldrepquali=&4", encid, "Hospital Acquired Infection", rex["fldexamid"], "Yes")
+      If res.Available Then
+        res.MoveFirst
+        If Not res["dhis"] Then
+
+          aColl = New Collection
+          aColl.Add(modHAITags.GetHashValue(sType, "program"), "program")
+          aColl.Add(xentity, "trackedEntityInstance")
+          aColl.Add(xenroll, "enrollment")
+          aColl.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+          aColl.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+          aColl.Add("COMPLETED", "status")
+          aColl.Add(modHAITags.GetHashValue(sType, "programStage@Infection"), "programStage")
+          xVar = New Variant[]
+
+          xColl = New Collection
+          xColl.Add("Manifestation of Infection", "_comment")
+          xColl.Add(modHAITags.GetCRFPathoHash("Manifestation of Infection"), "dataElement")
+          xColl.Add(modHAI.GetHaiExamCodeValue(res["fldhead"]), "value")
+          xVar.Add(xColl)
+
+          xColl = New Collection
+          xColl.Add("Manifestation of Infection Result", "_comment")
+          xColl.Add(modHAITags.GetCRFPathoHash("Manifestation of Infection Result"), "dataElement")
+          xColl.Add(True, "value")
+          xVar.Add(xColl)
+
+          aColl.Add(xVar, "dataValues")
+          hCApi = New CFindPatient(aColl, "events/")
+          xmsg = hCApi.GetAPIOutput()
+          If xmsg = "SUCCESS" Then
+            res1 = modDatabase.$myConn.Edit("tblpatientexam", "fldid=&1", res["fldid"])
+            res1["dhis"] = True
+            res1.Update
+          Endif
+
+        Endif
+      Endif
+    Next
+  Endif
+
+End
+
+Private Sub UploadHAIDevice(sType As String, encid As String, xentity As String, xenroll As String)
+
+  Dim xfirdate As Date
+  Dim xdura As Float
+  Dim res As Result
+
+  Dim aColl As Collection
+  Dim xVar As Variant[]
+  Dim xColl As Collection
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+  Dim res1 As Result
+
+  aColl = New Collection
+  aColl.Add(modHAITags.GetHashValue(sType, "program"), "program")
+  aColl.Add(xentity, "trackedEntityInstance")
+  aColl.Add(xenroll, "enrollment")
+  aColl.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+  aColl.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+  aColl.Add("COMPLETED", "status")
+  aColl.Add(modHAITags.GetHashValue(sType, "programStage@Device"), "programStage")
+  xVar = New Variant[]
+
+  If sType = "UTI" Then
+    res = modDatabase.$myConn.Exec("select fldutieventdate from tblhaicasereports where fldencounterval=&1", encid)
+    If res.Available And If Not res["fldutieventdate"] Then
+      xfirdate = modHIReport.GetHAIDeviceFirstDate(encid, "Urinary Catheter")
+      If xfirdate Then
+        xdura = modHIReport.GetHAIDeviceTotalHour(encid, "Urinary Catheter")
+
+        xColl = New Collection
+        xColl.Add("Foley catheter at any time", "_comment")
+        xColl.Add(modHAITags.GetUrinaryHash("Foley catheter at any time"), "dataElement")
+        xColl.Add(True, "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Date catheter first inserted", "_comment")
+        xColl.Add(modHAITags.GetUrinaryHash("Date catheter first inserted"), "dataElement")
+        xColl.Add(Format(xfirdate, "yyyy-mm-dd"), "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Foley catheter for 2 days", "_comment")
+        xColl.Add(modHAITags.GetUrinaryHash("Foley catheter for 2 days"), "dataElement")
+        If xdura > 48 Then
+          xColl.Add("Yes", "value")
+        Else
+          xColl.Add("No", "value")
+        Endif
+        xVar.Add(xColl)
+      Endif
+    Endif
+
+  Else If sType = "BSI" Then
+    res = modDatabase.$myConn.Exec("select fldbsieventdate from tblhaicasereports where fldencounterval=&1", encid)
+    If res.Available And If Not res["fldbsieventdate"] Then
+      xfirdate = modHIReport.GetHAIDeviceFirstDate(encid, "Peripheral Line Catheter", "Central Line Catheter")
+      If xfirdate Then
+        xdura = modHIReport.GetHAIDeviceTotalHour(encid, "Peripheral Line Catheter", "Central Line Catheter")
+        xColl = New Collection
+        xColl.Add("BS line at any time", "_comment")
+        xColl.Add(modHAITags.GetBSIHash("BS line at any time"), "dataElement")
+        xColl.Add(modHAI.GetFirstBSIDeviceCRF(encid), "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("BS catheter first inserted", "_comment")
+        xColl.Add(modHAITags.GetBSIHash("BS catheter first inserted"), "dataElement")
+        xColl.Add(Format(xfirdate, "yyyy-mm-dd"), "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("BS catheter for 2 days", "_comment")
+        xColl.Add(modHAITags.GetBSIHash("BS catheter for 2 days"), "dataElement")
+        If xdura > 48 Then
+          xColl.Add("Yes", "value")
+        Else
+          xColl.Add("No", "value")
+        Endif
+        xVar.Add(xColl)
+
+      Endif
+    Endif
+
+  Endif
+
+  If xVar And If xVar.Count Then
+    aColl.Add(xVar, "dataValues")
+    hCApi = New CFindPatient(aColl, "events/")
+    xmsg = hCApi.GetAPIOutput()
+    If xmsg = "SUCCESS" Then
+      res1 = modDatabase.$myConn.Edit("tblhaicasereports", "fldencounterval=&1", encid)
+      If sType = "UTI" Then
+        res1["fldutieventdate"] = xfirdate
+      Else If sType = "BSI" Then
+        res1["fldbsieventdate"] = xfirdate
+      Endif
+      res1.Update
+    Endif
+  Endif
+
+End
+
+Private Sub UploadHAILabsGrowth(sType As String, encid As String, xentity As String, xenroll As String)
+
+  Dim res As Result
+
+  Dim aColl As Collection
+  Dim xVar As Variant[]
+  Dim xColl As Collection
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+
+  Dim aColl1 As Collection
+  Dim xVar1 As Variant[]
+  Dim xColl1 As Collection
+  Dim hCApi1 As CFindPatient
+  Dim xmsg1 As String
+  Dim res1 As Result
+
+  res = modDatabase.$myConn.Exec("select fldid,fldtestid,fldsampleid,fldsampletype,fldtime_sample,fldtime_start,fldtime_report,flduptime_report,fldreportquali from tblpatlabtest where fldencounterval=&1 and (dhis=&2 or dhis IS NULL) and (fldstatus=&3 or fldstatus=&4) and flvisible=&5 and fldid in(select fldtestid from tblpatlabsubtest where fldencounterval=&1 and (fldtanswertype=&6 or fldtanswertype=&7))", encid, False, "Reported", "Verified", "Visible", "Drug Sensitivity", "WHO Sensitivity")
+  If res.Available Then
+    For Each res
+      ''Information
+      aColl = New Collection
+      aColl.Add(modHAITags.GetHashValue(sType, "program"), "program")
+      aColl.Add(xentity, "trackedEntityInstance")
+      aColl.Add(xenroll, "enrollment")
+      aColl.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+      aColl.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+      aColl.Add("COMPLETED", "status")
+      aColl.Add(modHAITags.GetHashValue(sType, "programStage@Info"), "programStage")
+      xVar = New Variant[]
+
+      ''Information
+      If sType = "UTI" Then
+        xColl = New Collection
+        xColl.Add("Date of event", "_comment")
+        xColl.Add(modHAITags.GetUrinaryHash("Date of event"), "dataElement")
+        xColl.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+        xVar.Add(xColl)
+
+      Else If sType = "BSI" Then
+        xColl = New Collection
+        xColl.Add("Date of event", "_comment")
+        xColl.Add(modHAITags.GetBSIHash("Date of event"), "dataElement")
+        xColl.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Sample ID", "_comment")
+        xColl.Add(modHAITags.GetCRFLabsHash("Sample ID"), "dataElement")
+        xColl.Add(res["fldsampleid"], "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Type of laboratory-confirmed BSI", "_comment")
+        xColl.Add(modHAITags.GetBSIHash("Type of laboratory-confirmed BSI"), "dataElement")
+        xColl.Add("Known pathogen", "value")
+        xVar.Add(xColl)
+      Endif
+
+      aColl.Add(xVar, "dataValues")
+      hCApi = New CFindPatient(aColl, "events/")
+      xmsg = hCApi.GetAPIOutput()
+      If xmsg = "SUCCESS" Then
+        ''record
+      Endif
+
+      ''MICROBIOLOGY SAMPLE DETAILS
+      aColl1 = New Collection
+      aColl1.Add(modHAITags.GetHashValue(sType, "program"), "program")
+      aColl1.Add(xentity, "trackedEntityInstance")
+      aColl1.Add(xenroll, "enrollment")
+      aColl1.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+      aColl1.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+      aColl1.Add("COMPLETED", "status")
+      aColl1.Add(modHAITags.GetHashValue(sType, "programStage@Microbiology"), "programStage")
+      xVar1 = New Variant[]
+
+      xColl1 = New Collection
+      xColl1.Add("Sample ID", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Sample ID"), "dataElement")
+      xColl1.Add(res["fldsampleid"], "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Specimen Type", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Specimen Type"), "dataElement")
+      xColl1.Add(res["fldsampletype"], "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Sampling Date", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Sampling Date"), "dataElement")
+      xColl1.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Reception Date", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Reception Date"), "dataElement")
+      xColl1.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+      xVar1.Add(xColl1)
+
+      If res["fldtime_start"] Then
+        xColl1 = New Collection
+        xColl1.Add("Processing Date", "_comment")
+        xColl1.Add(modHAITags.GetCRFLabsHash("Processing Date"), "dataElement")
+        xColl1.Add(Format(res["fldtime_start"], "yyyy-mm-dd"), "value")
+        xVar1.Add(xColl1)
+      Endif
+
+      xColl1 = New Collection
+      xColl1.Add("Reporting Date", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Reporting Date"), "dataElement")
+      xColl1.Add(Format(res["fldtime_report"], "yyyy-mm-dd"), "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Culture findings", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Culture findings"), "dataElement")
+      xColl1.Add("positive culture", "value")
+      xVar1.Add(xColl1)
+
+      aColl1.Add(xVar1, "dataValues")
+      hCApi1 = New CFindPatient(aColl1, "events/")
+      xmsg1 = hCApi1.GetAPIOutput()
+      If xmsg1 = "SUCCESS" Then
+        res1 = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1", res["fldid"])
+        res1["dhis"] = True
+        res1.Update
+      Endif
+
+    Next
+  Endif
+
+End
+
+Private Sub UploadHAILabsNoGrowth(sType As String, encid As String, xentity As String, xenroll As String)
+
+  Dim res As Result
+
+  Dim aColl As Collection
+  Dim xVar As Variant[]
+  Dim xColl As Collection
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+
+  Dim aColl1 As Collection
+  Dim xVar1 As Variant[]
+  Dim xColl1 As Collection
+  Dim hCApi1 As CFindPatient
+  Dim xmsg1 As String
+  Dim res1 As Result
+
+  res = modDatabase.$myConn.Exec("select fldid,fldtestid,fldsampleid,fldsampletype,fldtime_sample,fldtime_start,fldtime_report,flduptime_report,fldreportquali from tblpatlabtest where fldencounterval=&1 and (dhis=&2 or dhis IS NULL) and (fldstatus=&3 or fldstatus=&4) and flvisible=&5 and fldid not in(select fldtestid from tblpatlabsubtest) and fldtestid in(select fldtestid from tbltestquali where (fldtanswertype=&6 or fldtanswertype=&7))", encid, False, "Reported", "Verified", "Visible", "Drug Sensitivity", "WHO Sensitivity")
+  If res.Available Then
+    For Each res
+      ''Information
+      aColl = New Collection
+      aColl.Add(modHAITags.GetHashValue(sType, "program"), "program")
+      aColl.Add(xentity, "trackedEntityInstance")
+      aColl.Add(xenroll, "enrollment")
+      aColl.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+      aColl.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+      aColl.Add("COMPLETED", "status")
+      aColl.Add(modHAITags.GetHashValue(sType, "programStage@Info"), "programStage")
+      xVar = New Variant[]
+
+      ''Information
+      If sType = "UTI" Then
+        xColl = New Collection
+        xColl.Add("Date of event", "_comment")
+        xColl.Add(modHAITags.GetUrinaryHash("Date of event"), "dataElement")
+        xColl.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+        xVar.Add(xColl)
+
+      Else If sType = "BSI" Then
+        xColl = New Collection
+        xColl.Add("Date of event", "_comment")
+        xColl.Add(modHAITags.GetBSIHash("Date of event"), "dataElement")
+        xColl.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Sample ID", "_comment")
+        xColl.Add(modHAITags.GetCRFLabsHash("Sample ID"), "dataElement")
+        xColl.Add(res["fldsampleid"], "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Type of laboratory-confirmed BSI", "_comment")
+        xColl.Add(modHAITags.GetBSIHash("Type of laboratory-confirmed BSI"), "dataElement")
+        xColl.Add("Known pathogen", "value")
+        xVar.Add(xColl)
+      Endif
+
+      aColl.Add(xVar, "dataValues")
+      hCApi = New CFindPatient(aColl, "events/")
+      xmsg = hCApi.GetAPIOutput()
+      If xmsg = "SUCCESS" Then
+        ''record
+      Endif
+
+      ''MICROBIOLOGY SAMPLE DETAILS
+      aColl1 = New Collection
+      aColl1.Add(modHAITags.GetHashValue(sType, "program"), "program")
+      aColl1.Add(xentity, "trackedEntityInstance")
+      aColl1.Add(xenroll, "enrollment")
+      aColl1.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+      aColl1.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+      aColl1.Add("COMPLETED", "status")
+      aColl1.Add(modHAITags.GetHashValue(sType, "programStage@Microbiology"), "programStage")
+      xVar1 = New Variant[]
+
+      xColl1 = New Collection
+      xColl1.Add("Sample ID", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Sample ID"), "dataElement")
+      xColl1.Add(res["fldsampleid"], "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Specimen Type", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Specimen Type"), "dataElement")
+      xColl1.Add(res["fldsampletype"], "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Sampling Date", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Sampling Date"), "dataElement")
+      xColl1.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Reception Date", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Reception Date"), "dataElement")
+      xColl1.Add(Format(res["fldtime_sample"], "yyyy-mm-dd"), "value")
+      xVar1.Add(xColl1)
+
+      If res["fldtime_start"] Then
+        xColl1 = New Collection
+        xColl1.Add("Processing Date", "_comment")
+        xColl1.Add(modHAITags.GetCRFLabsHash("Processing Date"), "dataElement")
+        xColl1.Add(Format(res["fldtime_start"], "yyyy-mm-dd"), "value")
+        xVar1.Add(xColl1)
+      Endif
+
+      xColl1 = New Collection
+      xColl1.Add("Reporting Date", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Reporting Date"), "dataElement")
+      xColl1.Add(Format(res["fldtime_report"], "yyyy-mm-dd"), "value")
+      xVar1.Add(xColl1)
+
+      xColl1 = New Collection
+      xColl1.Add("Culture findings", "_comment")
+      xColl1.Add(modHAITags.GetCRFLabsHash("Culture findings"), "dataElement")
+      xColl1.Add("No growth", "value")
+      xVar1.Add(xColl1)
+
+      aColl1.Add(xVar1, "dataValues")
+      hCApi1 = New CFindPatient(aColl1, "events/")
+      xmsg1 = hCApi1.GetAPIOutput()
+      If xmsg1 = "SUCCESS" Then
+        res1 = modDatabase.$myConn.Edit("tblpatlabtest", "fldid=&1", res["fldid"])
+        res1["dhis"] = True
+        res1.Update
+      Endif
+
+    Next
+  Endif
+
+End
+
+Private Sub UploadHAISensitivity(sType As String, encid As String, xentity As String, xenroll As String)
+
+  Dim res As Result
+
+  Dim aColl As Collection
+  Dim xVar As Variant[]
+  Dim xColl As Collection
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+  Dim res1 As Result
+
+  res = modDatabase.$myConn.Exec("select t1.fldsampleid as fldsampleid,t1.fldsampletype as fldsampletype,t1.fldmethod as fldmethod,t2.fldsubtest as fldsubtest,t3.fldvariable as fldvariable,t3.fldvalue as fldvalue,t3.fldid as fldid FROM (tblpatlabsubtable AS t3 inner join tblpatlabsubtest AS t2 on (t3.fldsubtestid=t2.fldid and t3.fldindex<=>t2.fldindex)) inner join tblpatlabtest AS t1 on t2.fldtestid=t1.fldid where t2.fldencounterval=&1 and (t2.fldtanswertype=&2 or t2.fldtanswertype=&2) and (t3.dhis=&4 or t3.dhis IS NULL)", encid, "Drug Sensitivity", "WHO Sensitivity", False)
+  If res.Available Then
+    For Each res
+      aColl = New Collection
+      aColl.Add(modHAITags.GetHashValue(sType, "program"), "program")
+      aColl.Add(xentity, "trackedEntityInstance")
+      aColl.Add(xenroll, "enrollment")
+      aColl.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+      aColl.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+      aColl.Add("COMPLETED", "status")
+      aColl.Add(modHAITags.GetHashValue(sType, "programStage@Susceptibility"), "programStage")
+      xVar = New Variant[]
+
+      xColl = New Collection
+      xColl.Add("Sample ID", "_comment")
+      xColl.Add(modHAITags.GetCRFLabsHash("Sample ID"), "dataElement")
+      xColl.Add(res["fldsampleid"], "value")
+      xVar.Add(xColl)
+
+      xColl = New Collection
+      xColl.Add("Organism isolated", "_comment")
+      xColl.Add(modHAITags.GetCRFLabsHash("Organism isolated"), "dataElement")
+      xColl.Add(res["fldsubtest"], "value")
+      xVar.Add(xColl)
+
+      xColl = New Collection
+      xColl.Add("Antibiotic", "_comment")
+      xColl.Add(modHAITags.GetCRFLabsHash("Antibiotic"), "dataElement")
+      xColl.Add(res["fldvariable"], "value")
+      xVar.Add(xColl)
+
+      xColl = New Collection
+      xColl.Add("Susceptibility", "_comment")
+      xColl.Add(modHAITags.GetCRFLabsHash("Susceptibility"), "dataElement")
+      xColl.Add(modHAI.GetHaiSensitivity(res["fldvalue"]), "value")
+      xVar.Add(xColl)
+
+      If sType = "BSI" Then
+        xColl = New Collection
+        xColl.Add("Type of organism", "_comment")
+        xColl.Add(modHAITags.GetCRFLabsHash("Type of organism"), "dataElement")
+        xColl.Add("Known pathogen", "value")
+        xVar.Add(xColl)
+      Endif
+
+      aColl.Add(xVar, "dataValues")
+      hCApi = New CFindPatient(aColl, "events/")
+      xmsg = hCApi.GetAPIOutput()
+      If xmsg = "SUCCESS" Then
+        res1 = modDatabase.$myConn.Edit("tblpatlabsubtable", "fldid=&1", res["fldid"])
+        res1["dhis"] = True
+        res1.Update
+      Endif
+
+    Next
+  Endif
+
+End
+
+Private Sub UploadHAIOutcome(sType As String, encid As String, xentity As String, xenroll As String, xclass As String)
+
+  Dim res As Result
+
+  Dim aColl As Collection
+  Dim xVar As Variant[]
+  Dim xColl As Collection
+  Dim hCApi As CFindPatient
+  Dim xmsg As String
+  Dim res1 As Result
+
+  Dim xdiscdate As Date
+  Dim xoutcome As String
+  Dim xfirdate As Date
+
+  aColl = New Collection
+  aColl.Add(modHAITags.GetHashValue(sType, "program"), "program")
+  aColl.Add(xentity, "trackedEntityInstance")
+  aColl.Add(xenroll, "enrollment")
+  aColl.Add(Format(Now(), "yyyy-mm-ddThh:nn:ss"), "occurredAt")
+  aColl.Add(Format(Now(), "yyyy-mm-dd"), "eventDate")
+  aColl.Add("COMPLETED", "status")
+  aColl.Add(modHAITags.GetHashValue(sType, "programStage@Outcome"), "programStage")
+  xVar = New Variant[]
+
+  If sType = "BSI" Then
+    res = modDatabase.$myConn.Exec("select fldbsiclassify as xclass from tblhaicasereports where fldencounterval=&1", encid)
+  Else If sType = "UTI" Then
+    res = modDatabase.$myConn.Exec("select flduticlassify as xclass from tblhaicasereports where fldencounterval=&1", encid)
+  Endif
+  If res.Available Then
+    If Not res["xclass"] Then
+
+      xdiscdate = modPatient.GetDischargeDate(encid)
+      If xdiscdate Then
+        xoutcome = modHAI.GetHaiOutcome(modPatient.CurrentAdmissionStatus(encid))
+
+        xColl = New Collection
+        xColl.Add("14 Day Status", "_comment")
+        xColl.Add(modHAITags.GetCRFOutcomeHash("14 Day Status"), "dataElement")
+        xColl.Add(modHAI.GetHaiMidOutcome(encid), "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Patient outcome", "_comment")
+        xColl.Add(modHAITags.GetCRFOutcomeHash("Patient outcome"), "dataElement")
+        xColl.Add(xoutcome, "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Date of outcome", "_comment")
+        xColl.Add(modHAITags.GetCRFOutcomeHash("Date of outcome"), "dataElement")
+        xColl.Add(Format(xdiscdate, "yyyy-mm-dd"), "value")
+        xVar.Add(xColl)
+
+        xColl = New Collection
+        xColl.Add("Case Classification", "_comment")
+        xColl.Add(modHAITags.GetCRFOutcomeHash("Case Classification"), "dataElement")
+        xColl.Add(xclass, "value")
+        xVar.Add(xColl)
+
+        If sType = "UTI" Then
+          xfirdate = modHIReport.GetHAIDeviceFirstDate(encid, "Peripheral Line Catheter", "Central Line Catheter")
+          If xfirdate Then
+            xColl = New Collection
+            xColl.Add("Central line/peripheral catheter", "_comment")
+            xColl.Add(modHAITags.GetUrinaryHash("Central line/peripheral catheter"), "dataElement")
+            xColl.Add(True, "value")
+            xVar.Add(xColl)
+          Endif
+        Endif
+
+        aColl.Add(xVar, "dataValues")
+        hCApi = New CFindPatient(aColl, "events/")
+        xmsg = hCApi.GetAPIOutput()
+        If xmsg = "SUCCESS" Then
+          res1 = modDatabase.$myConn.Edit("tblhaicasereports", "fldencounterval=&1", encid)
+          If sType = "BSI" Then
+            res1["fldbsiclassify"] = xclass
+          Else If sType = "UTI" Then
+            res1["flduticlassify"] = xclass
+          Endif
+          res1["dhis"] = True
+          res1.Update
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End

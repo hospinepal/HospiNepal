@@ -1,0 +1,303 @@
+' Gambas class file
+
+Private $rData As Result
+Private $aMyFields As String[]
+
+Private $sType As String
+Private $sValue As String
+
+Public Sub Run(sType As String) As String
+
+  $sType = sType
+  If Me.ShowModal() Then Return $sValue
+
+End
+
+Public Sub Form_Open()
+
+  Dim xoption As String
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+
+  If $sType = "Pharmacy" Then
+    cmbdept.List = modBasic.$AllCompPerList
+    cmbdept.Text = modSettings.ShowSettingFromFIle("Pharmacy/DefaultCompID")
+    If cmbdept.Text = "%" Then
+    Else
+      lbldept.Text = modGeneral.GetCompNameFromCompID(cmbdept.Text)
+    Endif
+
+  Else If $sType = "Clinic" Then
+    If modBasic.$FixedDepartment Then
+      cmbdept.Text = modBasic.$FixedDepartment
+    Else
+      cmbdept.List = modGeneral.GetDepartmentsForOPDBoth()
+      cmbdept.Add("%")
+      cmbdept.Text = modSettings.ShowSettingFromFIle("Clinic/DefaultOPD")
+    Endif
+
+  Else If $sType = "Procedure" Then
+    cmbdept.Text = modSettings.ShowSettingFromFIle("Procedure/DefaultCompID")
+
+  Endif
+  dtsort.Value = Now()
+  xoption = modSettings.ShowSettingFromFIle("RemoteRequest/DateSelection")
+  If xoption = "No" Then
+    chkdate.Value = False
+  Else
+    chkdate.Value = True
+  Endif
+
+  If cmbdept.Text Then
+    btnrefresh_Click()
+  Else
+    cmbdept.Text = "%"
+    cmbdept.SetFocus
+  Endif
+
+End
+
+Public Sub chkdate_Click()
+
+  modSettings.EnterCheckSetting(chkdate, "RemoteRequest/DateSelection")
+
+End
+
+Public Sub cmbdept_Click()
+
+  If $sType = "Pharmacy" Then
+    If cmbdept.Text = "%" Then
+    Else
+      lbldept.Text = modGeneral.GetCompNameFromCompID(cmbdept.Text)
+    Endif
+  Else If $sType = "Clinic" Then
+  Else If $sType = "Procedure" Then
+  Endif
+
+End
+
+Public Sub btnepsort_Click()
+
+  Dim xx As String
+
+  xx = BSDateFormat(("Enter BS Date in yyyy/mm/dd format"), ("Date Converter"), modDate.ConvertToLocaldate(dtsort.Value))
+  If xx Then
+    dtsort.Value = modDate.ConvertToEnglishdate(xx)
+  Endif
+
+End
+
+Public Sub btnrefresh_Click()
+
+  If $sType = "Pharmacy" Then
+    modSettings.SaveSettingsToFile("Pharmacy/DefaultCompID", cmbdept.Text)
+    FillPharmGrid()
+  Else If $sType = "Clinic" Then
+    modSettings.SaveSettingsToFile("Clinic/DefaultOPD", cmbdept.Text)
+    FillClinicGrid()
+  Else If $sType = "Procedure" Then
+    modSettings.SaveSettingsToFile("Procedure/DefaultCompID", cmbdept.Text)
+    FillProcedureGrid()
+  Endif
+  GridView1.SetFocus
+
+End
+
+Private Sub FillProcedureGrid()
+
+  Dim sql As String
+
+  If chkdate.Value = True Then
+    If modBasic.$LockToOwnProcedure = "Yes" Then
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,flditem,flduserid,fldid,fldid from tblpatgeneral where fldinput=&1 and fldreportquali=&2 and fldcomp like &3 and fldnewdate>=&4 and fldnewdate<=&5 GROUP BY fldencounterval"
+    Else
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,flditem,flduserid,fldid,fldid from tblpatgeneral where fldinput=&1 and fldreportquali=&2 and fldnewdate>=&4 and fldnewdate<=&5 GROUP BY fldencounterval"
+    Endif
+    $rData = modDatabase.$myConn.Exec(sql, "Procedures", "Planned", modBasic.$compID, modDate.StartSqlDate(dtsort.Value), modDate.EndSqlDate(dtsort.Value))
+
+  Else
+    If modBasic.$LockToOwnProcedure = "Yes" Then
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,flditem,flduserid,fldid,fldid from tblpatgeneral where fldinput=&1 and fldreportquali=&2 and fldcomp like &3 GROUP BY fldencounterval"
+    Else
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,flditem,flduserid,fldid,fldid from tblpatgeneral where fldinput=&1 and fldreportquali=&2 GROUP BY fldencounterval"
+    Endif
+    $rData = modDatabase.$myConn.Exec(sql, "Procedures", "Planned", modBasic.$compID)
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 10 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 1
+    .Columns[5].Width = 275 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 1
+    .Columns[7].Width = 1
+    .Columns[8].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "ENCID"
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Particulars"
+    .Columns[6].Text = "User"
+  End With
+
+End
+
+Private Sub FillPharmGrid()
+
+  Dim sql As String
+  Dim xstr As String
+
+  If modBasic.$DispPrescibeSource = "LocalDB" Then
+    xstr = ""
+  Else
+    xstr = " and fldid not in (select flddoseno from tblpatdoseremote)"
+  Endif
+
+  If chkdate.Value = True Then
+    If cmbdept.Text = "%" Then
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldstatus,fldprescriber,fldid,fldid from tblpatdosing where fldsave_order=&1 and fldsave=&2 and fldorder=&3 and fldcurval=&4 and fldtime_order>=&6 and fldtime_order<=&7" & xstr & " GROUP BY fldencounterval"
+    Else
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldstatus,fldprescriber,fldid,fldid from tblpatdosing where fldsave_order=&1 and fldsave=&2 and fldorder=&3 and fldcurval=&4 and fldcomp_order=&5 and fldtime_order>=&6 and fldtime_order<=&7" & xstr & " GROUP BY fldencounterval"
+    Endif
+    $rData = modDatabase.$myConn.Exec(sql, False, True, "Request", "Continue", cmbdept.Text, modDate.StartSqlDate(dtsort.Value), modDate.EndSqlDate(dtsort.Value))
+
+  Else
+    If cmbdept.Text = "%" Then
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldstatus,fldprescriber,fldid,fldid from tblpatdosing where fldsave_order=&1 and fldsave=&2 and fldorder=&3 and fldcurval=&4" & xstr & " GROUP BY fldencounterval"
+    Else
+      sql = "select fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldencounterval,fldstatus,fldprescriber,fldid,fldid from tblpatdosing where fldsave_order=&1 and fldsave=&2 and fldorder=&3 and fldcurval=&4 and fldcomp_order=&5" & xstr & " GROUP BY fldencounterval"
+    Endif
+    $rData = modDatabase.$myConn.Exec(sql, False, True, "Request", "Continue", cmbdept.Text)
+  Endif
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 10 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 175 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 100 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 1
+    .Columns[8].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "ENCID"
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Location"
+    .Columns[5].Text = "Status"
+    .Columns[6].Text = "User"
+  End With
+
+End
+
+Private Sub FillClinicGrid()
+
+  Dim sql As String
+
+  If chkdate.Value = True Then
+    If modBasic.$FixedDepartment Then
+      sql = "select fldencounterval,fldencounterval,fldconsultname,fldencounterval,fldconsulttime,fldid,flduserid,fldid,fldid from tblconsult where fldconsulttime>=&1 and fldconsulttime<=&2 and fldstatus=&3 and fldconsultname=&4"                                               ''
+      $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(dtsort.Value), modDate.EndSqlDate(dtsort.Value), "Planned", modBasic.$FixedDepartment)
+    Else
+      If cmbdept.Text = "%" Then
+        sql = "select fldencounterval,fldencounterval,fldconsultname,fldencounterval,fldconsulttime,fldid,flduserid,fldid,fldid from tblconsult where fldconsulttime>=&1 and fldconsulttime<=&2 and fldstatus=&3"                                               ''
+      Else
+        sql = "select fldencounterval,fldencounterval,fldconsultname,fldencounterval,fldconsulttime,fldid,flduserid,fldid,fldid from tblconsult where fldconsulttime>=&1 and fldconsulttime<=&2 and fldstatus=&3 and fldconsultname=&4"
+      Endif
+      $rData = modDatabase.$myConn.Exec(sql, modDate.StartSqlDate(dtsort.Value), modDate.EndSqlDate(dtsort.Value), "Planned", cmbdept.Text)
+    Endif
+
+  Else
+    If modBasic.$FixedDepartment Then
+      sql = "select fldencounterval,fldencounterval,fldconsultname,fldencounterval,fldconsulttime,fldid,flduserid,fldid,fldid from tblconsult where fldstatus=&1 and fldconsultname=&2"                                               ''
+      $rData = modDatabase.$myConn.Exec(sql, "Planned", modBasic.$FixedDepartment)
+    Else
+      If cmbdept.Text = "%" Then
+        sql = "select fldencounterval,fldencounterval,fldconsultname,fldencounterval,fldconsulttime,fldid,flduserid,fldid,fldid from tblconsult where fldstatus=&1"                                               ''
+      Else
+        sql = "select fldencounterval,fldencounterval,fldconsultname,fldencounterval,fldconsulttime,fldid,flduserid,fldid,fldid from tblconsult where fldstatus=&1 and fldconsultname=&2"
+      Endif
+      $rData = modDatabase.$myConn.Exec(sql, "Planned", cmbdept.Text)
+    Endif
+  Endif
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 10 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 200 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[7].Width = 1
+    .Columns[8].Width = 25 * modBasic.$AppWidthRatio
+
+    .Columns[2].Text = "Consult"
+    .Columns[3].Text = "Name"
+    .Columns[4].Text = "Time"
+    .Columns[6].Text = "User"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+  If Column = 1 Then
+    GridView1.Data.Text = ""
+    GridView1.Data.Background = modPatient.GetPatientColor($rData[$aMyFields[Column]])
+  Else If Column = 3 Then
+    GridView1.Data.Text = modPatient.GetPatientNameByEnc($rData[$aMyFields[Column]])
+  Else If Column = 4 Then
+    If $sType = "Pharmacy" Then
+      GridView1.Data.Text = modPatient.GetPatientLocation($rData[$aMyFields[Column]])
+    Else If $sType = "Clinic" Then
+      GridView1.Data.Text = Time($rData[$aMyFields[Column]])
+    Else If $sType = "Procedure" Then
+      GridView1.Data.Text = $rData[$aMyFields[Column]]
+    Endif
+  Else If Column = 6 Then
+    GridView1.Data.Text = modGeneral.GetUserFullName($rData[$aMyFields[Column]])
+  Else If Column = 8 Then
+    GridView1.Data.Picture = Picture["icon:/small/apply"]
+    GridView1.Data.Text = ""
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+Public Sub GridView1_KeyPress()
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If Key.Code = Key.Return Or If Key.Code = Key.Enter Or If Key.Code = Key.AltKey Then
+      $sValue = GridView1[GridView1.Row, 0].Text & "@" & cmbdept.Text
+      Me.Close(True)
+    Endif
+  Endif
+
+End
+
+Public Sub GridView1_Click()
+
+  If GridView1.Column = 7 Then
+    $sValue = GridView1[GridView1.Row, 0].Text & "@" & cmbdept.Text
+    Me.Close(True)
+  Endif
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End

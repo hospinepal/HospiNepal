@@ -1,0 +1,223 @@
+' Gambas class file
+
+Private dt1 As Date
+Private dt2 As Date
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me)
+
+  cmbcomp.List = modBasic.$AllCompList
+  rbmed.Value = True
+  cmbcomp.SetFocus
+
+End
+
+Public Sub Form_Close()
+
+  modGeneralMain.RecordFormExit(Me)
+
+End
+
+Public Sub Form_Resize()
+
+  modGeneralMain.ShowSelectedFormMenu(Me)
+
+End
+
+Public Sub cmbcomp_Click()
+
+  lblcomp.Text = modGeneral.GetCompNameFromCompID(cmbcomp.Text)
+
+End
+
+Private Function GetStockType() As String
+
+  Dim xx As String
+
+  If rbmed.Value = True Then
+    xx = "Medicines"
+  Else If rbsurg.Value = True Then
+    xx = "Surgicals"
+  Else If rbextra.Value = True Then
+    xx = "Extra Items"
+  Endif
+
+  Return xx
+
+End
+
+Public Sub btnreqs_Click()
+
+  If cmbcomp.Text Then
+    modCHTMLReport.ExportGridToHTML(GridView1, "PURCHASE REQUEST : " & cmbcomp.Text, modReportVar.GetDateTimeReport(Now(), gb.GeneralDate))
+  Endif
+
+End
+
+Public Sub btnfill_Click()
+
+  If cmbcomp.Text Then
+
+    dt1 = DateAdd(Now(), gb.Day, 0 - CInt(txtprev.Value))
+    dt2 = Now()
+    lbldate.Text = modReportVar.GetDateTimeReport(dt1, gb.MediumDate) & "  TO  " & modReportVar.GetDateTimeReport(dt2, gb.MediumDate)
+    ShowStockGrid()
+  Endif
+
+End
+
+Private Sub ShowStockGrid()
+
+  Dim res As Result
+  Dim Column As Integer
+  Dim fld As ResultField
+
+  Dim xout As Float
+  Dim xcurr As Float
+  Dim xorder As Float
+
+  If rbmed.Value = True Then
+    res = modDatabase.$syConn.Exec("select fldbrandid,fldbrandid,fldminqty,fldbrandid,fldbrandid from tblmedbrand where fldactive=&1 and fldbrandid in(select fldstockid from tblpurchase)", "Active")
+  Else If rbsurg.Value = True Then
+    res = modDatabase.$syConn.Exec("select fldbrandid,fldbrandid,fldminqty,fldbrandid,fldbrandid from tblsurgbrand where fldactive=&1 and fldbrandid in(select fldstockid from tblpurchase)", "Active")
+  Else If rbextra.Value = True Then
+    res = modDatabase.$syConn.Exec("select fldbrandid,fldbrandid,fldminqty,fldbrandid,fldbrandid from tblextrabrand where fldactive=&1 and fldbrandid in(select fldstockid from tblpurchase)", "Active")
+  Endif
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = res.Count
+
+  With GridView1
+    .Columns[0].Width = 315 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Out QTY"
+    .Columns[2].Text = "Min QTY"
+    .Columns[3].Text = "Cur QTY"
+    .Columns[4].Text = "Order QTY"
+  End With
+
+  ProgressBar1.Value = 0
+  For Each res
+    xout = 0
+    xcurr = 0
+    xorder = 0
+    xout = GetSaleQTY(res["fldbrandid"], GetStockType())
+    xcurr = modStock.TotalQTYbyBrand(res["fldbrandid"], cmbcomp.Text)
+    xorder = Round(xout * (txtlater.Value / txtprev.Value) - xcurr)
+    If xorder < 0 Then
+      xorder = 0
+    Endif
+
+    If xout > 0 Then
+      Column = 0
+      GridView1.Rows[res.Index].Height = modBasic.$AppGridRowHeight
+      For Each fld In res.Fields
+        modGeneralMain.GridExplicitDecoration(GridView1, res.Index, Column)
+        If Column = 1 Then
+          GridView1[res.Index, Column].Text = xout
+        Else If Column = 3 Then
+          GridView1[res.Index, Column].Text = xcurr
+        Else If Column = 4 Then
+          GridView1[res.Index, Column].Text = xorder
+        Else
+          GridView1[res.Index, Column].Text = res[fld.Name]
+        Endif
+        GridView1.Rows[res.Index].Height = Max(GridView1.Rows[res.Index].Height, GridView1[res.Index, Column].Font.RichTextHeight(GridView1[res.Index, Column].Text, GridView1.Columns[Column].Width - 5 * modBasic.$AppWidthRatio) + (GridView1.Rows.Height - GridView1.Font.Height))
+        GridView1[res.Index, Column].WordWrap = True
+
+        Column = Column + 1
+      Next
+    Else
+      GridView1.Rows[res.Index].Height = 0
+    Endif
+
+    ProgressBar1.Value = (res.Index + 1) / res.Count
+    Wait
+  Next
+  ProgressBar1.Value = 0
+
+End
+
+Private Function GetSaleQTY(strItem As String, strType As String) As Integer
+
+  Dim xx As Float
+  Dim yy As Float
+
+  If cmbcomp.Text Then
+    xx = modStock.GetSalePharmQTY(modDatabase.$syConn, strType, strItem, dt1, dt2, cmbcomp.Text)
+    yy = modInventory.GetTransactionBulkSale(modDatabase.$syConn, strType, dt1, dt2, cmbcomp.Text, strItem, "", "")
+  Else
+    xx = 0
+    yy = 0
+  Endif
+  Return xx + yy
+
+End
+
+Public Sub btnnosales_Click()
+
+  Dim res As Result
+  Dim Row As Integer
+
+  Dim xout As Float
+  Dim xcurr As Float
+
+  Dim aColl As Collection
+  Dim xitem As Variant
+
+  ProgressBar1.Value = 0
+  If rbmed.Value = True Then
+    res = modDatabase.$syConn.Exec("select fldbrandid,fldbrandid,fldbrandid,fldbrandid from tblmedbrand where fldactive=&1 and fldbrandid in(select fldstockid from tblpurchase)", "Active")
+  Else If rbsurg.Value = True Then
+    res = modDatabase.$syConn.Exec("select fldbrandid,fldbrandid,fldbrandid,fldbrandid from tblsurgbrand where fldactive=&1 and fldbrandid in(select fldstockid from tblpurchase)", "Active")
+  Else If rbextra.Value = True Then
+    res = modDatabase.$syConn.Exec("select fldbrandid,fldbrandid,fldbrandid,fldbrandid from tblextrabrand where fldactive=&1 and fldbrandid in(select fldstockid from tblpurchase)", "Active")
+  Endif
+  aColl = New Collection
+  For Each res
+    xout = 0
+    xout = GetSaleQTY(res["fldbrandid"], GetStockType())
+    If xout = 0 Then
+      xcurr = 0
+      xcurr = modStock.TotalQTYbyBrand(res["fldbrandid"], cmbcomp.Text)
+      aColl.Add(xcurr, res["fldbrandid"])
+    Endif
+    ProgressBar1.Value = (res.Index + 1) / res.Count
+    Wait
+  Next
+
+  GridView1.Clear
+  GridView1.Columns.Count = res.Fields.Count
+  GridView1.Rows.Count = aColl.Count
+
+  With GridView1
+    .Columns[0].Width = 315 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "Particulars"
+    .Columns[1].Text = "Out QTY"
+    .Columns[2].Text = "Cur QTY"
+    .Columns[3].Text = "Order QTY"
+  End With
+
+  Row = 0
+  GridView1.Rows.Height = modBasic.$AppGridRowHeight
+  For Each xitem In aColl
+    GridView1[Row, 0].Text = aColl.Key
+    GridView1[Row, 1].Text = 0
+    GridView1[Row, 2].Text = xitem
+    GridView1[Row, 3].Text = 0
+    Row = Row + 1
+  Next
+  ProgressBar1.Value = 0
+
+End

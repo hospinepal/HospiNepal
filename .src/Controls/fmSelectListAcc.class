@@ -1,0 +1,220 @@
+' Gambas class file
+
+Private $typ As String
+Private $tbl As String
+
+Public Sub _new(sTitle As String, xType As String, xItemName As String)
+
+  $typ = xType
+  Me.Title = sTitle
+  txtitemname.Text = xItemName
+
+  If $typ = "Service Grouping" Then
+    cmbcategory.List = ["Diagnostic Tests", "General Services", "Procedures", "Equipment", "Radio Diagnostics", "Other Items", "Mapped Items", "Pharmacy"]
+  Else If $typ = "Laboratory Grouping" Then
+    cmbcategory.List = ["Diagnostic Tests"]
+  Endif
+
+  ShowFilledList()
+
+End
+
+Public Sub cmbcategory_Click()
+
+  If cmbcategory.Text = "Pharmacy" Then
+    cmbbillmode.List = ["Medicines", "Surgicals", "Extra Items"]
+  Else
+    cmbbillmode.List = modNonMedical.FillCashModeCombo()
+    cmbbillmode.Add("%")
+    cmbbillmode.Text = "%"
+  Endif
+
+End
+
+Public Sub cmbbillmode_Click()
+
+  chkall.Value = False
+  LoadSelectedListsView()
+
+End
+
+Private Sub LoadSelectedListsView()
+
+  If cmbcategory.Text And If cmbbillmode.Text Then
+    If $typ = "Service Grouping" Then
+      NonStockBillingItemListView(cmbcategory.Text, cmbbillmode.Text)
+    Else If $typ = "Laboratory Grouping" Then
+      NonStockBillingLabListView(cmbcategory.Text, cmbbillmode.Text)
+    Endif
+  Endif
+
+End
+
+Public Sub chkall_Click()
+
+  Dim i As Integer
+  Dim xpic As Picture
+
+  If chkall.Value = True Then
+    xpic = Picture["icons/checked.png"]
+  Else
+    xpic = Picture["icons/unchecked.png"]
+  Endif
+
+  For i = 1 To lstfirst.Count
+    lstfirst[CStr(i)].Picture = xpic
+  Next
+
+End
+
+Private Sub ShowFilledList()
+
+  Dim sql As String
+  Dim res As Result
+
+  If $typ = "Service Grouping" Then
+    $tbl = "tblreportgroup"
+    sql = "select flditemname as col from " & $tbl & " where fldgroup=&1" ''flditemtype=&2 and
+    res = modDatabase.$myConn.Exec(sql, txtitemname.Text) ''modNonMedical.GetBillItemCategoryFromCombo(cmbcategory.Text),
+  Else If $typ = "Laboratory Grouping" Then
+    $tbl = "tblservicecost"
+    sql = "select flditemname as col from " & $tbl & " where fldreport=&1" ''flditemtype=&2 and
+    res = modDatabase.$myConn.Exec(sql, txtitemname.Text)
+  Endif
+  modFillContainer.FillListBox(lstsecond, res, False)
+
+End
+
+Public Sub btnsave_Click()
+
+  Dim res As Result
+  Dim i As Integer
+
+  Inc Application.Busy
+  For i = 1 To lstfirst.Count
+    If lstfirst[CStr(i)].Picture = Picture["icons/checked.png"] Then
+
+      If $typ = "Service Grouping" Then
+        If lstsecond.List.Exist(lstfirst[CStr(i)].Text) = False Then
+          res = modDatabase.$myConn.Create($tbl)
+          res["fldgroup"] = txtitemname.Text
+          res["flditemtype"] = cmbcategory.Text
+          res["flditemname"] = lstfirst[CStr(i)].Text
+          res["fldactive"] = "Active"
+          res.Update()
+        Endif
+      Else If $typ = "Laboratory Grouping" Then
+        res = modDatabase.$myConn.Edit("tblservicecost", "flditemname=&1 and flditemtype=&2", lstfirst[CStr(i)].Text, cmbcategory.Text)
+        res["fldreport"] = txtitemname.Text
+        res.Update()
+      Endif
+
+    Endif
+  Next
+  Dec Application.Busy
+  ShowFilledList()
+  LoadSelectedListsView()
+  cmbcategory.SetFocus
+
+End
+
+Public Sub lstfirst_Menu()
+
+  mnufile.Popup
+
+End
+
+Public Sub Form_Open()
+
+  modGeneralMain.ArrangeFormCentre(Me, "False")
+  cmbcategory.Text = ""
+
+End
+
+Public Sub lstfirst_Click()
+
+  modFillContainer.ShowCheckedListView(lstfirst)
+
+End
+
+Public Sub lstfirst_KeyRelease()
+
+  If Key.Code = Key.Space Then
+    modFillContainer.ShowCheckedListView(lstfirst)
+  Endif
+
+End
+
+Public Sub cmbcategory_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbcategory)
+  modFillContainer.RestrictComboToContent(cmbcategory)
+
+End
+
+Public Sub cmbbillmode_KeyRelease()
+
+  modFillContainer.AutoFillComboBox(cmbbillmode)
+  modFillContainer.RestrictComboToContent(cmbbillmode)
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Escape Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub FillGridViewSelected(res As Result)
+
+  Dim pic1 As Picture
+  Dim i As Integer
+
+  pic1 = Picture["icons/unchecked.png"]
+  lstfirst.Clear
+  i = 1
+  If res.Available Then
+    For Each res
+      If Len(res!col) Then
+        If lstsecond.List.Exist(res!col) Then
+        Else
+          lstfirst.Add(CStr(i), res!col, pic1)
+          i = i + 1
+        Endif
+      Endif
+    Next
+  Endif
+
+End
+
+Private Sub NonStockBillingItemListView(sType As String, sBillMode As String)
+
+  Dim res As Result
+
+  If sType = "Pharmacy" Then
+    If sBillMode = "Medicines" Then
+      res = modDatabase.$myConn.Exec("select fldbrandid as col from tblmedbrand where fldbrandid NOT IN(select flditemname from tblreportgroup)")
+    Else If sBillMode = "Surgicals" Then
+      res = modDatabase.$myConn.Exec("select fldbrandid as col from tblsurgbrand where fldbrandid NOT IN(select flditemname from tblreportgroup)")
+    Else If sBillMode = "Extra Items" Then
+      res = modDatabase.$myConn.Exec("select fldbrandid as col from tblextrabrand where fldbrandid NOT IN(select flditemname from tblreportgroup)")
+    Endif
+  Else If sType = "Mapped Items" Then
+    res = modDatabase.$myConn.Exec("select distinct(flditemname) as col from tblstockrate where fldbillingmode like &1 and flditemname NOT IN(select flditemname from tblreportgroup)", sBillMode)
+  Else
+    res = modDatabase.$myConn.Exec("select flditemname as col from tblservicecost where flditemtype=&1 and fldgroup like &2 and flditemname NOT IN(select flditemname from tblreportgroup)", sType, sBillMode) '("Diagnostic Tests","Procedures","General Services")
+  Endif
+  FillGridViewSelected(res)
+
+End
+
+Private Sub NonStockBillingLabListView(sType As String, sBillMode As String)
+
+  Dim res As Result
+
+  res = modDatabase.$myConn.Exec("select flditemname as col from tblservicecost where flditemtype=&1 and fldgroup like &2 and fldreport IS NULL", sType, sBillMode)
+  FillGridViewSelected(res)
+
+End

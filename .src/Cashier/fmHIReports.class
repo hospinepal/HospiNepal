@@ -1,0 +1,853 @@
+' Gambas class file
+
+Private $encid As String
+Private $sClaim As String
+Private $sAccount As String
+Private $sYear As String
+Private $sType As String
+
+Private $rData As Result
+Private $aMyFields As String[]
+Private $rData1 As Result
+Private $aMyFields1 As String[]
+
+Private $tblpatreport As String
+' Private $tblpatbilling As String
+Private $tblpatbilldetail As String
+Private $tbltempbilldetail As String
+
+Public Sub _new(encid As String, sClaim As String, sAccount As String, sYear As String)
+
+  $encid = encid
+  $sClaim = sClaim
+  $sAccount = sAccount
+  $sYear = sYear
+
+End
+
+Public Sub Form_Open()
+
+  Dim xStatus As String
+
+  $sType = modNonMedical.GetFixedReferenceFromLedger($sAccount)
+  xStatus = modPatient.CurrentAdmissionStatus($encid)
+  Select xStatus
+    Case "Registered", "Admitted"
+      mnudischarge.Visible = False
+      mnudischupload.Visible = False
+    Case Else
+      mnudischarge.Visible = True
+      mnudischupload.Visible = True
+  End Select
+
+  ''reports
+  mnucreate.Menu = "mnudocs"
+  mnucreate.Visible = True
+  cmbsource.List = ["Diagnostic Tests", "Radio Diagnostics", "General Reports", "Scanned Images", "Past Documents", "%"]
+  cmbsource.Text = "Scanned Images"
+  rbpending.Value = True
+  modAccount.PasInvoiceSetting(cmbfiscal, False)
+  LoadTableNames()
+  ShowDocuments()
+
+  ''invoices
+  cmbsourcinv.List = ["Invoice", "Receipt", "Both"]
+  cmbsourcinv.Text = "Both"
+  chkmergeinv.Value = True
+  rbpendinginv.Value = True
+  LoadTableNames1()
+  ShowInvoices()
+
+End
+
+Public Sub Form_KeyRelease()
+
+  If Key.Code = Key.Esc Then
+    Me.Close
+  Endif
+
+End
+
+Private Sub LoadTableNames1()
+
+  Dim res As Result
+
+  If $sYear = "Current" Then
+    modNonMedical.$tblpatbilling = "tblpatbilling"
+    modNonMedical.$tblpatbilldetail = "tblpatbilldetail"
+    modNonMedical.$tbltempbilldetail = "tbltempbilldetail"
+    $tblpatbilldetail = "tblpatbilldetail"
+    $tbltempbilldetail = "tbltempbilldetail"
+  Else
+    res = modDatabase.$myConn.Exec("select fldpatbilling,fldpatbilldetail,fldtempbilldetail from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", $sYear, "Active")
+    If res.Available Then
+      If res["fldpatbilling"] Then
+        modNonMedical.$tblpatbilling = res["fldpatbilling"]
+      Else
+        modNonMedical.$tblpatbilling = "tblpatbilling"
+      Endif
+      If res["fldpatbilldetail"] Then
+        modNonMedical.$tblpatbilldetail = res["fldpatbilldetail"]
+        $tblpatbilldetail = res["fldpatbilldetail"]
+      Else
+        modNonMedical.$tblpatbilldetail = "tblpatbilldetail"
+        $tblpatbilldetail = "tblpatbilldetail"
+      Endif
+      If res["fldtempbilldetail"] Then
+        modNonMedical.$tbltempbilldetail = res["fldtempbilldetail"]
+        $tbltempbilldetail = res["fldtempbilldetail"]
+      Else
+        modNonMedical.$tbltempbilldetail = "tbltempbilldetail"
+        $tbltempbilldetail = "tbltempbilldetail"
+      Endif
+    Else
+      modNonMedical.$tblpatbilling = "tblpatbilling"
+      modNonMedical.$tblpatbilldetail = "tblpatbilldetail"
+      modNonMedical.$tbltempbilldetail = "tbltempbilldetail"
+      $tblpatbilldetail = "tblpatbilldetail"
+      $tbltempbilldetail = "tbltempbilldetail"
+    Endif
+  Endif
+
+End
+
+Private Sub LoadTableNames()
+
+  Dim res As Result
+
+  If cmbfiscal.Text = "Current" Then
+    $tblpatreport = "tblpatreport"
+  Else
+    res = modDatabase.$syConn.Exec("select fldpatreport from tblfisclosing where fldindex=&1 and (fldstate=&2 or fldstate IS NULL)", cmbfiscal.Text, "Active")
+    If res.Available Then
+      If res["fldpatreport"] Then
+        $tblpatreport = res["fldpatreport"]
+      Else
+        $tblpatreport = "tblpatreport"
+      Endif
+    Else
+      $tblpatreport = "tblpatreport"
+    Endif
+  Endif
+
+End
+
+Public Sub cmbfiscal_Click()
+
+  LoadTableNames()
+
+End
+
+''=================== Reports ==============================
+Public Sub mnuscanfile_Click()
+
+  Dim hForm As FmScanForm
+
+  If $encid Then
+    hForm = New FmScanForm($encid, "Scanned Images", "")
+    hForm.ShowModal
+    ShowDocuments()
+  Endif
+
+End
+
+Public Sub mnuwebcam_Click()
+
+  modImage.ArchiveScannedMultiImage($encid)
+  ShowDocuments()
+
+End
+
+Public Sub btnrefresh_Click()
+
+  ShowDocuments()
+
+End
+
+Private Sub ShowDocuments()
+
+  If rbpending.Value = True Then
+    $rData = modDatabase.$syConn.Exec("select fldid,fldtime,fldcateg,fldtitle,flddetail,fldsave,fldlink,fldencounterval from " & $tblpatreport & " where fldencounterval like &1 and fldcateg like &2 and (fldflag=&3 or fldflag IS NULL) and (flvisible=&4 or flvisible IS NULL)", $encid, cmbsource.Text, False, "Visible")
+  Else If rbdone.Value = True Then
+    $rData = modDatabase.$syConn.Exec("select fldid,fldtime,fldcateg,fldtitle,flddetail,fldsave,fldlink,fldencounterval from " & $tblpatreport & " where fldencounterval like &1 and fldcateg like &2 and fldflag=&3 and (flvisible=&4 or flvisible IS NULL)", $encid, cmbsource.Text, True, "Visible")
+  Endif
+  ResizeGridView()
+
+End
+
+Private Sub ResizeGridView()
+
+  $aMyFields = New String[]
+  modGridView.ReadSmallData(GridView1, $rData, $aMyFields)
+
+  With GridView1
+    .Columns[0].Width = 1
+    .Columns[1].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 250 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 1
+    .Columns[6].Width = 1
+    .Columns[7].Width = 1
+
+    .Columns[1].Text = "DateTime"
+    .Columns[2].Text = "Category"
+    .Columns[3].Text = "Title"
+    .Columns[4].Text = "Comment"
+  End With
+
+End
+
+Public Sub GridView1_Data(Row As Integer, Column As Integer)
+
+  $rData.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView1, Row)
+
+  If Column = 1 Then
+    GridView1.Data.Text = modReportVar.GetDateTimeReport($rData[$aMyFields[Column]], gb.GeneralDate)
+  Else
+    GridView1.Data.Text = $rData[$aMyFields[Column]]
+  Endif
+
+End
+
+''=============== Activity =========================
+Public Sub mnuopenfile_Click()
+
+  Dim xFPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xFPath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+    If Exist(xFPath) Then
+      modDevice.DesktopOpenFile(xFPath)
+    Endif
+  Endif
+
+End
+
+Public Sub mnuprint_Click()
+
+  Dim xFPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xFPath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+    If Exist(xFPath) Then
+      modPrint.DefaultPrinting(xFPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub mnuemail_Click()
+
+  Dim xpath As String
+  Dim hForm As FmRemoteMail
+  Dim xx As String[]
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    xpath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+    If Exist(xpath) Then
+      xx = New String[]
+      xx.Add(modPatient.GetPatientEmail($encid))
+      hForm = New FmRemoteMail(xx, xpath, "Report", GridView1[GridView1.Row, 3].Text)
+      hForm.ShowModal()
+    Endif
+  Endif
+
+End
+
+Public Sub mnuftp_Click()
+
+End
+
+Public Sub mnuopd_Click()
+
+  Dim hCls As CReportCustom
+  Dim xPath As String
+
+  If $encid Then
+    If modSettings.ShowSettingFromFIle("OPD Sheet/Name") Then
+      hCls = New CReportCustom($encid, "OPD Sheet", "ReportSize", MMain.$defUnit)
+      hCls.Preview()
+    Else
+      Inc Application.Busy
+      xPath = modPatReports.ShowOPDPostSummary($encid, MMain.$defUnit)
+      Dec Application.Busy
+      modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+    Endif
+  Endif
+
+End
+
+Public Sub mnudischarge_Click()
+
+  Dim xvarList As Variant[]
+  Dim hCls As CReportCustom
+  Dim xPath As String
+
+  If $encid Then
+    If Exist(modSettings.ShowSettingFromFIle("Claim Code" & "/" & "BodyPath")) Then
+      hCls = New CReportCustom($encid, "Claim Code", "ReportSize", MMain.$defUnit)
+      hCls.Preview()
+    Else
+
+      If modSettings.ShowSettingFromFIle("Discharge Letter/Name") Then
+        hCls = New CReportCustom($encid, "Discharge Letter", "ReportSize", MMain.$defUnit)
+        hCls.Preview()
+      Else
+        xvarList = ListViewMulti($encid)
+        If xvarList Then
+          Inc Application.Busy
+          xPath = modPatReports.ShowDischargeReport($encid, xvarList[0], xvarList[2], xvarList[1], MMain.$defUnit)
+          Dec Application.Busy
+          modControlSub.OpenHTMLPreview($encid, xPath, "ReportSize")
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+''===================== Uploads ================
+Public Sub btnupload_Click()
+
+  Select $sType
+    Case "Claim Code"
+      UploadHIDocs()
+    Case "Accident SSF", "Medical SSF", "Critical SSF"
+      UploadSSfDocs()
+  End Select
+
+End
+
+Private Function GetClaimFilesList() As String[]
+
+  Dim fileList As String[]
+  Dim iRow As Integer
+  Dim xFPath As String
+
+  fileList = New String[]
+  For iRow = 0 To GridView1.Rows.Count - 1
+    If GridView1.Rows[iRow].Selected = True Then
+      xFPath = modImage.GetBlobFileData(GridView1[iRow, 0].Text, $tblpatreport)
+      If xFPath And If Exist(xFPath) Then
+
+        Select Case Lower(File.Ext(xFPath))
+          Case "bmp", "jpg", "jpeg", "png", "gif", "svg", "tiff"
+            If chkblnwht.Value = True Then
+              fileList.Add(modDevAll.ConvertToBlackInWhite(xFPath))
+            Else
+              fileList.Add(xFPath)
+            Endif
+          Case "pdf"
+            fileList.Add(xFPath)
+        End Select
+
+      Endif
+    Endif
+  Next
+
+  Return fileList
+
+End
+
+Public Sub btnview_Click()
+
+  Dim fileList As String[]
+  Dim xFPath As String
+  Dim sPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If chkmergedocs.Value = True Then
+      fileList = GetClaimFilesList()
+      If fileList.Count Then
+        sPath = modDevAll.ComvertMultiImagesToPDF(fileList)
+      Endif
+    Else
+      xFPath = modImage.GetBlobFileData(GridView1[GridView1.Row, 0].Text, $tblpatreport)
+      Select Case Lower(File.Ext(xFPath))
+        Case "bmp", "jpg", "jpeg", "png", "gif", "svg", "tiff"
+          If chkblnwht.Value = True Then
+            sPath = modDevAll.ConvertToBlackInWhite(xFPath)
+          Else
+            sPath = xFPath
+          Endif
+        Case Else
+          sPath = xFPath
+      End Select
+    Endif
+    If Exist(sPath) Then
+      modDevice.DesktopOpenFile(sPath)
+    Endif
+  Endif
+
+End
+
+Private Sub UploadHIDocs()
+
+  Dim hForm As FmClaimForm
+  Dim hForm1 As FmClaimUnit
+
+  Dim fileList As String[]
+  Dim sPath As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If chkmergedocs.Value = True Then
+      fileList = GetClaimFilesList()
+      If fileList.Count Then
+        sPath = modDevAll.ComvertMultiImagesToPDF(fileList)
+        If Exist(sPath) Then
+          hForm1 = New FmClaimUnit($encid, $sClaim, sPath)
+          hForm1.ShowModal()
+          ShowDocuments()
+        Endif
+      Endif
+
+    Else
+      hForm = New FmClaimForm(GridView1[GridView1.Row, 0].Text, "Report", $tblpatreport, chkblnwht.Value, $sClaim)
+      hForm.ShowModal
+      ShowDocuments()
+
+    Endif
+  Endif
+
+End
+
+Private Sub UploadSSfDocs()
+
+  Dim hForm2 As CssfAPIAttach
+  Dim iRow As Integer
+  Dim fileList As String[]
+  Dim xFPath As String
+  Dim aPath As String
+  Dim xmsg As String
+
+  If GridView1.Rows.Selection.Count > 0 Then
+    If chkmergedocs.Value = True Then
+      fileList = GetClaimFilesList()
+      If fileList.Count Then
+        hForm2 = New CssfAPIAttach($encid, $sClaim)
+        hForm2.AddDocuments(fileList)
+        xmsg = hForm2.GetUploadDocs()
+        If xmsg Then
+          Message.Info(xmsg, ("OK"))
+        Endif
+      Endif
+
+    Else
+      aPath = modImage.GetBlobFileData(GridView1[iRow, 0].Text, $tblpatreport)
+      Select Case Lower(File.Ext(aPath))
+        Case "bmp", "jpg", "jpeg", "png", "gif", "svg", "tiff"
+          If chkblnwht.Value = True Then
+            xFPath = modDevAll.ConvertToBlackInWhite(aPath)
+          Else
+            xFPath = aPath
+          Endif
+        Case Else
+          xFPath = aPath
+      End Select
+      If xFPath Then
+        hForm2 = New CssfAPIAttach($encid, $sClaim)
+        hForm2.AddDocuments([xFPath])
+        xmsg = hForm2.GetUploadDocs()
+        If xmsg Then
+          Message.Info(xmsg, ("OK"))
+        Endif
+      Endif
+
+    Endif
+  Endif
+
+End
+
+Public Sub mnupresupload_Click()
+
+  Dim hCls As CReportCustom
+  Dim xPath As String
+  Dim sDocID As Long
+  Dim sPath As String
+  Dim hForm As FmClaimForm
+  Dim hForm1 As CssfAPIAttach
+  Dim xmsg As String
+
+  If $encid Then
+    If modSettings.ShowSettingFromFIle("OPD Sheet/Name") Then
+      Inc Application.Busy
+      hCls = New CReportCustom($encid, "OPD Sheet", "ReportSize", MMain.$defUnit)
+      Dec Application.Busy
+      xPath = hCls.NewHTMLPath()
+    Else
+      Inc Application.Busy
+      xPath = modPatReports.ShowOPDPostSummary($encid, MMain.$defUnit)
+      Dec Application.Busy
+    Endif
+
+    If xPath And If Exist(xPath) Then
+      sPath = modPrint.ConvertHTMLToPDFString(xPath, "ReportSize")
+      If sPath And If Exist(sPath) Then
+        sDocID = modImage.SavePatientFileGeneral($encid, "General Reports", "OPD Prescription", sPath, modReportVar.$ReportHash)
+        If sDocID Then
+          Select $sType
+            Case "Claim Code"
+              hForm = New FmClaimForm(sDocID, "Report", $tblpatreport, False, $sClaim)
+              hForm.ShowModal
+            Case "Accident SSF", "Medical SSF", "Critical SSF"
+              hForm1 = New CssfAPIAttach($encid, $sClaim)
+              hForm1.AddDocuments([sPath])
+              xmsg = hForm1.GetUploadDocs()
+              If xmsg Then
+                Message.Info(xmsg, ("OK"))
+              Endif
+          End Select
+          ShowDocuments()
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Public Sub mnudischupload_Click()
+
+  Dim xvarList As Variant[]
+  Dim hCls As CReportCustom
+  Dim xPath As String
+  Dim sDocID As Long
+  Dim sPath As String
+  Dim hForm As FmClaimForm
+  Dim hForm1 As CssfAPIAttach
+  Dim xmsg As String
+
+  If $encid Then
+    If Exist(modSettings.ShowSettingFromFIle("Claim Code" & "/" & "BodyPath")) Then
+      Inc Application.Busy
+      hCls = New CReportCustom($encid, "Claim Code", "ReportSize", MMain.$defUnit)
+      Dec Application.Busy
+      xPath = hCls.NewHTMLPath()
+    Else
+
+      If modSettings.ShowSettingFromFIle("Discharge Letter/Name") Then
+        Inc Application.Busy
+        hCls = New CReportCustom($encid, "Discharge Letter", "ReportSize", MMain.$defUnit)
+        Dec Application.Busy
+        xPath = hCls.NewHTMLPath()
+      Else
+        xvarList = ListViewMulti($encid)
+        If xvarList Then
+          Inc Application.Busy
+          xPath = modPatReports.ShowDischargeReport($encid, xvarList[0], xvarList[2], xvarList[1], MMain.$defUnit)
+          Dec Application.Busy
+        Endif
+      Endif
+
+    Endif
+
+    If xPath And If Exist(xPath) Then
+      sPath = modPrint.ConvertHTMLToPDFString(xPath, "ReportSize")
+      If sPath And If Exist(sPath) Then
+        sDocID = modImage.SavePatientFileGeneral($encid, "General Reports", "Discharge Letter", sPath, modReportVar.$ReportHash)
+        If sDocID Then
+          Select $sType
+            Case "Claim Code"
+              hForm = New FmClaimForm(sDocID, "Report", $tblpatreport, False, $sClaim)
+              hForm.ShowModal
+            Case "Accident SSF", "Medical SSF", "Critical SSF"
+              hForm1 = New CssfAPIAttach($encid, $sClaim)
+              hForm1.AddDocuments([sPath])
+              xmsg = hForm1.GetUploadDocs()
+              If xmsg Then
+                Message.Info(xmsg, ("OK"))
+              Endif
+          End Select
+          ShowDocuments()
+        Endif
+      Endif
+    Endif
+
+  Endif
+
+End
+
+''================= Invoices -============================
+Public Sub btnrefreshinv_Click()
+
+  ShowInvoices()
+
+End
+
+Private Sub ShowInvoices()
+
+  Dim sql As String
+  Dim xList As String[] = ["fldtime", "fldbillno", "fldbilltype", "fldbankname", "fldchequeno", "fldchargedamt", "fldreceivedamt"]
+  Dim xsear As String
+
+  If rbpendinginv.Value = True Then
+    xsear = " and fldbillno not in(select fldbillno from tblbillupload)"
+  Else If rbdoneinv.Value = True Then
+    xsear = " and fldbillno in(select fldbillno from tblbillupload)"
+  Endif
+  If cmbsourcinv.Text = "Invoice" Then
+    sql = "select " & xList.Join(",") & " from " & $tblpatbilldetail & " where fldbankname=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2) and fldbilltype like &3 and fldchequeno=&4" & xsear
+  Else If cmbsourcinv.Text = "Receipt"
+    sql = "select " & xList.Join(",") & " from " & $tbltempbilldetail & " where fldbankname=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2) and fldbilltype like &3 and fldchequeno=&4" & xsear
+  Else
+    sql = "select " & xList.Join(",") & " from " & $tblpatbilldetail & " where fldbankname=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2) and fldbilltype like &3 and fldchequeno=&4" & xsear & " UNION ALL " & "select " & xList.Join(",") & " from " & $tbltempbilldetail & " where fldbankname=&1 and fldencounterval in(select fldencounterval from tblencounter where fldpatientval=&2) and fldbilltype like &3 and fldchequeno=&4" & xsear       ''
+  Endif
+  $rData1 = modDatabase.$myConn.Exec(sql, $sAccount, modPatient.GetPatientNoByEnc($encid), "Credit", $sClaim)
+  ResizeInvGridView()
+
+End
+
+Private Sub ResizeInvGridView()
+
+  $aMyFields1 = New String[]
+  modGridView.ReadSmallData(GridView2, $rData1, $aMyFields1)
+
+  With GridView2
+    .Columns[0].Width = 150 * modBasic.$AppWidthRatio
+    .Columns[1].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[2].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[3].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[4].Width = 125 * modBasic.$AppWidthRatio
+    .Columns[5].Width = 75 * modBasic.$AppWidthRatio
+    .Columns[6].Width = 75 * modBasic.$AppWidthRatio
+
+    .Columns[0].Text = "DateTime"
+    .Columns[1].Text = "Invoice"
+    .Columns[2].Text = "Type"
+    .Columns[3].Text = "Account"
+    .Columns[4].Text = "Reference"
+    .Columns[5].Text = "TotalAMT"
+    .Columns[6].Text = "Received"
+
+  End With
+
+End
+
+Public Sub GridView2_Data(Row As Integer, Column As Integer)
+
+  $rData1.MoveTo(Row)
+  modGeneralMain.GridViewDecoration(GridView2, Row)
+
+  If Column = 0 Then
+    Try GridView2.Data.Text = modReportVar.GetDateTimeReport($rData1[$aMyFields1[Column]], gb.GeneralDate)
+  Else
+    GridView2.Data.Text = $rData1[$aMyFields1[Column]]
+  Endif
+
+End
+
+Public Sub btnviewinvoice_Click()
+
+  Dim xFilePath As String
+  Dim sInvList As String[]
+  Dim hForm As FmPDFView
+
+  sInvList = New String[]
+  If chkmergeinv.Value = True Then
+    For Each $rData1
+      sInvList.Add($rData1["fldbillno"])
+    Next
+    If sInvList And If sInvList.Count Then
+      xFilePath = modClaimBulk.GetInvoiceReceiptData(sInvList, $sClaim)
+      If Exist(xFilePath) Then
+        hForm = New FmPDFView(xFilePath, True)
+        modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+      Endif
+    Endif
+
+  Else
+    If GridView2.Rows.Selection.Count Then
+      sInvList = [GridView2[GridView2.Row, 1].Text]
+      xFilePath = modClaimBulk.GetInvoiceReceiptData(sInvList, $sClaim)
+      If Exist(xFilePath) Then
+        hForm = New FmPDFView(xFilePath, True)
+        modAppSupport.FindWorSpace(modHelpVariable.$LogInCategory).Add(hForm)
+      Endif
+    Endif
+
+  Endif
+
+End
+
+Public Sub btnuploadinv_Click()
+
+  Select $sType
+    Case "Claim Code"
+      UploadHIInvoices()
+    Case "Accident SSF", "Medical SSF", "Critical SSF"
+      UploadSSFInvoices()
+  End Select
+
+End
+
+''--------------------- claim invoice upload -------------------------
+Private Sub UploadHIInvoices()
+
+  Dim sInvList As String[]
+
+  sInvList = New String[]
+  If chkmergeinv.Value = True Then
+    For Each $rData1
+      sInvList.Add($rData1["fldbillno"])
+    Next
+    If sInvList And If sInvList.Count Then
+      GetClaimUploadProcess($sClaim, sInvList)
+      ShowInvoices()
+    Endif
+
+  Else
+    If GridView2.Rows.Selection.Count Then
+      sInvList = [GridView2[GridView2.Row, 1].Text]
+      GetClaimUploadProcess($sClaim, sInvList)
+      ShowInvoices()
+    Endif
+
+  Endif
+
+End
+
+Private Sub GetClaimUploadProcess(sClaim As String, sInvList As String[])
+
+  Dim aOutPath As String
+  Dim xinvoice As String
+  Dim xFilePath As String
+
+  If sClaim Then
+    Inc Application.Busy
+    xFilePath = GetInvoiceReceiptData(sInvList)
+    Wait
+    If Exist(xFilePath) Then
+      aOutPath = modClaimAPI.UploadImagesFilesClaimServerHI(sClaim, xFilePath, ProgressBar1)
+
+      If aOutPath = xFilePath Then
+        For Each xinvoice In sInvList
+          modAccount.InsertClaimInvoice(xinvoice)
+        Next
+      Endif
+
+    Endif
+    Dec Application.Busy
+  Endif
+
+End
+
+''------------------- SSF invoice upload -----------------------------------
+Private Sub UploadSSFInvoices()
+
+  Dim xPath As String
+  Dim sInvList As String[]
+  Dim hForm As CssfAPIAttach
+  Dim xmsg As String
+
+  sInvList = New String[]
+  If chkmergeinv.Value = True Then
+    For Each $rData1
+      xPath = ""
+      If cmbsourcinv.Text = "Invoice" Then
+        xPath = modBILLFormat.GetInvoiceCopyPDFPath($rData1["fldbillno"], False, False)
+      Else If cmbsourcinv.Text = "Receipt"
+        xPath = modBILLFormat.GetReceiptCopyPDFPath($rData1["fldbillno"])
+      Endif
+      sInvList.Add(xPath)
+    Next
+  Else
+    If GridView2.Rows.Selection.Count Then
+      If cmbsourcinv.Text = "Invoice" Then
+        xPath = modBILLFormat.GetInvoiceCopyPDFPath(GridView2[GridView2.Row, 1].Text, False, False)
+      Else If cmbsourcinv.Text = "Receipt"
+        xPath = modBILLFormat.GetReceiptCopyPDFPath(GridView2[GridView2.Row, 1].Text)
+      Endif
+      sInvList = [xPath]
+    Endif
+  Endif
+
+  If sInvList And If sInvList.Count Then
+    hForm = New CssfAPIAttach($encid, $sClaim)
+    hForm.AddDocuments(sInvList)
+    xmsg = hForm.GetUploadDocs()
+    If xmsg Then
+      Message.Info(xmsg, ("OK"))
+    Endif
+  Endif
+
+End
+
+''-------------------------- Get Invoice Data -----------------------
+Private Function GetInvoiceReceiptData(sInvoiceList As String[]) As String
+
+  Dim xPath As String[]
+  Dim xinvoice As String
+  Dim xpdf As String
+
+  xPath = New String[]
+  For Each xinvoice In sInvoiceList
+    If xinvoice Like "CAS" & "*" Then
+      xPath.Add(GetInvoiceData(xinvoice))
+    Else If xinvoice Like "CRE" & "*" Then
+      xPath.Add(GetInvoiceData(xinvoice))
+    Else If xinvoice Like "PHM" & "*" Then
+      xPath.Add(GetInvoiceData(xinvoice))
+    Else If xinvoice Like "RET" & "*" Then
+      xPath.Add(GetInvoiceData(xinvoice))
+
+    Else If xinvoice Like "TMP" & "*" Then
+      xPath.Add(GetReceiptData(xinvoice))
+    Else If xinvoice Like "TRE" & "*" Then
+      xPath.Add(GetReceiptData(xinvoice))
+    Else If xinvoice Like "TPM" & "*" Then
+      xPath.Add(GetReceiptData(xinvoice))
+    Else If xinvoice Like "TPR" & "*" Then
+      xPath.Add(GetReceiptData(xinvoice))
+    Endif
+  Next
+
+  If xPath.Count = 1 Then
+    xpdf = xPath[0]
+  Else
+    xpdf = modDevAll.GetPDFUnion(xPath)
+  Endif
+
+  Return xpdf
+
+End
+
+Private Function GetInvoiceData(sBillNo As String) As String
+
+  Dim res As Result
+  Dim xPath As String
+  Dim ShowTax As Boolean
+  Dim ShowDisc As Boolean
+
+  res = modDatabase.$myConn.Exec("select fldbillno,fldencounterval,fldtaxamt,flddiscountamt,fldchequeno from " & $tblpatbilldetail & " where fldbillno=&1", sBillNo)
+  If res.Available Then
+    If res["fldtaxamt"] = 0 Then
+      ShowTax = False
+    Else
+      ShowTax = True
+    Endif
+    If res["flddiscountamt"] = 0 Then
+      ShowDisc = False
+    Else
+      ShowDisc = True
+    Endif
+    xPath = modBILLFormat.GetInvoiceCopyPDFPath(res["fldbillno"], ShowTax, ShowDisc)
+  Endif
+
+  Return xPath
+
+End
+
+Private Function GetReceiptData(sBillNo As String) As String
+
+  Dim xPath As String
+
+  If sBillNo Then
+    xPath = modBILLFormat.GetReceiptCopyPDFPath(sBillNo)
+  Endif
+
+  Return xPath
+
+End
